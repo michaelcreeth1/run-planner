@@ -1,0 +1,34 @@
+[project]
+name = "running-planner-backend"
+version = "0.1.0"
+description = "FastAPI backend for the Running Planner app."
+requires-python = ">=3.10"
+dependencies = [
+  "cryptography>=44.0.0",
+  "fastapi>=0.115.0",
+  "pydantic-settings>=2.6.0",
+  "sqlalchemy>=2.0.0",
+  "uvicorn[standard]>=0.32.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27.0",
+  "pytest>=8.3.0",
+  "ruff>=0.7.0"
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["migrations*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Running Planner icon">
+  <rect width="512" height="512" rx="104" fill="#126466"/>
+  <path d="M136 332c54-84 105-126 154-126 37 0 63 19 86 57" fill="none" stroke="#f6f4ef" stroke-width="34" stroke-linecap="round"/>
+  <path d="M140 355h232" stroke="#f6f4ef" stroke-width="34" stroke-linecap="round"/>
+  <circle cx="309" cy="139" r="35" fill="#e9b44c"/>
+  <path d="M225 206l-35-44M284 235l-27 72M346 291l41 61" fill="none" stroke="#e9b44c" stroke-width="28" stroke-linecap="round"/>
+</svg>

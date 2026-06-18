@@ -1,0 +1,17 @@
+{
+  "name": "Running Planner",
+  "short_name": "Run Plan",
+  "description": "A self-hosted training planner that matches planned intent to Strava activity data.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#126466",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
