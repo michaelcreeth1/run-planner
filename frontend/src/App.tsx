@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Copy,
   Edit3,
+  ExternalLink,
   Link,
   PanelLeftClose,
   PanelLeftOpen,
@@ -862,6 +863,11 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
         {formatTime(activity.startDateLocal)}
         {activity.averageHeartrate ? ` · ${Math.round(activity.averageHeartrate)} bpm` : ""}
       </small>
+      <div className="activity-controls">
+        <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activity)}>
+          <ExternalLink size={15} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1477,6 +1483,14 @@ function formatTime(dateValue: string) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(dateValue));
+}
+
+function openStravaActivity(activity: ActualActivity) {
+  window.open(stravaActivityUrl(activity.stravaActivityId), "_blank", "noopener,noreferrer");
+}
+
+function stravaActivityUrl(stravaActivityId: string) {
+  return `https://www.strava.com/activities/${encodeURIComponent(stravaActivityId)}`;
 }
 
 function labelForWorkoutType(value: Workout["workoutType"]) {
