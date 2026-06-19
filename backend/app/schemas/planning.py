@@ -144,3 +144,18 @@ class TrainingWeekRead(ApiModel):
 
 class WeekListRead(ApiModel):
     weeks: list[TrainingWeekRead]
+
+
+class TrainingTimelineMonthRead(ApiModel):
+    year: int
+    month: int
+    has_plan: bool
+    has_activities: bool
+    planned_miles: float | None = None
+    actual_miles: float | None = None
+
+
+class TrainingTimelineRead(ApiModel):
+    oldest_week_start_date: date | None
+    newest_week_start_date: date | None
+    months: list[TrainingTimelineMonthRead]

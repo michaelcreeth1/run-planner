@@ -10,6 +10,7 @@ from app.schemas.planning import (
     PlannedWorkoutMove,
     PlannedWorkoutRead,
     PlannedWorkoutUpdate,
+    TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
     WeekListRead,
@@ -24,6 +25,11 @@ DbSession = Annotated[Session, Depends(get_db)]
 def list_weeks(db: DbSession) -> dict[str, list[dict]]:
     weeks = [planning.serialize_week(week, db) for week in planning.list_weeks(db)]
     return {"weeks": weeks}
+
+
+@router.get("/training-timeline", response_model=TrainingTimelineRead)
+def training_timeline(db: DbSession) -> dict:
+    return planning.training_timeline(db)
 
 
 @router.get("/weeks/current", response_model=TrainingWeekRead)

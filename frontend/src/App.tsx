@@ -23,12 +23,13 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { TrainingTimeRail } from "./components/time-rail/TrainingTimeRail";
-import type { TrainingTimelineIndex } from "./hooks/useTrainingTimeline";
+import type { TrainingTimelineIndex, TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 
 const FRONTEND_VERSION = "0.1.0";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const WEEK_STACK_RADIUS = 3;
+const WEEK_STACK_LOAD_BATCH = 6;
 
 type ApiVersion = {
   frontendMinVersion: string;
@@ -199,12 +200,18 @@ function App() {
   const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(getInitialWeekStart()));
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
+  const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const pendingPrependScroll = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const isPrependingWeeks = useRef(false);
+  const isAppendingWeeks = useRef(false);
+  const didApplyInitialTimelineRange = useRef(false);
 
   const staleFrontend = apiVersion
     ? apiVersion.forceReload || compareVersions(FRONTEND_VERSION, apiVersion.frontendMinVersion) < 0
@@ -215,8 +222,11 @@ function App() {
   const timelineIndex = useTrainingTimeline({
     currentWeekStartDate: currentWeekStart,
     selectedWeekStartDate: weekStart,
+    timelineSummary,
     weekStack
   });
+  const canLoadOlderWeeks = getOlderWeekStarts(visibleWeekStarts, timelineSummary).length > 0;
+  const canLoadNewerWeeks = visibleWeekStarts.length > 0;
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -229,33 +239,48 @@ function App() {
       });
   }, []);
 
+  useLayoutEffect(() => {
+    const pending = pendingPrependScroll.current;
+    const main = mainRef.current;
+    if (!pending || !main) {
+      isAppendingWeeks.current = false;
+      return;
+    }
+
+    main.scrollTop = pending.scrollTop + (main.scrollHeight - pending.scrollHeight);
+    pendingPrependScroll.current = null;
+    isPrependingWeeks.current = false;
+    isAppendingWeeks.current = false;
+  }, [visibleWeekStarts]);
+
   useEffect(() => {
-    const localStarts = weekRangeAround(weekStart);
-    setVisibleWeekStarts(localStarts);
-    loadWeeks(localStarts);
-
-    const expandSettled = window.setTimeout(() => {
-      const surroundingStarts = weekRangeAround(weekStart);
-      loadWeeks(surroundingStarts);
-    }, 260);
-
-    return () => window.clearTimeout(expandSettled);
-  }, [weekStart]);
-
-  useEffect(() => {
+    loadWeeks(visibleWeekStarts);
+    loadTrainingTimeline();
     loadStravaStatus();
     loadActivities();
   }, []);
 
   useEffect(() => {
+    if (!timelineSummary || didApplyInitialTimelineRange.current) {
+      return;
+    }
+
+    didApplyInitialTimelineRange.current = true;
+    recenterVisibleWeeks(weekStart, timelineSummary);
+  }, [timelineSummary]);
+
+  useEffect(() => {
     function handlePopState() {
-      setWeekStart(getWeekStartFromLocation());
+      const nextWeekStart = getWeekStartFromLocation();
+      setVisibleWeekStarts(boundedWeekRangeAround(nextWeekStart, timelineSummary));
+      loadWeeks(boundedWeekRangeAround(nextWeekStart, timelineSummary));
+      setWeekStart(nextWeekStart);
     }
 
     ensureWeekRoute(weekStart);
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [timelineSummary]);
 
   function loadWeeks(starts: string[], options: { force?: boolean } = {}) {
     const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
@@ -288,13 +313,59 @@ function App() {
     if (normalizedStart === weekStart) {
       return;
     }
-    setVisibleWeekStarts(weekRangeAround(normalizedStart));
+    if (_source === "week-stack") {
+      setVisibleWeekStarts((current) => mergeWeekStarts([...current, normalizedStart]));
+      loadWeeks([normalizedStart]);
+    } else {
+      recenterVisibleWeeks(normalizedStart, timelineSummary);
+    }
     window.history.pushState({ weekStart: normalizedStart }, "", weekPath(normalizedStart));
     setWeekStart(normalizedStart);
   }
 
   function jumpToThisWeek() {
     selectWeek(currentWeekStart, "time-rail");
+  }
+
+  function recenterVisibleWeeks(start: string, summary: TrainingTimelineSummary | null) {
+    const starts = boundedWeekRangeAround(start, summary);
+    setVisibleWeekStarts(starts);
+    loadWeeks(starts);
+  }
+
+  function prependOlderWeeks() {
+    if (isPrependingWeeks.current) {
+      return;
+    }
+
+    const olderStarts = getOlderWeekStarts(visibleWeekStarts, timelineSummary);
+    const main = mainRef.current;
+    if (!olderStarts.length || !main) {
+      return;
+    }
+
+    isPrependingWeeks.current = true;
+    pendingPrependScroll.current = {
+      scrollHeight: main.scrollHeight,
+      scrollTop: main.scrollTop
+    };
+    setVisibleWeekStarts((current) => mergeWeekStarts([...olderStarts, ...current]));
+    loadWeeks(olderStarts);
+  }
+
+  function appendNewerWeeks() {
+    if (isAppendingWeeks.current) {
+      return;
+    }
+
+    const newerStarts = getNewerWeekStarts(visibleWeekStarts);
+    if (!newerStarts.length) {
+      return;
+    }
+
+    isAppendingWeeks.current = true;
+    setVisibleWeekStarts((current) => mergeWeekStarts([...current, ...newerStarts]));
+    loadWeeks(newerStarts);
   }
 
   function openCreate(plannedDate: string) {
@@ -338,16 +409,28 @@ function App() {
     }
     setEditor(null);
     refreshVisibleWeeks();
+    loadTrainingTimeline();
   }
 
   async function deleteWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
     refreshVisibleWeeks();
+    loadTrainingTimeline();
   }
 
   async function duplicateWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
     refreshVisibleWeeks();
+    loadTrainingTimeline();
+  }
+
+  function loadTrainingTimeline() {
+    fetchJson<TrainingTimelineSummary>("/api/training-timeline")
+      .then((body) => {
+        setTimelineSummary(body);
+        setApiError(null);
+      })
+      .catch((error: Error) => setApiError(error.message));
   }
 
   function loadStravaStatus() {
@@ -372,6 +455,7 @@ function App() {
       setLastSyncJob(job);
       loadActivities();
       loadStravaStatus();
+      loadTrainingTimeline();
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Strava sync failed.");
     } finally {
@@ -420,7 +504,7 @@ function App() {
         </nav>
       </aside>
 
-      <main>
+      <main ref={mainRef}>
         {apiError ? (
           <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
         ) : null}
@@ -435,8 +519,12 @@ function App() {
 
         {activeTab === "week" ? (
           <WeekView
+            canLoadNewerWeeks={canLoadNewerWeeks}
+            canLoadOlderWeeks={canLoadOlderWeeks}
             isLoading={isLoadingWeek}
             onJumpToThisWeek={jumpToThisWeek}
+            onLoadNewerWeeks={appendNewerWeeks}
+            onLoadOlderWeeks={prependOlderWeeks}
             onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
             onSelectWeek={(start) => selectWeek(start, "week-stack")}
             selectedWeekStart={weekStart}
@@ -479,8 +567,12 @@ function App() {
 }
 
 function WeekView({
+  canLoadNewerWeeks,
+  canLoadOlderWeeks,
   isLoading,
   onJumpToThisWeek,
+  onLoadNewerWeeks,
+  onLoadOlderWeeks,
   onSelectTimeWeek,
   onSelectWeek,
   selectedWeekStart,
@@ -493,8 +585,12 @@ function WeekView({
   onDelete,
   onDuplicate
 }: {
+  canLoadNewerWeeks: boolean;
+  canLoadOlderWeeks: boolean;
   isLoading: boolean;
   onJumpToThisWeek: () => void;
+  onLoadNewerWeeks: () => void;
+  onLoadOlderWeeks: () => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
@@ -507,9 +603,61 @@ function WeekView({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
 }) {
+  const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = olderWeeksSentinelRef.current;
+    const root = sentinel?.closest("main");
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadOlderWeeks) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadOlderWeeks();
+        }
+      },
+      {
+        root,
+        rootMargin: "520px 0px 0px",
+        threshold: 0
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadOlderWeeks, onLoadOlderWeeks]);
+
+  useEffect(() => {
+    const sentinel = newerWeeksSentinelRef.current;
+    const root = sentinel?.closest("main");
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadNewerWeeks) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadNewerWeeks();
+        }
+      },
+      {
+        root,
+        rootMargin: "0px 0px 520px",
+        threshold: 0
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadNewerWeeks, onLoadNewerWeeks]);
+
   return (
     <section className="week-stack-layout" aria-busy={isLoading}>
       <section className="week-timeline" aria-label="Training week timeline">
+        <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
             key={start}
@@ -525,6 +673,7 @@ function WeekView({
             weekStart={start}
           />
         ))}
+        <div className="week-stack-sentinel" aria-hidden="true" ref={newerWeeksSentinelRef} />
       </section>
 
       <TrainingTimeRail
@@ -655,6 +804,8 @@ function CollapsedWeekCard({
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
   const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
   const detail = formatCollapsedWeekDetail(week, tone);
+  const dayBadges = collapsedWeekDayBadges(week, weekStart);
+  const dailySummary = dayBadges.map((badge) => `${formatWeekday(badge.date)} ${badge.label}`).join(", ");
 
   return (
     <button
@@ -662,12 +813,18 @@ function CollapsedWeekCard({
       data-testid="week-preview-card"
       data-week-start={weekStart}
       type="button"
-      aria-label={`Go to week ${range}, ${mileageSummary}, ${detail}`}
+      aria-label={`Go to week ${range}, ${dailySummary}, ${mileageSummary}, ${detail}`}
       onClick={() => onSelectWeek(weekStart)}
     >
       <span className="week-peek-range">{range}</span>
-      <strong>{mileageSummary}</strong>
-      <small>{detail}</small>
+      <span className="week-peek-days" aria-hidden="true">
+        {dayBadges.map((badge) => (
+          <span className={`week-peek-day-badge ${badge.kind}`} key={badge.date} title={badge.title}>
+            {badge.label}
+          </span>
+        ))}
+      </span>
+      <small className="week-peek-summary">{mileageSummary}</small>
       <ChevronRight className="week-peek-icon" size={16} aria-hidden="true" />
     </button>
   );
@@ -1310,6 +1467,42 @@ function weekRangeAround(weekStart: string) {
   );
 }
 
+function boundedWeekRangeAround(weekStart: string, timelineSummary: TrainingTimelineSummary | null) {
+  const starts = weekRangeAround(weekStart);
+  const oldestWeekStart = timelineSummary?.oldestWeekStartDate;
+  if (!oldestWeekStart || weekStart < oldestWeekStart) {
+    return starts;
+  }
+
+  return starts.filter((start) => start >= oldestWeekStart);
+}
+
+function getOlderWeekStarts(visibleWeekStarts: string[], timelineSummary: TrainingTimelineSummary | null) {
+  const oldestVisibleStart = visibleWeekStarts[0];
+  const oldestDataStart = timelineSummary?.oldestWeekStartDate;
+  if (!oldestVisibleStart || !oldestDataStart || oldestVisibleStart <= oldestDataStart) {
+    return [];
+  }
+
+  const starts: string[] = [];
+  for (let index = WEEK_STACK_LOAD_BATCH; index >= 1; index -= 1) {
+    const start = addDays(oldestVisibleStart, index * -7);
+    if (start >= oldestDataStart) {
+      starts.push(start);
+    }
+  }
+  return starts;
+}
+
+function getNewerWeekStarts(visibleWeekStarts: string[]) {
+  const newestVisibleStart = visibleWeekStarts.at(-1);
+  if (!newestVisibleStart) {
+    return [];
+  }
+
+  return Array.from({ length: WEEK_STACK_LOAD_BATCH }, (_, index) => addDays(newestVisibleStart, (index + 1) * 7));
+}
+
 function mergeWeekStarts(starts: string[]) {
   return Array.from(new Set(starts)).sort();
 }
@@ -1426,6 +1619,52 @@ function sumDistance(workouts: Workout[]) {
 
 function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
+}
+
+function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(weekStart, index);
+    const dayActuals = week?.actualActivities.filter((activity) => activity.activityDate === date) ?? [];
+    const dayWorkouts = week?.workouts.filter((workout) => workout.plannedDate === date) ?? [];
+    const actualMiles = sumActualDistance(dayActuals);
+    const plannedMiles = sumDistance(dayWorkouts);
+    const weekday = formatWeekday(date);
+    const dateLabel = formatShortDate(date);
+
+    if (!week) {
+      return {
+        date,
+        kind: "loading",
+        label: "...",
+        title: `${weekday} ${dateLabel}: loading`
+      };
+    }
+
+    if (dayActuals.length > 0) {
+      return {
+        date,
+        kind: actualMiles > 0 ? "actual" : "rest",
+        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "rest",
+        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} actual miles`
+      };
+    }
+
+    if (plannedMiles > 0) {
+      return {
+        date,
+        kind: "planned",
+        label: `${formatNumber(plannedMiles)} mi`,
+        title: `${weekday} ${dateLabel}: ${formatNumber(plannedMiles)} planned miles`
+      };
+    }
+
+    return {
+      date,
+      kind: "rest",
+      label: "rest",
+      title: `${weekday} ${dateLabel}: rest`
+    };
+  });
 }
 
 function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: "past" | "future") {

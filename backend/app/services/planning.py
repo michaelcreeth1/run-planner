@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException, status
@@ -81,6 +82,80 @@ def list_weeks(db: Session) -> list[TrainingWeek]:
     for week in weeks:
         recalculate_week(db, week)
     return weeks
+
+
+def training_timeline(db: Session) -> dict:
+    athlete = ensure_default_athlete(db)
+    month_summaries: dict[tuple[int, int], dict] = defaultdict(new_timeline_month_summary)
+    data_week_starts: set[date] = set()
+
+    workouts = db.scalars(
+        select(PlannedWorkout).where(PlannedWorkout.athlete_account_id == athlete.id)
+    ).all()
+    for workout in workouts:
+        week_start = week_start_for(workout.planned_date)
+        month_key = (workout.planned_date.year, workout.planned_date.month)
+        summary = month_summaries[month_key]
+        summary["has_plan"] = True
+        summary["planned_miles"] += workout.planned_distance or 0
+        data_week_starts.add(week_start)
+
+    activities = db.scalars(
+        select(StravaActivity).where(
+            StravaActivity.athlete_account_id == athlete.id,
+            StravaActivity.deleted_at.is_(None),
+        )
+    ).all()
+    for activity in activities:
+        activity_date = activity.start_date_local.date()
+        week_start = week_start_for(activity_date)
+        month_key = (activity_date.year, activity_date.month)
+        summary = month_summaries[month_key]
+        summary["has_activities"] = True
+        summary["actual_miles"] += activity.distance / 1609.344
+        data_week_starts.add(week_start)
+
+    metadata_weeks = db.scalars(
+        select(TrainingWeek).where(
+            TrainingWeek.athlete_account_id == athlete.id,
+            (TrainingWeek.notes != "") | TrainingWeek.target_long_run_distance.is_not(None),
+        )
+    ).all()
+    for week in metadata_weeks:
+        month_key = (week.week_start_date.year, week.week_start_date.month)
+        month_summaries[month_key]["has_plan"] = True
+        data_week_starts.add(week.week_start_date)
+
+    months = [
+        {
+            "year": year,
+            "month": month,
+            "has_plan": summary["has_plan"],
+            "has_activities": summary["has_activities"],
+            "planned_miles": round_optional_miles(summary["planned_miles"]),
+            "actual_miles": round_optional_miles(summary["actual_miles"]),
+        }
+        for (year, month), summary in sorted(month_summaries.items())
+    ]
+
+    return {
+        "oldest_week_start_date": min(data_week_starts) if data_week_starts else None,
+        "newest_week_start_date": max(data_week_starts) if data_week_starts else None,
+        "months": months,
+    }
+
+
+def new_timeline_month_summary() -> dict:
+    return {
+        "has_plan": False,
+        "has_activities": False,
+        "planned_miles": 0,
+        "actual_miles": 0,
+    }
+
+
+def round_optional_miles(value: float) -> float | None:
+    return round(value, 1) if value > 0 else None
 
 
 def update_week(db: Session, week_id: str, payload: TrainingWeekPatch) -> TrainingWeek:

@@ -6,6 +6,21 @@ export type TrainingTimelineIndex = {
   currentWeekStartDate: string;
 };
 
+export type TrainingTimelineSummary = {
+  oldestWeekStartDate: string | null;
+  newestWeekStartDate: string | null;
+  months: TrainingTimelineMonthSummary[];
+};
+
+export type TrainingTimelineMonthSummary = {
+  year: number;
+  month: number;
+  hasPlan: boolean;
+  hasActivities: boolean;
+  plannedMiles?: number | null;
+  actualMiles?: number | null;
+};
+
 export type TimelineYear = {
   year: number;
   months: TimelineMonth[];
@@ -54,6 +69,7 @@ export type TimelineWeekSummary = {
 type UseTrainingTimelineOptions = {
   currentWeekStartDate: string;
   selectedWeekStartDate: string;
+  timelineSummary: TrainingTimelineSummary | null;
   weekStack: Record<string, TimelineWeekSummary>;
 };
 
@@ -77,38 +93,57 @@ const MOCK_RACES: Array<Omit<TimelineRaceMarker, "weekStartDate">> = [
 export function useTrainingTimeline({
   currentWeekStartDate,
   selectedWeekStartDate,
+  timelineSummary,
   weekStack
 }: UseTrainingTimelineOptions): TrainingTimelineIndex {
   return useMemo(() => {
+    const loadedWeekStartDates = Object.keys(weekStack);
+    const startDate = earliestDate([
+      timelineSummary?.oldestWeekStartDate,
+      currentWeekStartDate,
+      selectedWeekStartDate
+    ]);
+    const endDate = latestDate([
+      timelineSummary?.newestWeekStartDate,
+      currentWeekStartDate,
+      selectedWeekStartDate,
+      ...loadedWeekStartDates
+    ]);
     const currentYear = parseDate(currentWeekStartDate).getFullYear();
-    const currentMonth = parseDate(currentWeekStartDate).getMonth() + 1;
     const selectedYear = parseDate(selectedWeekStartDate).getFullYear();
-    const selectedMonth = parseDate(selectedWeekStartDate).getMonth() + 1;
-    const startYear = Math.min(currentYear - 4, selectedYear);
-    const endYear = Math.max(currentYear, selectedYear);
+    const startYear = parseDate(startDate).getFullYear();
+    const endYear = parseDate(endDate).getFullYear();
     const races = MOCK_RACES.map((race) => ({
       ...race,
       weekStartDate: startOfWeek(parseDate(race.date))
     }));
+    const monthSummaryMap = new Map(
+      timelineSummary?.months.map((month) => [`${month.year}-${month.month}`, month]) ?? []
+    );
 
     const years: TimelineYear[] = [];
 
     for (let year = startYear; year <= endYear; year += 1) {
       const isExpandedByDefault = year === currentYear || year === selectedYear;
-      const topMonth = year === currentYear ? Math.max(currentMonth, year === selectedYear ? selectedMonth : currentMonth) : 12;
-      const months = isExpandedByDefault
-        ? Array.from({ length: topMonth }, (_, index) => buildMonth(year, index + 1, {
-            currentWeekStartDate,
-            races,
-            selectedWeekStartDate,
-            weekStack
-          }))
-        : [];
+      const firstMonth = year === startYear ? parseDate(startDate).getMonth() + 1 : 1;
+      const lastMonth = year === endYear ? parseDate(endDate).getMonth() + 1 : 12;
+      const months = Array.from({ length: lastMonth - firstMonth + 1 }, (_, index) =>
+        buildMonth(year, firstMonth + index, {
+          currentWeekStartDate,
+          monthSummaryMap,
+          races,
+          selectedWeekStartDate,
+          weekStack
+        })
+      );
 
       years.push({
         year,
         months,
-        hasData: year === currentYear || year === selectedYear || races.some((race) => parseDate(race.date).getFullYear() === year),
+        hasData:
+          months.some((month) => month.hasActivities || month.hasPlan || month.races.length) ||
+          year === currentYear ||
+          year === selectedYear,
         isExpandedByDefault
       });
     }
@@ -118,7 +153,7 @@ export function useTrainingTimeline({
       selectedWeekStartDate,
       currentWeekStartDate
     };
-  }, [currentWeekStartDate, selectedWeekStartDate, weekStack]);
+  }, [currentWeekStartDate, selectedWeekStartDate, timelineSummary, weekStack]);
 }
 
 function buildMonth(
@@ -126,16 +161,19 @@ function buildMonth(
   month: number,
   {
     currentWeekStartDate,
+    monthSummaryMap,
     races,
     selectedWeekStartDate,
     weekStack
   }: {
     currentWeekStartDate: string;
+    monthSummaryMap: Map<string, TrainingTimelineMonthSummary>;
     races: TimelineRaceMarker[];
     selectedWeekStartDate: string;
     weekStack: Record<string, TimelineWeekSummary>;
   }
 ): TimelineMonth {
+  const monthSummary = monthSummaryMap.get(`${year}-${month}`);
   const monthRaces = races.filter((race) => {
     const raceDate = parseDate(race.date);
     return raceDate.getFullYear() === year && raceDate.getMonth() + 1 === month;
@@ -159,10 +197,10 @@ function buildMonth(
     month,
     label: new Intl.DateTimeFormat("en-US", { month: "short" }).format(new Date(year, month - 1, 1)),
     anchorWeekStartDate,
-    hasActivities: weekSummaries.some((week) => week.actualMileage > 0),
-    hasPlan: weekSummaries.some((week) => week.plannedMileage > 0),
-    plannedMiles: sumOptional(weekSummaries.map((week) => week.plannedMileage)),
-    actualMiles: sumOptional(weekSummaries.map((week) => week.actualMileage)),
+    hasActivities: Boolean(monthSummary?.hasActivities) || weekSummaries.some((week) => week.actualMileage > 0),
+    hasPlan: Boolean(monthSummary?.hasPlan) || weekSummaries.some((week) => week.plannedMileage > 0),
+    plannedMiles: monthSummary?.plannedMiles ?? sumOptional(weekSummaries.map((week) => week.plannedMileage)),
+    actualMiles: monthSummary?.actualMiles ?? sumOptional(weekSummaries.map((week) => week.actualMileage)),
     races: monthRaces,
     blockMarkers: [],
     isSelectedMonth: isSameYearMonth(selectedWeekStartDate, year, month),
@@ -203,6 +241,18 @@ function resolveMonthAnchor({
 function sumOptional(values: number[]) {
   const sum = values.reduce((total, value) => total + value, 0);
   return sum > 0 ? Number(sum.toFixed(1)) : undefined;
+}
+
+function earliestDate(values: Array<string | null | undefined>) {
+  return values.filter(isDateValue).sort()[0] ?? toDateInputValue(new Date());
+}
+
+function latestDate(values: Array<string | null | undefined>) {
+  return values.filter(isDateValue).sort().at(-1) ?? toDateInputValue(new Date());
+}
+
+function isDateValue(value: string | null | undefined): value is string {
+  return Boolean(value);
 }
 
 function isSameYearMonth(dateValue: string, year: number, month: number) {
