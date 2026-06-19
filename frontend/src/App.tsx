@@ -2,11 +2,12 @@ import {
   Activity,
   BarChart3,
   CalendarDays,
-  ChevronLeft,
   ChevronRight,
   Copy,
   Edit3,
   Link,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Route,
@@ -19,7 +20,10 @@ import {
   X
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { TrainingTimeRail } from "./components/time-rail/TrainingTimeRail";
+import type { TrainingTimelineIndex } from "./hooks/useTrainingTimeline";
+import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 
 const FRONTEND_VERSION = "0.1.0";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -184,24 +188,34 @@ const intensities: Array<{ value: Workout["intensityCategory"]; label: string }>
 ];
 
 type TabId = (typeof tabs)[number]["id"];
+type WeekSelectSource = "header" | "time-rail" | "week-stack";
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("week");
   const [apiVersion, setApiVersion] = useState<ApiVersion | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [weekStart, setWeekStart] = useState(getInitialWeekStart);
-  const [week, setWeek] = useState<TrainingWeek | null>(null);
-  const [isLoadingWeek, setIsLoadingWeek] = useState(true);
+  const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(getInitialWeekStart()));
+  const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const staleFrontend = apiVersion
     ? apiVersion.forceReload || compareVersions(FRONTEND_VERSION, apiVersion.frontendMinVersion) < 0
     : false;
+  const week = weekStack[weekStart] ?? null;
+  const isLoadingWeek = loadingWeekStarts.has(weekStart);
+  const currentWeekStart = startOfWeek(new Date());
+  const timelineIndex = useTrainingTimeline({
+    currentWeekStartDate: currentWeekStart,
+    selectedWeekStartDate: weekStart,
+    weekStack
+  });
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -215,7 +229,16 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadWeekStack(weekStart);
+    const localStarts = weekRangeAround(weekStart);
+    setVisibleWeekStarts(localStarts);
+    loadWeeks(localStarts);
+
+    const expandSettled = window.setTimeout(() => {
+      const surroundingStarts = weekRangeAround(weekStart);
+      loadWeeks(surroundingStarts);
+    }, 260);
+
+    return () => window.clearTimeout(expandSettled);
   }, [weekStart]);
 
   useEffect(() => {
@@ -233,39 +256,44 @@ function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const days = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-  }, [weekStart]);
+  function loadWeeks(starts: string[], options: { force?: boolean } = {}) {
+    const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
+    const startsToFetch = options.force ? uniqueStarts : uniqueStarts.filter((start) => !weekStack[start]);
+    if (!startsToFetch.length) {
+      return;
+    }
 
-  const stackStarts = useMemo(() => {
-    return Array.from({ length: WEEK_STACK_RADIUS * 2 + 1 }, (_, index) =>
-      addDays(weekStart, (index - WEEK_STACK_RADIUS) * 7)
-    );
-  }, [weekStart]);
-
-  function loadWeekStack(start: string) {
-    setIsLoadingWeek(true);
-    const starts = Array.from({ length: WEEK_STACK_RADIUS * 2 + 1 }, (_, index) =>
-      addDays(start, (index - WEEK_STACK_RADIUS) * 7)
-    );
-
-    Promise.all(starts.map((weekDate) => fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`)))
+    setLoadingWeekStarts((current) => mergeLoadingStarts(current, startsToFetch));
+    Promise.all(startsToFetch.map((weekDate) => fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`)))
       .then((weeks) => {
-        const nextStack = Object.fromEntries(weeks.map((loadedWeek) => [loadedWeek.weekStartDate, loadedWeek]));
-        setWeekStack(nextStack);
-        setWeek(nextStack[start] ?? null);
+        setWeekStack((current) => ({
+          ...current,
+          ...Object.fromEntries(weeks.map((loadedWeek) => [loadedWeek.weekStartDate, loadedWeek]))
+        }));
         setApiError(null);
       })
       .catch((error: Error) => setApiError(error.message))
-      .finally(() => setIsLoadingWeek(false));
+      .finally(() => {
+        setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
+      });
   }
 
-  function navigateToWeek(start: string) {
+  function refreshVisibleWeeks() {
+    loadWeeks(mergeWeekStarts([...visibleWeekStarts, ...weekRangeAround(weekStart)]), { force: true });
+  }
+
+  function selectWeek(start: string, _source: WeekSelectSource = "week-stack") {
     const normalizedStart = startOfWeek(parseDate(start));
-    const url = new URL(window.location.href);
-    url.searchParams.set("week", normalizedStart);
-    window.history.pushState({ weekStart: normalizedStart }, "", `${url.pathname}${url.search}${url.hash}`);
+    if (normalizedStart === weekStart) {
+      return;
+    }
+    setVisibleWeekStarts(weekRangeAround(normalizedStart));
+    window.history.pushState({ weekStart: normalizedStart }, "", weekPath(normalizedStart));
     setWeekStart(normalizedStart);
+  }
+
+  function jumpToThisWeek() {
+    selectWeek(currentWeekStart, "time-rail");
   }
 
   function openCreate(plannedDate: string) {
@@ -308,17 +336,17 @@ function App() {
       });
     }
     setEditor(null);
-    loadWeekStack(weekStart);
+    refreshVisibleWeeks();
   }
 
   async function deleteWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
-    loadWeekStack(weekStart);
+    refreshVisibleWeeks();
   }
 
   async function duplicateWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
-    loadWeekStack(weekStart);
+    refreshVisibleWeeks();
   }
 
   function loadStravaStatus() {
@@ -351,14 +379,26 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <img src="/icons/icon.svg" alt="" />
-          <div>
-            <strong>Running Planner</strong>
-            <span>v{FRONTEND_VERSION}</span>
+    <div className={`app-shell ${isSidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
+      <aside className={`sidebar ${isSidebarCollapsed ? "sidebar--collapsed" : ""}`}>
+        <div className="sidebar-top">
+          <div className="brand">
+            <img src="/icons/icon.svg" alt="" />
+            <div className="brand-copy">
+              <strong>Running Planner</strong>
+              <span>v{FRONTEND_VERSION}</span>
+            </div>
           </div>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={isSidebarCollapsed}
+            onClick={() => setIsSidebarCollapsed((current) => !current)}
+          >
+            {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
         </div>
         <nav className="nav-tabs" aria-label="Primary navigation">
           {tabs.map((tab) => {
@@ -380,25 +420,6 @@ function App() {
       </aside>
 
       <main>
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Training week</p>
-            <h1>{week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart)}</h1>
-          </div>
-          <div className="week-actions">
-            <button type="button" title="Previous week" onClick={() => navigateToWeek(addDays(weekStart, -7))}>
-              <ChevronLeft size={18} />
-            </button>
-            <button type="button" title="Next week" onClick={() => navigateToWeek(addDays(weekStart, 7))}>
-              <ChevronRight size={18} />
-            </button>
-            <button className="primary" type="button" title="Refresh" onClick={() => loadWeekStack(weekStart)}>
-              <RefreshCw size={18} />
-              <span>Refresh</span>
-            </button>
-          </div>
-        </header>
-
         {apiError ? (
           <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
         ) : null}
@@ -413,12 +434,15 @@ function App() {
 
         {activeTab === "week" ? (
           <WeekView
-            days={days}
             isLoading={isLoadingWeek}
-            onSelectWeek={navigateToWeek}
+            onJumpToThisWeek={jumpToThisWeek}
+            onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
+            onSelectWeek={(start) => selectWeek(start, "week-stack")}
+            selectedWeekStart={weekStart}
+            timelineIndex={timelineIndex}
             week={week}
             weekStack={weekStack}
-            weekStarts={stackStarts}
+            weekStarts={visibleWeekStarts}
             onCreate={openCreate}
             onEdit={openEdit}
             onDelete={deleteWorkout}
@@ -454,9 +478,12 @@ function App() {
 }
 
 function WeekView({
-  days,
   isLoading,
+  onJumpToThisWeek,
+  onSelectTimeWeek,
   onSelectWeek,
+  selectedWeekStart,
+  timelineIndex,
   week,
   weekStack,
   weekStarts,
@@ -465,9 +492,12 @@ function WeekView({
   onDelete,
   onDuplicate
 }: {
-  days: string[];
   isLoading: boolean;
+  onJumpToThisWeek: () => void;
+  onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
+  selectedWeekStart: string;
+  timelineIndex: TrainingTimelineIndex;
   week: TrainingWeek | null;
   weekStack: Record<string, TrainingWeek>;
   weekStarts: string[];
@@ -476,45 +506,137 @@ function WeekView({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
 }) {
-  const selectedWeekStart = week?.weekStartDate;
-  const pastStarts = selectedWeekStart ? weekStarts.filter((start) => start < selectedWeekStart) : [];
-  const futureStarts = selectedWeekStart ? weekStarts.filter((start) => start > selectedWeekStart) : [];
+  return (
+    <section className="week-stack-layout" aria-busy={isLoading}>
+      <section className="week-timeline" aria-label="Training week timeline">
+        {weekStarts.map((start) => (
+          <WeekRow
+            key={start}
+            isExpanded={start === selectedWeekStart}
+            isLoading={isLoading && start === selectedWeekStart}
+            onCreate={onCreate}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}
+            onSelectWeek={onSelectWeek}
+            selectedWeekStart={selectedWeekStart}
+            week={start === selectedWeekStart ? week : weekStack[start]}
+            weekStart={start}
+          />
+        ))}
+      </section>
+
+      <TrainingTimeRail
+        index={timelineIndex}
+        onJumpToThisWeek={onJumpToThisWeek}
+        onSelectWeek={onSelectTimeWeek}
+      />
+    </section>
+  );
+}
+
+function WeekRow({
+  isExpanded,
+  isLoading,
+  onCreate,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  onSelectWeek,
+  selectedWeekStart,
+  week,
+  weekStart
+}: {
+  isExpanded: boolean;
+  isLoading: boolean;
+  onCreate: (plannedDate: string) => void;
+  onDelete: (workout: Workout) => void;
+  onDuplicate: (workout: Workout) => void;
+  onEdit: (workout: Workout) => void;
+  onSelectWeek: (weekStart: string) => void;
+  selectedWeekStart: string;
+  week?: TrainingWeek | null;
+  weekStart: string;
+}) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previousHeight = useRef<number | null>(null);
+  const isPast = weekStart < selectedWeekStart;
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    const content = contentRef.current;
+    if (!frame || !content) {
+      return;
+    }
+
+    const nextHeight = content.getBoundingClientRect().height;
+    const startHeight = previousHeight.current;
+    const reduceMotion = prefersReducedMotion();
+
+    if (startHeight !== null && Math.abs(startHeight - nextHeight) > 1 && !reduceMotion) {
+      frame.style.height = `${startHeight}px`;
+      frame.style.overflow = "hidden";
+      window.requestAnimationFrame(() => {
+        frame.style.height = `${nextHeight}px`;
+      });
+
+      const finish = window.setTimeout(() => {
+        frame.style.height = "auto";
+        frame.style.overflow = "visible";
+      }, 240);
+
+      previousHeight.current = nextHeight;
+      return () => window.clearTimeout(finish);
+    }
+
+    frame.style.height = "auto";
+    frame.style.overflow = "visible";
+    previousHeight.current = nextHeight;
+  }, [isExpanded, isLoading, week]);
+
+  useEffect(() => {
+    if (!isExpanded || !frameRef.current) {
+      return;
+    }
+
+    const frame = frameRef.current;
+    const scrollFrame = window.requestAnimationFrame(() => {
+      scrollExpandedWeekIntoView(frame);
+    });
+
+    return () => window.cancelAnimationFrame(scrollFrame);
+  }, [isExpanded, weekStart]);
 
   return (
-    <section className="week-timeline" aria-busy={isLoading}>
-      <div className="week-preview-stack" aria-label="Prior weeks">
-        {pastStarts.map((start) => (
-          <CollapsedWeekCard
-            key={start}
-            onSelectWeek={onSelectWeek}
-            tone="past"
-            week={weekStack[start]}
-            weekStart={start}
+    <div
+      className={`week-row ${isExpanded ? "week-row--expanded" : ""}`}
+      data-week-start={weekStart}
+      data-testid="week-row"
+      ref={frameRef}
+    >
+      <div className="week-row-content" ref={contentRef}>
+        {isExpanded ? (
+          <ExpandedWeekBoard
+            days={Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))}
+            isLoading={!week}
+            onCreate={onCreate}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}
+            week={week ?? null}
+            weekStart={weekStart}
           />
-        ))}
-      </div>
-
-      <ExpandedWeekBoard
-        days={days}
-        onCreate={onCreate}
-        onDelete={onDelete}
-        onDuplicate={onDuplicate}
-        onEdit={onEdit}
-        week={week}
-      />
-
-      <div className="week-preview-stack" aria-label="Future weeks">
-        {futureStarts.map((start) => (
+        ) : (
           <CollapsedWeekCard
-            key={start}
             onSelectWeek={onSelectWeek}
-            tone="future"
-            week={weekStack[start]}
-            weekStart={start}
+            tone={isPast ? "past" : "future"}
+            week={week ?? undefined}
+            weekStart={weekStart}
           />
-        ))}
+        )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -529,11 +651,9 @@ function CollapsedWeekCard({
   week?: TrainingWeek;
   weekStart: string;
 }) {
-  const range = week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart);
-  const planned = week?.plannedMileage ?? 0;
-  const actual = week?.actualMileage ?? 0;
-  const hardDays = week?.hardDays ?? 0;
-  const longRun = week?.longRunDistance ?? 0;
+  const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
+  const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
+  const detail = formatCollapsedWeekDetail(week, tone);
 
   return (
     <button
@@ -541,29 +661,31 @@ function CollapsedWeekCard({
       data-testid="week-preview-card"
       data-week-start={weekStart}
       type="button"
+      aria-label={`Go to week ${range}, ${mileageSummary}, ${detail}`}
       onClick={() => onSelectWeek(weekStart)}
     >
-      <span>{range}</span>
-      <strong>
-        {formatNumber(actual)} actual / {formatNumber(planned)} planned
-      </strong>
-      <small>
-        {hardDays} hard · {formatNumber(longRun)} long
-      </small>
+      <span className="week-peek-range">{range}</span>
+      <strong>{mileageSummary}</strong>
+      <small>{detail}</small>
+      <ChevronRight className="week-peek-icon" size={16} aria-hidden="true" />
     </button>
   );
 }
 
 function ExpandedWeekBoard({
   days,
+  isLoading,
   week,
+  weekStart,
   onCreate,
   onEdit,
   onDelete,
   onDuplicate
 }: {
   days: string[];
+  isLoading?: boolean;
   week: TrainingWeek | null;
+  weekStart: string;
   onCreate: (plannedDate: string) => void;
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
@@ -571,29 +693,50 @@ function ExpandedWeekBoard({
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
+  const today = todayDateString();
+
+  if (isLoading) {
+    return (
+      <div
+        className="expanded-week-board expanded-week-board--loading"
+        aria-label={`Loading ${formatWeekRangeFromStart(weekStart)}`}
+      >
+        <section className="week-overview-panel" aria-label="Week overview">
+          <WeekStackHeader week={week} weekStart={weekStart} />
+          <ExpandedWeekSkeletonOverview />
+        </section>
+        <ExpandedWeekSkeleton days={days} />
+      </div>
+    );
+  }
 
   return (
     <div className="expanded-week-board">
-      <section className="summary-grid" aria-label="Week summary">
-        <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} />
-        <Metric label="Actual" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} />
-        <Metric label="Hard days" value={String(week?.hardDays ?? 0)} />
-        <Metric label="Long run" value={`${formatNumber(week?.longRunDistance ?? 0)} mi`} />
-      </section>
+      <section className="week-overview-panel" aria-label="Week overview">
+        <WeekStackHeader week={week} weekStart={weekStart} />
 
-      <section className="risk-strip" aria-label="Risk indicators">
-        <span>Long run {formatNumber(week?.longRunPercentage ?? 0)}%</span>
-        <span>{week?.hardDays ?? 0} hard days</span>
-        <span>{workouts.length} planned sessions</span>
-        <span>{actualActivities.length} actual activities</span>
+        <section className="summary-grid" aria-label="Week summary">
+          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} />
+          <Metric label="Actual" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} />
+          <Metric label="Hard days" value={String(week?.hardDays ?? 0)} />
+          <Metric label="Long run" value={`${formatNumber(week?.longRunDistance ?? 0)} mi`} />
+        </section>
+
+        <section className="risk-strip" aria-label="Risk indicators">
+          <span>Long run {formatNumber(week?.longRunPercentage ?? 0)}%</span>
+          <span>{week?.hardDays ?? 0} hard days</span>
+          <span>{workouts.length} planned sessions</span>
+          <span>{actualActivities.length} actual activities</span>
+        </section>
       </section>
 
       <section className="week-board" aria-label="Weekly planning board">
         {days.map((dateValue) => {
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
+          const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
           return (
-            <article className="day-column" key={dateValue}>
+            <article className={`day-column ${isEmpty ? "day-column--empty" : ""}`} key={dateValue}>
               <header>
                 <div>
                   <strong>{formatWeekday(dateValue)}</strong>
@@ -616,6 +759,14 @@ function ExpandedWeekBoard({
                 {dayActuals.map((activity) => (
                   <ActualActivityItem activity={activity} key={activity.id} />
                 ))}
+                {isEmpty && dateValue < today ? (
+                  <span className="empty-day-action empty-day-action--static">No activity</span>
+                ) : null}
+                {isEmpty && dateValue >= today ? (
+                  <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
+                    + Add session
+                  </button>
+                ) : null}
               </div>
               <footer>
                 {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} actual
@@ -625,6 +776,68 @@ function ExpandedWeekBoard({
         })}
       </section>
     </div>
+  );
+}
+
+function WeekStackHeader({
+  week,
+  weekStart
+}: {
+  week: TrainingWeek | null;
+  weekStart: string;
+}) {
+  return (
+    <header className="week-stack-header">
+      <div>
+        <p className="eyebrow">Training week</p>
+        <h1>{week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart)}</h1>
+      </div>
+    </header>
+  );
+}
+
+function ExpandedWeekSkeletonOverview() {
+  return (
+    <>
+      <section className="summary-grid" aria-label="Loading week summary">
+        {["Planned", "Actual", "Hard days", "Long run"].map((label) => (
+          <div className="metric metric--skeleton" key={label}>
+            <span>{label}</span>
+            <strong>&nbsp;</strong>
+          </div>
+        ))}
+      </section>
+
+      <section className="risk-strip risk-strip--skeleton" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+      </section>
+    </>
+  );
+}
+
+function ExpandedWeekSkeleton({ days }: { days: string[] }) {
+  return (
+    <>
+      <section className="week-board" aria-label="Loading weekly planning board">
+        {days.map((dateValue) => (
+          <article className="day-column day-column--skeleton" key={dateValue}>
+            <header>
+              <div>
+                <strong>{formatWeekday(dateValue)}</strong>
+                <span>{formatShortDate(dateValue)}</span>
+              </div>
+            </header>
+            <div className="workout-stack">
+              <div className="skeleton-card" />
+            </div>
+            <footer>&nbsp;</footer>
+          </article>
+        ))}
+      </section>
+    </>
   );
 }
 
@@ -638,11 +851,11 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
       <dl>
         <div>
           <dt>Miles</dt>
-          <dd>{formatNumber(activity.distanceMiles)}</dd>
+          <dd>{formatNumber(activity.distanceMiles)} mi</dd>
         </div>
         <div>
-          <dt>Time</dt>
-          <dd>{activity.movingTime ? formatDuration(activity.movingTime) : "-"}</dd>
+          <dt>Pace</dt>
+          <dd>{formatPace(activity.movingTime, activity.distanceMiles)}</dd>
         </div>
       </dl>
       <small>
@@ -665,7 +878,18 @@ function WorkoutItem({
   onDuplicate: (workout: Workout) => void;
 }) {
   return (
-    <div className={`workout-item ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
+    <div
+      className={`workout-item ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}
+      onClick={() => onEdit(workout)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onEdit(workout);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <div className="workout-title-row">
         <div>
           <strong>{workout.title}</strong>
@@ -678,12 +902,16 @@ function WorkoutItem({
           <dd>{formatNumber(workout.plannedDistance ?? 0)} mi</dd>
         </div>
         <div>
-          <dt>Time</dt>
-          <dd>{workout.plannedDuration ? `${Math.round(workout.plannedDuration / 60)}m` : "-"}</dd>
+          <dt>Pace</dt>
+          <dd>{formatPace(workout.plannedDuration, workout.plannedDistance)}</dd>
         </div>
       </dl>
       <small>{workout.status.replaceAll("_", " ")}</small>
-      <div className="workout-controls">
+      <div
+        className="workout-controls"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
           <Edit3 size={15} />
         </button>
@@ -891,8 +1119,8 @@ function ActivitiesView({ activities }: { activities: StravaActivity[] }) {
                 <dd>{formatNumber(activity.distanceMiles)}</dd>
               </div>
               <div>
-                <dt>Time</dt>
-                <dd>{activity.movingTime ? formatDuration(activity.movingTime) : "-"}</dd>
+                <dt>Pace</dt>
+                <dd>{formatPace(activity.movingTime, activity.distanceMiles)}</dd>
               </div>
               <div>
                 <dt>HR</dt>
@@ -1046,7 +1274,8 @@ function getInitialWeekStart() {
 }
 
 function getWeekStartFromLocation() {
-  const weekParam = new URLSearchParams(window.location.search).get("week");
+  const pathMatch = window.location.pathname.match(/^\/week\/(\d{4}-\d{2}-\d{2})\/?$/);
+  const weekParam = pathMatch?.[1] ?? new URLSearchParams(window.location.search).get("week");
   if (!weekParam) {
     return startOfWeek(new Date());
   }
@@ -1059,12 +1288,56 @@ function getWeekStartFromLocation() {
 }
 
 function ensureWeekRoute(weekStart: string) {
-  const url = new URL(window.location.href);
-  if (url.searchParams.get("week") === weekStart) {
+  if (window.location.pathname === weekPath(weekStart)) {
     return;
   }
-  url.searchParams.set("week", weekStart);
-  window.history.replaceState({ weekStart }, "", `${url.pathname}${url.search}${url.hash}`);
+  window.history.replaceState({ weekStart }, "", weekPath(weekStart));
+}
+
+function weekPath(weekStart: string) {
+  return `/week/${weekStart}`;
+}
+
+function weekRangeAround(weekStart: string) {
+  return Array.from({ length: WEEK_STACK_RADIUS * 2 + 1 }, (_, index) =>
+    addDays(weekStart, (index - WEEK_STACK_RADIUS) * 7)
+  );
+}
+
+function mergeWeekStarts(starts: string[]) {
+  return Array.from(new Set(starts)).sort();
+}
+
+function mergeLoadingStarts(current: Set<string>, starts: string[]) {
+  const next = new Set(current);
+  starts.forEach((start) => next.add(start));
+  return next;
+}
+
+function removeLoadingStarts(current: Set<string>, starts: string[]) {
+  const next = new Set(current);
+  starts.forEach((start) => next.delete(start));
+  return next;
+}
+
+function scrollExpandedWeekIntoView(element: HTMLElement) {
+  const container = element.closest("main");
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const rect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const targetTop = container.scrollTop + rect.top - containerRect.top;
+
+  container.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: prefersReducedMotion() ? "auto" : "smooth"
+  });
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function addDays(dateValue: string, offset: number) {
@@ -1085,12 +1358,28 @@ function toDateInputValue(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function todayDateString() {
+  return toDateInputValue(new Date());
+}
+
 function formatWeekRange(week: TrainingWeek) {
   return `${formatShortDate(week.weekStartDate)}-${formatShortDate(week.weekEndDate)}`;
 }
 
 function formatWeekRangeFromStart(start: string) {
   return `${formatShortDate(start)}-${formatShortDate(addDays(start, 6))}`;
+}
+
+function formatCompactWeekRangeFromStart(start: string) {
+  return formatCompactWeekRange(start, addDays(start, 6));
+}
+
+function formatCompactWeekRange(start: string, end: string) {
+  const startDate = parseDate(start);
+  const endDate = parseDate(end);
+  const startLabel = formatShortDate(start);
+  const endLabel = startDate.getMonth() === endDate.getMonth() ? String(endDate.getDate()) : formatShortDate(end);
+  return `${startLabel}-${endLabel}`;
 }
 
 function formatWeekday(dateValue: string) {
@@ -1110,10 +1399,15 @@ function formatDateTime(dateValue: string) {
   }).format(new Date(dateValue));
 }
 
-function formatDuration(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+function formatPace(seconds: number | null | undefined, miles: number | null | undefined) {
+  if (!seconds || !miles) {
+    return "-";
+  }
+
+  const paceSeconds = Math.round(seconds / miles);
+  const minutes = Math.floor(paceSeconds / 60);
+  const remainder = String(paceSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainder}/mi`;
 }
 
 function formatNumber(value: number) {
@@ -1126,6 +1420,56 @@ function sumDistance(workouts: Workout[]) {
 
 function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
+}
+
+function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: "past" | "future") {
+  if (!week) {
+    return "loading";
+  }
+
+  const planned = week.plannedMileage;
+  const actual = week.actualMileage;
+  const isCurrentWeek = weekStart === startOfWeek(new Date());
+
+  if (actual > 0 && planned > 0) {
+    return isCurrentWeek
+      ? `${formatNumber(actual)} / ${formatNumber(planned)} mi`
+      : `${formatNumber(actual)} mi actual / ${formatNumber(planned)} planned`;
+  }
+
+  if (actual > 0) {
+    return isCurrentWeek ? `${formatNumber(actual)} mi actual · unplanned` : `${formatNumber(actual)} mi actual`;
+  }
+
+  if (planned > 0) {
+    return `${formatNumber(planned)} mi planned`;
+  }
+
+  return tone === "future" ? "not planned" : "no plan";
+}
+
+function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: "past" | "future") {
+  if (!week) {
+    return "loading";
+  }
+
+  const hasPlannedWork = week.plannedMileage > 0 || week.workouts.length > 0;
+  const hasActualWork = week.actualMileage > 0 || week.actualActivities.length > 0;
+
+  if (!hasPlannedWork && !hasActualWork && tone === "future") {
+    return "tap to plan";
+  }
+
+  const planLabel = hasPlannedWork ? formatHardDays(week.hardDays) : "no plan";
+  return `${planLabel} · ${formatLongRun(week.longRunDistance)}`;
+}
+
+function formatHardDays(count: number) {
+  return `${count} hard`;
+}
+
+function formatLongRun(distance: number) {
+  return distance > 0 ? `LR ${formatNumber(distance)}` : "LR --";
 }
 
 function formatTime(dateValue: string) {
