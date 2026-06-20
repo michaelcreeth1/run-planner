@@ -132,7 +132,7 @@ def test_training_timeline_counts_strava_activities() -> None:
                 start_date=datetime(2024, 1, 3, 15, 0, 0),
                 start_date_local=datetime(2024, 1, 3, 8, 0, 0),
                 distance=1609.344 * 4.2,
-                raw_payload_json="{}",
+                raw_payload_json={},
             )
         )
         db.commit()

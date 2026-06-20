@@ -1,10 +1,14 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
 from app.models.planning import new_id
+
+json_document_type = JSON().with_variant(JSONB, "postgresql")
 
 
 class StravaOAuthToken(Base):
@@ -54,11 +58,11 @@ class StravaActivity(Base):
     average_cadence: Mapped[float | None] = mapped_column(Float)
     average_watts: Mapped[float | None] = mapped_column(Float)
     perceived_exertion: Mapped[float | None] = mapped_column(Float)
-    private: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    trainer: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    commute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    manual: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    raw_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    trainer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    commute: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    raw_payload_json: Mapped[dict[str, Any]] = mapped_column(json_document_type, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -87,4 +91,8 @@ class SyncJob(Base):
     activities_unchanged: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     activities_deleted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rate_limit_remaining: Mapped[int | None] = mapped_column(Integer)
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        json_document_type,
+        nullable=False,
+        default=dict,
+    )

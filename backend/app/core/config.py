@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     app_base_url: str = Field(default="http://localhost:5173", alias="APP_BASE_URL")
     api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
-    database_url: str = Field(default="sqlite:///./data/running_planner.db", alias="DATABASE_URL")
+    database_url: str = Field(
+        default="postgresql+psycopg://running_planner:running_planner@localhost:5432/running_planner",
+        alias="DATABASE_URL",
+    )
     session_secret: str = Field(default="dev-session-secret-change-me", alias="SESSION_SECRET")
     app_username: str = Field(default="michael", alias="APP_USERNAME")
     app_password: str = Field(default="", alias="APP_PASSWORD")
@@ -57,6 +60,14 @@ class Settings(BaseSettings):
         if not self.database_url.startswith(prefix):
             return None
         return Path(self.database_url.removeprefix(prefix))
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
 
 
 @lru_cache

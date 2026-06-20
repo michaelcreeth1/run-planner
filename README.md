@@ -8,11 +8,11 @@ This repository currently contains the infrastructure skeleton:
 
 - React + Vite + TypeScript PWA shell.
 - FastAPI backend with `/healthz`, `/readyz`, and `/api/version`.
-- SQLite development database target.
+- Postgres database target.
 - Worker container entrypoint.
 - Docker Compose for `frontend`, `api`, and `worker`.
 - Local signed-cookie session endpoints.
-- SQLite migration runner with initial planning tables.
+- SQL migration runner with initial planning tables.
 - API-backed weekly planning board.
 - Planned workout create, edit, delete, duplicate, and move controls.
 - App-owned Strava OAuth, encrypted token storage, and activity backfill.
@@ -24,6 +24,19 @@ Copy the environment template:
 
 ```sh
 cp .env.example .env
+```
+
+Create a dedicated database on the shared Postgres instance. Do not use the default
+`postgres` database for app data:
+
+```sh
+createdb running_planner
+```
+
+Set `DATABASE_URL` in `.env` to that dedicated database, for example:
+
+```sh
+DATABASE_URL=postgresql+psycopg://running_planner:change-me@localhost:5432/running_planner
 ```
 
 Run the backend:
@@ -53,12 +66,46 @@ docker compose up --build
 ```
 
 The API is available at `http://localhost:8000`; the frontend is available at `http://localhost:5173`.
+The compose stack expects `DATABASE_URL` to point at the shared Postgres instance.
+
+## Deployment Script
+
+For repeatable Docker-based deploys from this repo:
+
+```sh
+cp .env.example .env
+scripts/deploy.sh
+```
+
+The script validates the env file, requires production-safe cookie settings when
+`APP_ENV=production`, runs `docker compose up -d --build`, and waits for the API
+health check before returning.
+
+For the private Caddy deployment on `https://run.home.arpa`, set:
+
+```text
+APP_ENV=production
+APP_BASE_URL=https://run.home.arpa
+API_BASE_URL=https://run.home.arpa
+STRAVA_REDIRECT_URI=https://run.home.arpa/api/auth/strava/callback
+SESSION_COOKIE_SECURE=true
+CORS_ORIGINS=https://run.home.arpa
+VITE_API_BASE_URL=
+```
+
+Useful options:
+
+```sh
+scripts/deploy.sh --skip-build
+scripts/deploy.sh --env-file /path/to/run-planner.env
+scripts/deploy.sh --no-wait
+```
 
 ## Current Decisions
 
 - Frontend: React/Vite/TypeScript.
 - Backend: FastAPI/Python.
-- Database: SQLite for Phase 0, Postgres later.
+- Database: dedicated Postgres database on the shared database instance.
 - Worker: separate container using the backend image.
 - Sync: manual backfill and polling MVP, no webhook in Phase 0.
 - Auth: private/Tailscale access plus local session later.

@@ -20,4 +20,4 @@ Remaining implementation order:
 3. Daily check-in and weekly summary.
 4. Goal race and gear.
 
-SQLite is used during the early planning phases. Postgres remains the production target once the dedicated LXC is ready, especially for JSONB raw Strava payloads and stronger concurrent worker behavior.
+Postgres is now the app database. Use a dedicated `running_planner` database on the shared Postgres instance rather than the default `postgres` database. Raw Strava payloads are stored as JSONB in Postgres, while SQLite remains only a legacy source format for migration and lightweight tests.
