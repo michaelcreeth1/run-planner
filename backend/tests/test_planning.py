@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.main import app
-from app.models import StravaActivity
+from app.models import PlannedWorkoutStep, StravaActivity
 from app.schemas.planning import PlannedWorkoutCreate
 from app.services import planning
 
@@ -85,6 +85,55 @@ def test_training_timeline_has_no_bounds_without_real_data() -> None:
             "newest_week_start_date": None,
             "months": [],
         }
+    finally:
+        db.close()
+
+
+def test_copy_prior_week_copies_whole_plan_forward() -> None:
+    db = make_session()
+    try:
+        source_week = planning.get_or_create_week(db, date(2024, 3, 4))
+        source_week.notes = "Cutback week"
+        source_week.target_long_run_distance = 8
+        db.commit()
+
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2024, 3, 6),
+                title="Threshold 5",
+                workout_type="threshold",
+                intensity_category="workout",
+                planned_distance=5,
+                planned_duration=2400,
+                status="missed",
+            ),
+        )
+        db.add(
+            PlannedWorkoutStep(
+                planned_workout_id=workout.id,
+                step_order=1,
+                label="Warm up",
+                duration=600,
+                notes="Keep it relaxed",
+            )
+        )
+        target_week = planning.get_or_create_week(db, date(2024, 3, 11))
+        db.commit()
+
+        copied_week = planning.copy_prior_week(db, target_week.id)
+
+        assert copied_week.week_start_date == date(2024, 3, 11)
+        assert copied_week.notes == "Cutback week"
+        assert copied_week.target_long_run_distance == 8
+        assert copied_week.planned_mileage == 5
+        assert len(copied_week.workouts) == 1
+        copied_workout = copied_week.workouts[0]
+        assert copied_workout.planned_date == date(2024, 3, 13)
+        assert copied_workout.title == "Threshold 5"
+        assert copied_workout.status == "planned"
+        assert copied_workout.steps[0].label == "Warm up"
+        assert copied_workout.steps[0].duration == 600
     finally:
         db.close()
 

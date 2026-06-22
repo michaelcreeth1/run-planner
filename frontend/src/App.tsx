@@ -207,6 +207,7 @@ function App() {
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [copyingPriorWeekId, setCopyingPriorWeekId] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const pendingPrependScroll = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const isPrependingWeeks = useRef(false);
@@ -424,6 +425,30 @@ function App() {
     loadTrainingTimeline();
   }
 
+  async function copyPriorWeek(targetWeek: TrainingWeek) {
+    if (
+      targetWeek.workouts.length > 0 &&
+      !window.confirm("Copy prior week into this week? Existing planned workouts will stay in place.")
+    ) {
+      return;
+    }
+
+    setCopyingPriorWeekId(targetWeek.id);
+    try {
+      const copiedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/copy-prior`, { method: "POST" });
+      setWeekStack((current) => ({
+        ...current,
+        [copiedWeek.weekStartDate]: copiedWeek
+      }));
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Could not copy the prior week.");
+    } finally {
+      setCopyingPriorWeekId(null);
+    }
+  }
+
   function loadTrainingTimeline() {
     fetchJson<TrainingTimelineSummary>("/api/training-timeline")
       .then((body) => {
@@ -536,6 +561,8 @@ function App() {
             onEdit={openEdit}
             onDelete={deleteWorkout}
             onDuplicate={duplicateWorkout}
+            onCopyPriorWeek={copyPriorWeek}
+            copyingPriorWeekId={copyingPriorWeekId}
           />
         ) : null}
         {activeTab === "plan" ? <Placeholder title="Plan" icon={<Sparkles size={22} />} /> : null}
@@ -583,7 +610,9 @@ function WeekView({
   onCreate,
   onEdit,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  onCopyPriorWeek,
+  copyingPriorWeekId
 }: {
   canLoadNewerWeeks: boolean;
   canLoadOlderWeeks: boolean;
@@ -602,6 +631,8 @@ function WeekView({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  copyingPriorWeekId: string | null;
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -667,6 +698,8 @@ function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
             week={start === selectedWeekStart ? week : weekStack[start]}
@@ -692,6 +725,8 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onCopyPriorWeek,
+  isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
   week,
@@ -703,6 +738,8 @@ function WeekRow({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
   week?: TrainingWeek | null;
@@ -774,6 +811,8 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={isCopyingPriorWeek}
             week={week ?? null}
             weekStart={weekStart}
           />
@@ -838,7 +877,9 @@ function ExpandedWeekBoard({
   onCreate,
   onEdit,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  onCopyPriorWeek,
+  isCopyingPriorWeek
 }: {
   days: string[];
   isLoading?: boolean;
@@ -848,6 +889,8 @@ function ExpandedWeekBoard({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  isCopyingPriorWeek: boolean;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
@@ -860,7 +903,12 @@ function ExpandedWeekBoard({
         aria-label={`Loading ${formatWeekRangeFromStart(weekStart)}`}
       >
         <section className="week-overview-panel" aria-label="Week overview">
-          <WeekStackHeader week={week} weekStart={weekStart} />
+          <WeekStackHeader
+            week={week}
+            weekStart={weekStart}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={isCopyingPriorWeek}
+          />
           <ExpandedWeekSkeletonOverview />
         </section>
         <ExpandedWeekSkeleton days={days} />
@@ -871,7 +919,12 @@ function ExpandedWeekBoard({
   return (
     <div className="expanded-week-board">
       <section className="week-overview-panel" aria-label="Week overview">
-        <WeekStackHeader week={week} weekStart={weekStart} />
+        <WeekStackHeader
+          week={week}
+          weekStart={weekStart}
+          onCopyPriorWeek={onCopyPriorWeek}
+          isCopyingPriorWeek={isCopyingPriorWeek}
+        />
 
         <section className="summary-grid" aria-label="Week summary">
           <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} />
@@ -939,10 +992,14 @@ function ExpandedWeekBoard({
 
 function WeekStackHeader({
   week,
-  weekStart
+  weekStart,
+  onCopyPriorWeek,
+  isCopyingPriorWeek = false
 }: {
   week: TrainingWeek | null;
   weekStart: string;
+  onCopyPriorWeek?: (week: TrainingWeek) => void;
+  isCopyingPriorWeek?: boolean;
 }) {
   return (
     <header className="week-stack-header">
@@ -950,6 +1007,17 @@ function WeekStackHeader({
         <p className="eyebrow">Training week</p>
         <h1>{week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart)}</h1>
       </div>
+      {week && onCopyPriorWeek ? (
+        <button
+          className="week-copy-button"
+          disabled={isCopyingPriorWeek}
+          type="button"
+          onClick={() => onCopyPriorWeek(week)}
+        >
+          <Copy size={16} />
+          <span>{isCopyingPriorWeek ? "Copying" : "Copy prior week"}</span>
+        </button>
+      ) : null}
     </header>
   );
 }

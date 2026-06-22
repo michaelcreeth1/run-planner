@@ -81,15 +81,15 @@ The script validates the env file, requires production-safe cookie settings when
 `APP_ENV=production`, runs `docker compose up -d --build`, and waits for the API
 health check before returning.
 
-For the private Caddy deployment on `https://run.home.arpa`, set:
+For the Caddy deployment on `https://run.home.arpa` and `https://run.creeth.net`, set:
 
 ```text
 APP_ENV=production
-APP_BASE_URL=https://run.home.arpa
-API_BASE_URL=https://run.home.arpa
-STRAVA_REDIRECT_URI=https://run.home.arpa/api/auth/strava/callback
+APP_BASE_URL=https://run.creeth.net
+API_BASE_URL=https://run.creeth.net
+STRAVA_REDIRECT_URI=https://run.creeth.net/api/auth/strava/callback
 SESSION_COOKIE_SECURE=true
-CORS_ORIGINS=https://run.home.arpa
+CORS_ORIGINS=https://run.home.arpa,https://run.creeth.net
 VITE_API_BASE_URL=
 ```
 

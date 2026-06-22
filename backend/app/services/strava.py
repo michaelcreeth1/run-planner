@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, status
@@ -30,14 +31,16 @@ def authorization_url() -> str:
             detail="Strava client credentials are not configured.",
         )
 
-    scope = ",".join(REQUIRED_SCOPES)
-    return (
-        f"{AUTH_URL}?client_id={settings.strava_client_id}"
-        f"&redirect_uri={settings.strava_redirect_uri}"
-        "&response_type=code"
-        "&approval_prompt=auto"
-        f"&scope={scope}"
+    query = urlencode(
+        {
+            "client_id": settings.strava_client_id,
+            "redirect_uri": settings.strava_redirect_uri,
+            "response_type": "code",
+            "approval_prompt": "auto",
+            "scope": ",".join(REQUIRED_SCOPES),
+        }
     )
+    return f"{AUTH_URL}?{query}"
 
 
 def get_token(db: Session) -> StravaOAuthToken | None:

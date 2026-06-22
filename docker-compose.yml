@@ -11,6 +11,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - shared-db
 
   worker:
     build:
@@ -21,6 +23,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - shared-db
 
   frontend:
     build:
@@ -32,3 +36,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+networks:
+  shared-db:
+    name: shared-db
+    external: true

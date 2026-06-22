@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.planning import AthleteAccount, PlannedWorkout, TrainingWeek
+from app.models.planning import AthleteAccount, PlannedWorkout, PlannedWorkoutStep, TrainingWeek
 from app.models.strava import StravaActivity
 from app.schemas.planning import PlannedWorkoutCreate, PlannedWorkoutUpdate, TrainingWeekPatch
 
@@ -268,11 +268,61 @@ def move_workout(db: Session, workout_id: str, planned_date: date) -> PlannedWor
 
 def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
     source = get_workout(db, workout_id)
-    clone = PlannedWorkout(
-        training_week_id=source.training_week_id,
-        athlete_account_id=source.athlete_account_id,
-        planned_date=source.planned_date,
+    clone = clone_workout(
+        source,
+        source.training_week_id,
+        source.planned_date,
         title=f"{source.title} copy",
+    )
+    db.add(clone)
+    db.commit()
+    db.refresh(clone)
+    recalculate_week(db, get_week_by_id(db, source.training_week_id))
+    return get_workout(db, clone.id)
+
+
+def copy_prior_week(db: Session, week_id: str) -> TrainingWeek:
+    target = get_week_by_id(db, week_id)
+    source_start = target.week_start_date - timedelta(days=7)
+    source = get_or_create_week(db, source_start)
+
+    if not source.workouts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Prior week has no planned workouts to copy.",
+        )
+
+    if target.target_long_run_distance is None:
+        target.target_long_run_distance = source.target_long_run_distance
+    if not target.notes:
+        target.notes = source.notes
+
+    for source_workout in source.workouts:
+        day_offset = (source_workout.planned_date - source.week_start_date).days
+        db.add(
+            clone_workout(
+                source_workout,
+                target.id,
+                target.week_start_date + timedelta(days=day_offset),
+            )
+        )
+
+    db.add(target)
+    db.commit()
+    return load_week(db, target.week_start_date)
+
+
+def clone_workout(
+    source: PlannedWorkout,
+    training_week_id: str,
+    planned_date: date,
+    title: str | None = None,
+) -> PlannedWorkout:
+    clone = PlannedWorkout(
+        training_week_id=training_week_id,
+        athlete_account_id=source.athlete_account_id,
+        planned_date=planned_date,
+        title=title or source.title,
         sport=source.sport,
         workout_type=source.workout_type,
         intensity_category=source.intensity_category,
@@ -285,11 +335,23 @@ def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
         notes=source.notes,
         status="planned",
     )
-    db.add(clone)
-    db.commit()
-    db.refresh(clone)
-    recalculate_week(db, get_week_by_id(db, source.training_week_id))
-    return get_workout(db, clone.id)
+    clone.steps = [
+        PlannedWorkoutStep(
+            step_order=step.step_order,
+            label=step.label,
+            duration=step.duration,
+            distance=step.distance,
+            target_pace_min=step.target_pace_min,
+            target_pace_max=step.target_pace_max,
+            target_hr_min=step.target_hr_min,
+            target_hr_max=step.target_hr_max,
+            target_rpe=step.target_rpe,
+            repetition_group=step.repetition_group,
+            notes=step.notes,
+        )
+        for step in source.steps
+    ]
+    return clone
 
 
 def delete_workout(db: Session, workout_id: str) -> None:

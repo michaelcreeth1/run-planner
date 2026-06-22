@@ -62,6 +62,12 @@ def recalculate_week(week_id: str, db: DbSession) -> dict:
     return planning.serialize_week(week, db)
 
 
+@router.post("/weeks/{week_id}/copy-prior", response_model=TrainingWeekRead)
+def copy_prior_week(week_id: str, db: DbSession) -> dict:
+    week = planning.copy_prior_week(db, week_id)
+    return planning.serialize_week(week, db)
+
+
 @router.get("/planned-workouts", response_model=list[PlannedWorkoutRead])
 def list_planned_workouts(db: DbSession) -> list:
     return planning.list_workouts(db)
