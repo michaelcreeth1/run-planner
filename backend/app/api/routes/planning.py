@@ -13,6 +13,9 @@ from app.schemas.planning import (
     TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
+    WeekGoalCreate,
+    WeekGoalRead,
+    WeekGoalUpdate,
     WeekListRead,
 )
 from app.services import planning
@@ -66,6 +69,38 @@ def recalculate_week(week_id: str, db: DbSession) -> dict:
 def copy_prior_week(week_id: str, db: DbSession) -> dict:
     week = planning.copy_prior_week(db, week_id)
     return planning.serialize_week(week, db)
+
+
+@router.post(
+    "/weeks/{week_id}/goals", response_model=WeekGoalRead, status_code=status.HTTP_201_CREATED
+)
+def create_week_goal(
+    week_id: str,
+    payload: WeekGoalCreate,
+    db: DbSession,
+):
+    return planning.serialize_goal(planning.create_week_goal(db, week_id, payload))
+
+
+@router.post("/weeks/{week_id}/goals/derive", response_model=TrainingWeekRead)
+def derive_week_goals(week_id: str, db: DbSession) -> dict:
+    week = planning.derive_week_goals(db, week_id)
+    return planning.serialize_week(week, db)
+
+
+@router.patch("/week-goals/{goal_id}", response_model=WeekGoalRead)
+def update_week_goal(
+    goal_id: str,
+    payload: WeekGoalUpdate,
+    db: DbSession,
+):
+    return planning.serialize_goal(planning.update_week_goal(db, goal_id, payload))
+
+
+@router.delete("/week-goals/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_week_goal(goal_id: str, db: DbSession) -> Response:
+    planning.delete_week_goal(db, goal_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/planned-workouts", response_model=list[PlannedWorkoutRead])

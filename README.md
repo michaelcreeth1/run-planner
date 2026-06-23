@@ -144,6 +144,10 @@ GET    /api/weeks/{weekStartDate}
 PATCH  /api/weeks/{id}
 POST   /api/weeks/{id}/recalculate
 POST   /api/weeks/{id}/copy-prior
+POST   /api/weeks/{id}/goals
+POST   /api/weeks/{id}/goals/derive
+PATCH  /api/week-goals/{id}
+DELETE /api/week-goals/{id}
 
 GET    /api/planned-workouts
 POST   /api/planned-workouts

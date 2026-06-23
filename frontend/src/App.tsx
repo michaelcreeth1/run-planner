@@ -26,6 +26,8 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { TrainingTimeRail } from "./components/time-rail/TrainingTimeRail";
+import { WeekCommandCenter } from "./components/week/WeekCommandCenter";
+import { buildWeekCommandCenterViewModel } from "./features/weekGoals/buildWeekCommandCenterViewModel";
 import type { TrainingTimelineIndex, TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 
@@ -84,6 +86,63 @@ type Workout = {
     | "partial";
 };
 
+type WeekGoalCategory = "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";
+type WeekGoalType = "achievement" | "guardrail";
+type WeekGoalUnit = "mi" | "sessions" | "days" | "percent" | "boolean" | "custom";
+type WeekGoalEvaluationMode = "at_least" | "at_most" | "range" | "exact-ish" | "boolean" | "manual";
+type WeekGoalPriority = "primary" | "secondary" | "guardrail";
+type WeekGoalStatus =
+  | "not_started"
+  | "on_track"
+  | "at_risk"
+  | "achieved"
+  | "partially_achieved"
+  | "missed"
+  | "exceeded"
+  | "waived";
+type WeekGoalSource = "manual" | "derived_from_plan" | "template" | "ai_suggested";
+type GoalSeverity = "info" | "success" | "warning" | "danger";
+type WeekState = "past" | "current" | "future";
+
+type WeekGoal = {
+  id: string;
+  trainingWeekId: string;
+  athleteAccountId: string;
+  weekStartDate: string;
+  category: WeekGoalCategory;
+  goalType: WeekGoalType;
+  label: string;
+  description: string;
+  targetValue: number | null;
+  minAcceptable: number | null;
+  maxAcceptable: number | null;
+  unit: WeekGoalUnit;
+  evaluationMode: WeekGoalEvaluationMode;
+  priority: WeekGoalPriority;
+  status: WeekGoalStatus;
+  source: WeekGoalSource;
+  isEditable: boolean;
+  isEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type WeekGoalEvaluation = {
+  goalId: string;
+  weekStartDate: string;
+  status: WeekGoalStatus;
+  guardrailStatus: "ok" | "warning" | "danger" | "waived" | "not_applicable" | null;
+  actualValue: number | null;
+  plannedValue: number | null;
+  remainingPlannedValue: number | null;
+  summary: string;
+  detail: string | null;
+  severity: GoalSeverity;
+  evaluatedAt: string;
+  contributingWorkoutIds: string[];
+  contributingActivityIds: string[];
+};
+
 type TrainingWeek = {
   id: string;
   weekStartDate: string;
@@ -96,6 +155,10 @@ type TrainingWeek = {
   notes: string;
   workouts: Workout[];
   actualActivities: ActualActivity[];
+  goals: WeekGoal[];
+  goalEvaluations: WeekGoalEvaluation[];
+  weekState: WeekState;
+  goalReviewSummary: string;
   hardDays: number;
   longRunDistance: number;
   longRunPercentage: number;
@@ -161,6 +224,23 @@ type WorkoutForm = {
   status: Workout["status"];
 };
 
+type WeekGoalForm = {
+  id?: string;
+  weekId: string;
+  category: WeekGoalCategory;
+  goalType: WeekGoalType;
+  label: string;
+  description: string;
+  targetValue: string;
+  minAcceptable: string;
+  maxAcceptable: string;
+  unit: WeekGoalUnit;
+  evaluationMode: WeekGoalEvaluationMode;
+  priority: WeekGoalPriority;
+  status: WeekGoalStatus;
+  isEnabled: boolean;
+};
+
 const tabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
@@ -192,6 +272,45 @@ const intensities: Array<{ value: Workout["intensityCategory"]; label: string }>
   { value: "strength", label: "Strength" }
 ];
 
+const goalCategories: Array<{ value: WeekGoalCategory; label: string }> = [
+  { value: "mileage", label: "Mileage" },
+  { value: "sessions", label: "Sessions" },
+  { value: "long_run", label: "Long run" },
+  { value: "quality", label: "Quality" },
+  { value: "recovery", label: "Recovery" },
+  { value: "strength", label: "Strength" },
+  { value: "custom", label: "Custom" }
+];
+
+const goalUnits: Array<{ value: WeekGoalUnit; label: string }> = [
+  { value: "mi", label: "Miles" },
+  { value: "sessions", label: "Sessions" },
+  { value: "days", label: "Days" },
+  { value: "percent", label: "Percent" },
+  { value: "boolean", label: "Yes/no" },
+  { value: "custom", label: "Custom" }
+];
+
+const goalEvaluationModes: Array<{ value: WeekGoalEvaluationMode; label: string }> = [
+  { value: "range", label: "Range" },
+  { value: "at_least", label: "At least" },
+  { value: "at_most", label: "At most" },
+  { value: "exact-ish", label: "Exact-ish" },
+  { value: "boolean", label: "Yes/no" },
+  { value: "manual", label: "Manual" }
+];
+
+const goalStatuses: Array<{ value: WeekGoalStatus; label: string }> = [
+  { value: "not_started", label: "Not started" },
+  { value: "on_track", label: "On track" },
+  { value: "at_risk", label: "At risk" },
+  { value: "achieved", label: "Achieved" },
+  { value: "partially_achieved", label: "Partial" },
+  { value: "missed", label: "Missed" },
+  { value: "exceeded", label: "Exceeded" },
+  { value: "waived", label: "Waived" }
+];
+
 type TabId = (typeof tabs)[number]["id"];
 type WeekSelectSource = "header" | "time-rail" | "week-stack";
 type MileageTrendDirection = "up" | "down" | "same";
@@ -210,6 +329,7 @@ function App() {
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
+  const [goalEditor, setGoalEditor] = useState<WeekGoalForm | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
@@ -235,7 +355,13 @@ function App() {
     weekStack
   });
   const canLoadOlderWeeks = getOlderWeekStarts(visibleWeekStarts, timelineSummary).length > 0;
-  const canLoadNewerWeeks = visibleWeekStarts.length > 0;
+  const canLoadNewerWeeks =
+    getNewerWeekStarts(
+      visibleWeekStarts,
+      timelineSummary,
+      currentWeekStart,
+      weekStart
+    ).length > 0;
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -367,7 +493,12 @@ function App() {
       return;
     }
 
-    const newerStarts = getNewerWeekStarts(visibleWeekStarts);
+    const newerStarts = getNewerWeekStarts(
+      visibleWeekStarts,
+      timelineSummary,
+      currentWeekStart,
+      weekStart
+    );
     if (!newerStarts.length) {
       return;
     }
@@ -398,6 +529,29 @@ function App() {
     });
   }
 
+  function openCreateGoal(targetWeek: TrainingWeek) {
+    setGoalEditor(defaultGoalForm(targetWeek.id));
+  }
+
+  function openEditGoal(goal: WeekGoal) {
+    setGoalEditor({
+      id: goal.id,
+      weekId: goal.trainingWeekId,
+      category: goal.category,
+      goalType: goal.goalType,
+      label: goal.label,
+      description: goal.description,
+      targetValue: goal.targetValue?.toString() ?? "",
+      minAcceptable: goal.minAcceptable?.toString() ?? "",
+      maxAcceptable: goal.maxAcceptable?.toString() ?? "",
+      unit: goal.unit,
+      evaluationMode: goal.evaluationMode,
+      priority: goal.priority,
+      status: goal.status,
+      isEnabled: goal.isEnabled
+    });
+  }
+
   async function saveWorkout(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor) {
@@ -417,6 +571,29 @@ function App() {
       });
     }
     setEditor(null);
+    refreshVisibleWeeks();
+    loadTrainingTimeline();
+  }
+
+  async function saveGoal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!goalEditor) {
+      return;
+    }
+
+    const payload = goalFormToPayload(goalEditor);
+    if (goalEditor.id) {
+      await fetchJson(`/api/week-goals/${goalEditor.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+    } else {
+      await fetchJson(`/api/weeks/${goalEditor.weekId}/goals`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+    setGoalEditor(null);
     refreshVisibleWeeks();
     loadTrainingTimeline();
   }
@@ -454,6 +631,22 @@ function App() {
       setApiError(error instanceof Error ? error.message : "Could not copy the prior week.");
     } finally {
       setCopyingPriorWeekId(null);
+    }
+  }
+
+  async function deriveWeekGoals(targetWeek: TrainingWeek) {
+    try {
+      const derivedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/goals/derive`, {
+        method: "POST"
+      });
+      setWeekStack((current) => ({
+        ...current,
+        [derivedWeek.weekStartDate]: derivedWeek
+      }));
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Could not refresh weekly goals.");
     }
   }
 
@@ -569,7 +762,11 @@ function App() {
             onEdit={openEdit}
             onDelete={deleteWorkout}
             onDuplicate={duplicateWorkout}
+            onCreateGoal={openCreateGoal}
             onCopyPriorWeek={copyPriorWeek}
+            onDeriveWeekGoals={deriveWeekGoals}
+            onEditGoal={openEditGoal}
+            onSync={runBackfill}
             copyingPriorWeekId={copyingPriorWeekId}
           />
         ) : null}
@@ -597,6 +794,14 @@ function App() {
           onClose={() => setEditor(null)}
         />
       ) : null}
+      {goalEditor ? (
+        <WeekGoalEditor
+          editor={goalEditor}
+          setEditor={setGoalEditor}
+          onSubmit={saveGoal}
+          onClose={() => setGoalEditor(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -619,7 +824,11 @@ function WeekView({
   onEdit,
   onDelete,
   onDuplicate,
+  onCreateGoal,
   onCopyPriorWeek,
+  onDeriveWeekGoals,
+  onEditGoal,
+  onSync,
   copyingPriorWeekId
 }: {
   canLoadNewerWeeks: boolean;
@@ -639,7 +848,11 @@ function WeekView({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
+  onDeriveWeekGoals: (week: TrainingWeek) => void;
+  onEditGoal: (goal: WeekGoal) => void;
+  onSync: () => void;
   copyingPriorWeekId: string | null;
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -706,7 +919,11 @@ function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
+            onDeriveWeekGoals={onDeriveWeekGoals}
+            onEditGoal={onEditGoal}
+            onSync={onSync}
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
@@ -734,7 +951,11 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onCreateGoal,
   onCopyPriorWeek,
+  onDeriveWeekGoals,
+  onEditGoal,
+  onSync,
   isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
@@ -748,7 +969,11 @@ function WeekRow({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
+  onDeriveWeekGoals: (week: TrainingWeek) => void;
+  onEditGoal: (goal: WeekGoal) => void;
+  onSync: () => void;
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
@@ -822,9 +1047,12 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
+            onDeriveWeekGoals={onDeriveWeekGoals}
+            onEditGoal={onEditGoal}
+            onSync={onSync}
             isCopyingPriorWeek={isCopyingPriorWeek}
-            previousWeek={previousWeek}
             week={week ?? null}
             weekStart={weekStart}
           />
@@ -898,9 +1126,12 @@ function ExpandedWeekBoard({
   onEdit,
   onDelete,
   onDuplicate,
+  onCreateGoal,
   onCopyPriorWeek,
+  onDeriveWeekGoals,
+  onEditGoal,
+  onSync,
   isCopyingPriorWeek,
-  previousWeek
 }: {
   days: string[];
   isLoading?: boolean;
@@ -910,15 +1141,16 @@ function ExpandedWeekBoard({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
+  onDeriveWeekGoals: (week: TrainingWeek) => void;
+  onEditGoal: (goal: WeekGoal) => void;
+  onSync: () => void;
   isCopyingPriorWeek: boolean;
-  previousWeek?: TrainingWeek;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
   const today = todayDateString();
-  const plannedTrend = getMileageTrend(week?.plannedMileage, previousWeek?.plannedMileage);
-  const actualTrend = getMileageTrend(week?.actualMileage, previousWeek?.actualMileage);
 
   if (isLoading) {
     return (
@@ -926,13 +1158,14 @@ function ExpandedWeekBoard({
         className="expanded-week-board expanded-week-board--loading"
         aria-label={`Loading ${formatWeekRangeFromStart(weekStart)}`}
       >
-        <section className="week-overview-panel" aria-label="Week overview">
-          <WeekStackHeader
-            week={week}
-            weekStart={weekStart}
-            onCopyPriorWeek={onCopyPriorWeek}
-            isCopyingPriorWeek={isCopyingPriorWeek}
-          />
+        <section className="week-command-center" aria-label="Loading week command center">
+          <header className="week-command-header">
+            <div className="week-command-title">
+              <p className="eyebrow">Training week</p>
+              <h1>{formatWeekRangeFromStart(weekStart)}</h1>
+              <span>Loading week</span>
+            </div>
+          </header>
           <ExpandedWeekSkeletonOverview />
         </section>
         <ExpandedWeekSkeleton days={days} />
@@ -942,28 +1175,27 @@ function ExpandedWeekBoard({
 
   return (
     <div className="expanded-week-board">
-      <section className="week-overview-panel" aria-label="Week overview">
-        <WeekStackHeader
-          week={week}
-          weekStart={weekStart}
-          onCopyPriorWeek={onCopyPriorWeek}
-          isCopyingPriorWeek={isCopyingPriorWeek}
+      {week ? (
+        <WeekCommandCenter
+          viewModel={buildWeekCommandCenterViewModel({ week, today })}
+          onAction={(actionId) =>
+            handleWeekCommandAction(actionId, {
+              onCopyPriorWeek,
+              onCreateGoal,
+              onDeriveWeekGoals,
+              onEditGoal,
+              onSync,
+              week
+            })
+          }
+          onEditGoal={(goalId) => {
+            const goal = week.goals.find((candidate) => candidate.id === goalId);
+            if (goal) {
+              onEditGoal(goal);
+            }
+          }}
         />
-
-        <section className="summary-grid" aria-label="Week summary">
-          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} trend={plannedTrend} />
-          <Metric label="Done" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} trend={actualTrend} />
-          <Metric label="Hard days" value={String(week?.hardDays ?? 0)} />
-          <Metric label="Long run" value={`${formatNumber(week?.longRunDistance ?? 0)} mi`} />
-        </section>
-
-        <section className="risk-strip" aria-label="Risk indicators">
-          <span>Long run {formatNumber(week?.longRunPercentage ?? 0)}%</span>
-          <span>{week?.hardDays ?? 0} hard days</span>
-          <span>{workouts.length} planned sessions</span>
-          <span>{actualActivities.length} activities</span>
-        </section>
-      </section>
+      ) : null}
 
       <section className="week-board" aria-label="Weekly planning board">
         {days.map((dateValue) => {
@@ -1014,56 +1246,62 @@ function ExpandedWeekBoard({
   );
 }
 
-function WeekStackHeader({
-  week,
-  weekStart,
-  onCopyPriorWeek,
-  isCopyingPriorWeek = false
-}: {
-  week: TrainingWeek | null;
-  weekStart: string;
-  onCopyPriorWeek?: (week: TrainingWeek) => void;
-  isCopyingPriorWeek?: boolean;
-}) {
-  return (
-    <header className="week-stack-header">
-      <div>
-        <p className="eyebrow">Training week</p>
-        <h1>{week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart)}</h1>
-      </div>
-      {week && onCopyPriorWeek ? (
-        <button
-          className="week-copy-button"
-          disabled={isCopyingPriorWeek}
-          type="button"
-          onClick={() => onCopyPriorWeek(week)}
-        >
-          <Copy size={16} />
-          <span>{isCopyingPriorWeek ? "Copying" : "Copy prior week"}</span>
-        </button>
-      ) : null}
-    </header>
-  );
+function handleWeekCommandAction(
+  actionId: string,
+  {
+    onCopyPriorWeek,
+    onCreateGoal,
+    onDeriveWeekGoals,
+    onEditGoal,
+    onSync,
+    week
+  }: {
+    onCopyPriorWeek: (week: TrainingWeek) => void;
+    onCreateGoal: (week: TrainingWeek) => void;
+    onDeriveWeekGoals: (week: TrainingWeek) => void;
+    onEditGoal: (goal: WeekGoal) => void;
+    onSync: () => void;
+    week: TrainingWeek;
+  }
+) {
+  if (actionId === "copy_prior") {
+    onCopyPriorWeek(week);
+    return;
+  }
+  if (actionId === "set_goals") {
+    if (week.goals.length) {
+      onCreateGoal(week);
+    } else {
+      onDeriveWeekGoals(week);
+    }
+    return;
+  }
+  if (actionId === "edit_goals") {
+    const firstEditableGoal = week.goals.find((goal) => goal.isEditable);
+    if (firstEditableGoal) {
+      onEditGoal(firstEditableGoal);
+    } else {
+      onCreateGoal(week);
+    }
+    return;
+  }
+  if (actionId === "sync") {
+    onSync();
+  }
 }
 
 function ExpandedWeekSkeletonOverview() {
   return (
     <>
-      <section className="summary-grid" aria-label="Loading week summary">
-        {["Planned", "Done", "Hard days", "Long run"].map((label) => (
-          <div className="metric metric--skeleton" key={label}>
-            <span>{label}</span>
-            <strong>&nbsp;</strong>
-          </div>
+      <div className="week-command-intent" aria-hidden="true">
+        <div className="command-skeleton-block" />
+        <div className="command-skeleton-block" />
+      </div>
+      <div className="week-command-stats" aria-hidden="true">
+        {["Target", "Schedule", "Quality", "Long run"].map((label) => (
+          <div className="week-command-stat command-skeleton-block" key={label} />
         ))}
-      </section>
-
-      <section className="risk-strip risk-strip--skeleton" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-      </section>
+      </div>
     </>
   );
 }
@@ -1310,6 +1548,173 @@ function WorkoutEditor({
   );
 }
 
+function WeekGoalEditor({
+  editor,
+  setEditor,
+  onSubmit,
+  onClose
+}: {
+  editor: WeekGoalForm;
+  setEditor: (editor: WeekGoalForm) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="editor-backdrop">
+      <aside className="editor-panel" aria-label="Weekly goal editor">
+        <header>
+          <h2>{editor.id ? "Edit goal" : "New goal"}</h2>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <form onSubmit={onSubmit}>
+          <div className="form-grid">
+            <label>
+              <span>Category</span>
+              <select
+                value={editor.category}
+                onChange={(event) => setEditor({ ...editor, category: event.target.value as WeekGoalCategory })}
+              >
+                {goalCategories.map((category) => (
+                  <option key={category.value} value={category.value}>
+                    {category.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Type</span>
+              <select
+                value={editor.goalType}
+                onChange={(event) => setEditor({ ...editor, goalType: event.target.value as WeekGoalType })}
+              >
+                <option value="achievement">Achievement</option>
+                <option value="guardrail">Guardrail</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>Label</span>
+            <input
+              required
+              value={editor.label}
+              onChange={(event) => setEditor({ ...editor, label: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Description</span>
+            <textarea
+              rows={3}
+              value={editor.description}
+              onChange={(event) => setEditor({ ...editor, description: event.target.value })}
+            />
+          </label>
+          <div className="form-grid form-grid--three">
+            <label>
+              <span>Min</span>
+              <input
+                step="0.1"
+                type="number"
+                value={editor.minAcceptable}
+                onChange={(event) => setEditor({ ...editor, minAcceptable: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>Target</span>
+              <input
+                step="0.1"
+                type="number"
+                value={editor.targetValue}
+                onChange={(event) => setEditor({ ...editor, targetValue: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>Max</span>
+              <input
+                step="0.1"
+                type="number"
+                value={editor.maxAcceptable}
+                onChange={(event) => setEditor({ ...editor, maxAcceptable: event.target.value })}
+              />
+            </label>
+          </div>
+          <div className="form-grid">
+            <label>
+              <span>Unit</span>
+              <select
+                value={editor.unit}
+                onChange={(event) => setEditor({ ...editor, unit: event.target.value as WeekGoalUnit })}
+              >
+                {goalUnits.map((unit) => (
+                  <option key={unit.value} value={unit.value}>
+                    {unit.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Evaluation</span>
+              <select
+                value={editor.evaluationMode}
+                onChange={(event) =>
+                  setEditor({ ...editor, evaluationMode: event.target.value as WeekGoalEvaluationMode })
+                }
+              >
+                {goalEvaluationModes.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="form-grid">
+            <label>
+              <span>Priority</span>
+              <select
+                value={editor.priority}
+                onChange={(event) => setEditor({ ...editor, priority: event.target.value as WeekGoalPriority })}
+              >
+                <option value="primary">Primary</option>
+                <option value="secondary">Secondary</option>
+                <option value="guardrail">Guardrail</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select
+                value={editor.status}
+                onChange={(event) => setEditor({ ...editor, status: event.target.value as WeekGoalStatus })}
+              >
+                {goalStatuses.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="checkbox-row">
+            <input
+              checked={editor.isEnabled}
+              type="checkbox"
+              onChange={(event) => setEditor({ ...editor, isEnabled: event.target.checked })}
+            />
+            <span>Enabled</span>
+          </label>
+          <div className="editor-actions">
+            <button className="primary" type="submit">
+              <Save size={17} />
+              <span>Save</span>
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
 function Metric({ label, value, trend }: { label: string; value: string; trend?: MileageTrend | null }) {
   return (
     <div className="metric">
@@ -1537,6 +1942,47 @@ function formToPayload(form: WorkoutForm) {
   };
 }
 
+function defaultGoalForm(weekId: string): WeekGoalForm {
+  return {
+    weekId,
+    category: "custom",
+    goalType: "achievement",
+    label: "",
+    description: "",
+    targetValue: "",
+    minAcceptable: "",
+    maxAcceptable: "",
+    unit: "custom",
+    evaluationMode: "manual",
+    priority: "secondary",
+    status: "not_started",
+    isEnabled: true
+  };
+}
+
+function goalFormToPayload(form: WeekGoalForm) {
+  return {
+    category: form.category,
+    goalType: form.goalType,
+    label: form.label,
+    description: form.description,
+    targetValue: optionalNumber(form.targetValue),
+    minAcceptable: optionalNumber(form.minAcceptable),
+    maxAcceptable: optionalNumber(form.maxAcceptable),
+    unit: form.unit,
+    evaluationMode: form.evaluationMode,
+    priority: form.priority,
+    status: form.status,
+    source: "manual",
+    isEditable: true,
+    isEnabled: form.isEnabled
+  };
+}
+
+function optionalNumber(value: string) {
+  return value === "" ? null : Number(value);
+}
+
 function startOfWeek(day: Date) {
   const copy = new Date(day);
   copy.setHours(0, 0, 0, 0);
@@ -1606,17 +2052,34 @@ function getOlderWeekStarts(visibleWeekStarts: string[], timelineSummary: Traini
   return starts;
 }
 
-function getNewerWeekStarts(visibleWeekStarts: string[]) {
+function getNewerWeekStarts(
+  visibleWeekStarts: string[],
+  timelineSummary: TrainingTimelineSummary | null,
+  currentWeekStart: string,
+  selectedWeekStart: string
+) {
   const newestVisibleStart = visibleWeekStarts.at(-1);
   if (!newestVisibleStart) {
     return [];
   }
 
-  return Array.from({ length: WEEK_STACK_LOAD_BATCH }, (_, index) => addDays(newestVisibleStart, (index + 1) * 7));
+  const newestAllowedStart = latestDateValue([
+    timelineSummary?.newestWeekStartDate,
+    currentWeekStart,
+    selectedWeekStart
+  ]);
+
+  return Array.from({ length: WEEK_STACK_LOAD_BATCH }, (_, index) =>
+    addDays(newestVisibleStart, (index + 1) * 7)
+  ).filter((start) => start <= newestAllowedStart);
 }
 
 function mergeWeekStarts(starts: string[]) {
   return Array.from(new Set(starts)).sort();
+}
+
+function latestDateValue(values: Array<string | null | undefined>) {
+  return values.filter(Boolean).sort().at(-1) ?? todayDateString();
 }
 
 function mergeLoadingStarts(current: Set<string>, starts: string[]) {
