@@ -1050,7 +1050,7 @@ function ExpandedWeekSkeletonOverview() {
   return (
     <>
       <section className="summary-grid" aria-label="Loading week summary">
-        {["Planned", "Actual", "Hard days", "Long run"].map((label) => (
+        {["Planned", "Done", "Hard days", "Long run"].map((label) => (
           <div className="metric metric--skeleton" key={label}>
             <span>{label}</span>
             <strong>&nbsp;</strong>

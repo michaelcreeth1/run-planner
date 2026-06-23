@@ -322,7 +322,7 @@ h1 {
 }
 
 .metric .mileage-trend {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .mileage-trend {
@@ -332,11 +332,11 @@ h1 {
   display: inline-flex;
   font-size: 0.74rem;
   font-weight: 800;
-  gap: 3px;
+  gap: 2px;
   line-height: 1;
   max-width: 100%;
-  min-height: 22px;
-  padding: 4px 7px;
+  min-height: 20px;
+  padding: 3px 6px;
   white-space: nowrap;
 }
 
@@ -365,9 +365,9 @@ h1 {
 }
 
 .mileage-trend--compact {
-  font-size: 0.68rem;
-  min-height: 20px;
-  padding: 3px 6px;
+  font-size: 0.64rem;
+  min-height: 17px;
+  padding: 2px 4px;
 }
 
 .risk-strip {
@@ -911,7 +911,7 @@ h1 {
 .week-peek-summary {
   align-items: center;
   display: inline-flex;
-  gap: 6px;
+  gap: 4px;
   justify-self: end;
   min-width: 0;
   overflow: hidden;
@@ -928,7 +928,7 @@ h1 {
 .week-preview-card .mileage-trend,
 .week-preview-card .mileage-trend span {
   color: inherit;
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   font-weight: 800;
 }
 
