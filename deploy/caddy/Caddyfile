@@ -1,0 +1,9 @@
+# App-specific site block for the shared Caddy LXC.
+# Keep this snippet in sync with /etc/caddy/Caddyfile on the proxy host.
+
+run.home.arpa, run.creeth.net {
+	reverse_proxy /api/* 192.168.1.34:8000
+	reverse_proxy /healthz 192.168.1.34:8000
+	reverse_proxy /readyz 192.168.1.34:8000
+	reverse_proxy 192.168.1.34:5173
+}

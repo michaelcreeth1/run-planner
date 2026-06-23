@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
-  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS athlete_accounts (
@@ -8,23 +8,23 @@ CREATE TABLE IF NOT EXISTS athlete_accounts (
   display_name TEXT NOT NULL,
   timezone TEXT NOT NULL DEFAULT 'America/Denver',
   strava_athlete_id TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS training_weeks (
   id TEXT PRIMARY KEY,
   athlete_account_id TEXT NOT NULL REFERENCES athlete_accounts(id) ON DELETE CASCADE,
-  week_start_date TEXT NOT NULL,
-  week_end_date TEXT NOT NULL,
+  week_start_date DATE NOT NULL,
+  week_end_date DATE NOT NULL,
   planned_mileage REAL NOT NULL DEFAULT 0,
   actual_mileage REAL NOT NULL DEFAULT 0,
   planned_time INTEGER,
   actual_time INTEGER,
   target_long_run_distance REAL,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (athlete_account_id, week_start_date)
 );
 
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS planned_workouts (
   id TEXT PRIMARY KEY,
   training_week_id TEXT NOT NULL REFERENCES training_weeks(id) ON DELETE CASCADE,
   athlete_account_id TEXT NOT NULL REFERENCES athlete_accounts(id) ON DELETE CASCADE,
-  planned_date TEXT NOT NULL,
+  planned_date DATE NOT NULL,
   title TEXT NOT NULL,
   sport TEXT NOT NULL DEFAULT 'run',
   workout_type TEXT NOT NULL DEFAULT 'easy',
@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS planned_workouts (
   instructions TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'planned',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS ix_planned_workouts_training_week_id
@@ -83,6 +83,6 @@ CREATE TABLE IF NOT EXISTS workout_templates (
   default_purpose TEXT NOT NULL DEFAULT '',
   default_instructions TEXT NOT NULL DEFAULT '',
   tags TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

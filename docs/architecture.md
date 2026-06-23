@@ -1,6 +1,6 @@
 # Architecture
 
-## Phase 0 Shape
+## Current Shape
 
 ```text
 Browser / installed PWA
@@ -12,15 +12,17 @@ React + Vite frontend
 FastAPI API container
         |
         v
-SQLite database file
+Dedicated running_planner database
+on shared Postgres instance
 
 FastAPI worker container
         |
         v
-SQLite database file
+Dedicated running_planner database
+on shared Postgres instance
 ```
 
-The worker and API share the same codebase and database path. This keeps Phase 0 small while preserving a clean split between request handling and background work.
+The worker and API share the same codebase and database URL. The database lives in a dedicated `running_planner` database on the shared Postgres instance, not in the default `postgres` database.
 
 ## Local Ports and Paths
 
@@ -28,9 +30,7 @@ The worker and API share the same codebase and database path. This keeps Phase 0
 - API: `http://localhost:8000`
 - Health: `http://localhost:8000/healthz`
 - Readiness: `http://localhost:8000/readyz`
-- SQLite path: `./data/running_planner.db`
-
-The API and worker mount `./data` into `/app/data`.
+- Database: `DATABASE_URL`, pointed at the dedicated Postgres database.
 
 ## Access
 
@@ -44,7 +44,7 @@ POST /api/auth/session/logout
 
 Set `APP_PASSWORD` before relying on local app login outside development.
 
-## Later Homelab Shape
+## Homelab Shape
 
 ```text
 Internet / LAN / Tailscale
@@ -59,11 +59,11 @@ Docker host LXC
         |-- worker container
         `-- optional Redis container
 
-Postgres LXC
+Shared Postgres instance
         `-- running_planner database
 ```
 
-SQLite is the default while Postgres is not ready. The backend uses SQLAlchemy so the database URL can move to Postgres when the homelab database role exists.
+The backend uses SQLAlchemy with the psycopg driver. `postgres://` and `postgresql://` URLs are normalized to `postgresql+psycopg://`.
 
 ## Versioning
 
@@ -90,11 +90,11 @@ GET  /api/sync/jobs
 GET  /api/activities
 ```
 
-Tokens are encrypted before storage. The current sync implementation supports manual backfill and a short incremental polling path. Webhooks remain deferred.
+Tokens are encrypted before storage. The current sync implementation supports manual backfill and worker-driven incremental polling. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. Webhooks remain deferred.
 
 ## Migrations
 
-SQLite migrations live in `backend/migrations` and are applied at API startup through the backend migration runner. The first migration creates:
+SQL migrations live in `backend/migrations` and are applied at API startup through the backend migration runner. Dialect-specific files can override a generic migration by using a suffix such as `.postgresql.sql`. The first migrations create:
 
 - `athlete_accounts`
 - `training_weeks`

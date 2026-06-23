@@ -1,10 +1,11 @@
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.planning import AthleteAccount, PlannedWorkout, TrainingWeek
+from app.models.planning import AthleteAccount, PlannedWorkout, PlannedWorkoutStep, TrainingWeek
 from app.models.strava import StravaActivity
 from app.schemas.planning import PlannedWorkoutCreate, PlannedWorkoutUpdate, TrainingWeekPatch
 
@@ -81,6 +82,80 @@ def list_weeks(db: Session) -> list[TrainingWeek]:
     for week in weeks:
         recalculate_week(db, week)
     return weeks
+
+
+def training_timeline(db: Session) -> dict:
+    athlete = ensure_default_athlete(db)
+    month_summaries: dict[tuple[int, int], dict] = defaultdict(new_timeline_month_summary)
+    data_week_starts: set[date] = set()
+
+    workouts = db.scalars(
+        select(PlannedWorkout).where(PlannedWorkout.athlete_account_id == athlete.id)
+    ).all()
+    for workout in workouts:
+        week_start = week_start_for(workout.planned_date)
+        month_key = (workout.planned_date.year, workout.planned_date.month)
+        summary = month_summaries[month_key]
+        summary["has_plan"] = True
+        summary["planned_miles"] += workout.planned_distance or 0
+        data_week_starts.add(week_start)
+
+    activities = db.scalars(
+        select(StravaActivity).where(
+            StravaActivity.athlete_account_id == athlete.id,
+            StravaActivity.deleted_at.is_(None),
+        )
+    ).all()
+    for activity in activities:
+        activity_date = activity.start_date_local.date()
+        week_start = week_start_for(activity_date)
+        month_key = (activity_date.year, activity_date.month)
+        summary = month_summaries[month_key]
+        summary["has_activities"] = True
+        summary["actual_miles"] += activity.distance / 1609.344
+        data_week_starts.add(week_start)
+
+    metadata_weeks = db.scalars(
+        select(TrainingWeek).where(
+            TrainingWeek.athlete_account_id == athlete.id,
+            (TrainingWeek.notes != "") | TrainingWeek.target_long_run_distance.is_not(None),
+        )
+    ).all()
+    for week in metadata_weeks:
+        month_key = (week.week_start_date.year, week.week_start_date.month)
+        month_summaries[month_key]["has_plan"] = True
+        data_week_starts.add(week.week_start_date)
+
+    months = [
+        {
+            "year": year,
+            "month": month,
+            "has_plan": summary["has_plan"],
+            "has_activities": summary["has_activities"],
+            "planned_miles": round_optional_miles(summary["planned_miles"]),
+            "actual_miles": round_optional_miles(summary["actual_miles"]),
+        }
+        for (year, month), summary in sorted(month_summaries.items())
+    ]
+
+    return {
+        "oldest_week_start_date": min(data_week_starts) if data_week_starts else None,
+        "newest_week_start_date": max(data_week_starts) if data_week_starts else None,
+        "months": months,
+    }
+
+
+def new_timeline_month_summary() -> dict:
+    return {
+        "has_plan": False,
+        "has_activities": False,
+        "planned_miles": 0,
+        "actual_miles": 0,
+    }
+
+
+def round_optional_miles(value: float) -> float | None:
+    return round(value, 1) if value > 0 else None
 
 
 def update_week(db: Session, week_id: str, payload: TrainingWeekPatch) -> TrainingWeek:
@@ -193,11 +268,61 @@ def move_workout(db: Session, workout_id: str, planned_date: date) -> PlannedWor
 
 def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
     source = get_workout(db, workout_id)
-    clone = PlannedWorkout(
-        training_week_id=source.training_week_id,
-        athlete_account_id=source.athlete_account_id,
-        planned_date=source.planned_date,
+    clone = clone_workout(
+        source,
+        source.training_week_id,
+        source.planned_date,
         title=f"{source.title} copy",
+    )
+    db.add(clone)
+    db.commit()
+    db.refresh(clone)
+    recalculate_week(db, get_week_by_id(db, source.training_week_id))
+    return get_workout(db, clone.id)
+
+
+def copy_prior_week(db: Session, week_id: str) -> TrainingWeek:
+    target = get_week_by_id(db, week_id)
+    source_start = target.week_start_date - timedelta(days=7)
+    source = get_or_create_week(db, source_start)
+
+    if not source.workouts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Prior week has no planned workouts to copy.",
+        )
+
+    if target.target_long_run_distance is None:
+        target.target_long_run_distance = source.target_long_run_distance
+    if not target.notes:
+        target.notes = source.notes
+
+    for source_workout in source.workouts:
+        day_offset = (source_workout.planned_date - source.week_start_date).days
+        db.add(
+            clone_workout(
+                source_workout,
+                target.id,
+                target.week_start_date + timedelta(days=day_offset),
+            )
+        )
+
+    db.add(target)
+    db.commit()
+    return load_week(db, target.week_start_date)
+
+
+def clone_workout(
+    source: PlannedWorkout,
+    training_week_id: str,
+    planned_date: date,
+    title: str | None = None,
+) -> PlannedWorkout:
+    clone = PlannedWorkout(
+        training_week_id=training_week_id,
+        athlete_account_id=source.athlete_account_id,
+        planned_date=planned_date,
+        title=title or source.title,
         sport=source.sport,
         workout_type=source.workout_type,
         intensity_category=source.intensity_category,
@@ -210,11 +335,23 @@ def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
         notes=source.notes,
         status="planned",
     )
-    db.add(clone)
-    db.commit()
-    db.refresh(clone)
-    recalculate_week(db, get_week_by_id(db, source.training_week_id))
-    return get_workout(db, clone.id)
+    clone.steps = [
+        PlannedWorkoutStep(
+            step_order=step.step_order,
+            label=step.label,
+            duration=step.duration,
+            distance=step.distance,
+            target_pace_min=step.target_pace_min,
+            target_pace_max=step.target_pace_max,
+            target_hr_min=step.target_hr_min,
+            target_hr_max=step.target_hr_max,
+            target_rpe=step.target_rpe,
+            repetition_group=step.repetition_group,
+            notes=step.notes,
+        )
+        for step in source.steps
+    ]
+    return clone
 
 
 def delete_workout(db: Session, workout_id: str) -> None:

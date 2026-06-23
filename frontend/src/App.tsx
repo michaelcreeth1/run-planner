@@ -1,5 +1,7 @@
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   CalendarDays,
   ChevronRight,
@@ -7,6 +9,7 @@ import {
   Edit3,
   ExternalLink,
   Link,
+  Minus,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -23,12 +26,13 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { TrainingTimeRail } from "./components/time-rail/TrainingTimeRail";
-import type { TrainingTimelineIndex } from "./hooks/useTrainingTimeline";
+import type { TrainingTimelineIndex, TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 
 const FRONTEND_VERSION = "0.1.0";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const WEEK_STACK_RADIUS = 3;
+const WEEK_STACK_LOAD_BATCH = 6;
 
 type ApiVersion = {
   frontendMinVersion: string;
@@ -190,6 +194,11 @@ const intensities: Array<{ value: Workout["intensityCategory"]; label: string }>
 
 type TabId = (typeof tabs)[number]["id"];
 type WeekSelectSource = "header" | "time-rail" | "week-stack";
+type MileageTrendDirection = "up" | "down" | "same";
+type MileageTrend = {
+  direction: MileageTrendDirection;
+  delta: number;
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("week");
@@ -199,12 +208,19 @@ function App() {
   const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(getInitialWeekStart()));
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
+  const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [copyingPriorWeekId, setCopyingPriorWeekId] = useState<string | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const pendingPrependScroll = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const isPrependingWeeks = useRef(false);
+  const isAppendingWeeks = useRef(false);
+  const didApplyInitialTimelineRange = useRef(false);
 
   const staleFrontend = apiVersion
     ? apiVersion.forceReload || compareVersions(FRONTEND_VERSION, apiVersion.frontendMinVersion) < 0
@@ -215,8 +231,11 @@ function App() {
   const timelineIndex = useTrainingTimeline({
     currentWeekStartDate: currentWeekStart,
     selectedWeekStartDate: weekStart,
+    timelineSummary,
     weekStack
   });
+  const canLoadOlderWeeks = getOlderWeekStarts(visibleWeekStarts, timelineSummary).length > 0;
+  const canLoadNewerWeeks = visibleWeekStarts.length > 0;
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -229,33 +248,48 @@ function App() {
       });
   }, []);
 
+  useLayoutEffect(() => {
+    const pending = pendingPrependScroll.current;
+    const main = mainRef.current;
+    if (!pending || !main) {
+      isAppendingWeeks.current = false;
+      return;
+    }
+
+    main.scrollTop = pending.scrollTop + (main.scrollHeight - pending.scrollHeight);
+    pendingPrependScroll.current = null;
+    isPrependingWeeks.current = false;
+    isAppendingWeeks.current = false;
+  }, [visibleWeekStarts]);
+
   useEffect(() => {
-    const localStarts = weekRangeAround(weekStart);
-    setVisibleWeekStarts(localStarts);
-    loadWeeks(localStarts);
-
-    const expandSettled = window.setTimeout(() => {
-      const surroundingStarts = weekRangeAround(weekStart);
-      loadWeeks(surroundingStarts);
-    }, 260);
-
-    return () => window.clearTimeout(expandSettled);
-  }, [weekStart]);
-
-  useEffect(() => {
+    loadWeeks(visibleWeekStarts);
+    loadTrainingTimeline();
     loadStravaStatus();
     loadActivities();
   }, []);
 
   useEffect(() => {
+    if (!timelineSummary || didApplyInitialTimelineRange.current) {
+      return;
+    }
+
+    didApplyInitialTimelineRange.current = true;
+    recenterVisibleWeeks(weekStart, timelineSummary);
+  }, [timelineSummary]);
+
+  useEffect(() => {
     function handlePopState() {
-      setWeekStart(getWeekStartFromLocation());
+      const nextWeekStart = getWeekStartFromLocation();
+      setVisibleWeekStarts(boundedWeekRangeAround(nextWeekStart, timelineSummary));
+      loadWeeks(boundedWeekRangeAround(nextWeekStart, timelineSummary));
+      setWeekStart(nextWeekStart);
     }
 
     ensureWeekRoute(weekStart);
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [timelineSummary]);
 
   function loadWeeks(starts: string[], options: { force?: boolean } = {}) {
     const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
@@ -288,13 +322,59 @@ function App() {
     if (normalizedStart === weekStart) {
       return;
     }
-    setVisibleWeekStarts(weekRangeAround(normalizedStart));
+    if (_source === "week-stack") {
+      setVisibleWeekStarts((current) => mergeWeekStarts([...current, normalizedStart]));
+      loadWeeks([normalizedStart]);
+    } else {
+      recenterVisibleWeeks(normalizedStart, timelineSummary);
+    }
     window.history.pushState({ weekStart: normalizedStart }, "", weekPath(normalizedStart));
     setWeekStart(normalizedStart);
   }
 
   function jumpToThisWeek() {
     selectWeek(currentWeekStart, "time-rail");
+  }
+
+  function recenterVisibleWeeks(start: string, summary: TrainingTimelineSummary | null) {
+    const starts = boundedWeekRangeAround(start, summary);
+    setVisibleWeekStarts(starts);
+    loadWeeks(starts);
+  }
+
+  function prependOlderWeeks() {
+    if (isPrependingWeeks.current) {
+      return;
+    }
+
+    const olderStarts = getOlderWeekStarts(visibleWeekStarts, timelineSummary);
+    const main = mainRef.current;
+    if (!olderStarts.length || !main) {
+      return;
+    }
+
+    isPrependingWeeks.current = true;
+    pendingPrependScroll.current = {
+      scrollHeight: main.scrollHeight,
+      scrollTop: main.scrollTop
+    };
+    setVisibleWeekStarts((current) => mergeWeekStarts([...olderStarts, ...current]));
+    loadWeeks(olderStarts);
+  }
+
+  function appendNewerWeeks() {
+    if (isAppendingWeeks.current) {
+      return;
+    }
+
+    const newerStarts = getNewerWeekStarts(visibleWeekStarts);
+    if (!newerStarts.length) {
+      return;
+    }
+
+    isAppendingWeeks.current = true;
+    setVisibleWeekStarts((current) => mergeWeekStarts([...current, ...newerStarts]));
+    loadWeeks(newerStarts);
   }
 
   function openCreate(plannedDate: string) {
@@ -338,16 +418,52 @@ function App() {
     }
     setEditor(null);
     refreshVisibleWeeks();
+    loadTrainingTimeline();
   }
 
   async function deleteWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
     refreshVisibleWeeks();
+    loadTrainingTimeline();
   }
 
   async function duplicateWorkout(workout: Workout) {
     await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
     refreshVisibleWeeks();
+    loadTrainingTimeline();
+  }
+
+  async function copyPriorWeek(targetWeek: TrainingWeek) {
+    if (
+      targetWeek.workouts.length > 0 &&
+      !window.confirm("Copy prior week into this week? Existing planned workouts will stay in place.")
+    ) {
+      return;
+    }
+
+    setCopyingPriorWeekId(targetWeek.id);
+    try {
+      const copiedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/copy-prior`, { method: "POST" });
+      setWeekStack((current) => ({
+        ...current,
+        [copiedWeek.weekStartDate]: copiedWeek
+      }));
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Could not copy the prior week.");
+    } finally {
+      setCopyingPriorWeekId(null);
+    }
+  }
+
+  function loadTrainingTimeline() {
+    fetchJson<TrainingTimelineSummary>("/api/training-timeline")
+      .then((body) => {
+        setTimelineSummary(body);
+        setApiError(null);
+      })
+      .catch((error: Error) => setApiError(error.message));
   }
 
   function loadStravaStatus() {
@@ -372,6 +488,7 @@ function App() {
       setLastSyncJob(job);
       loadActivities();
       loadStravaStatus();
+      loadTrainingTimeline();
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Strava sync failed.");
     } finally {
@@ -420,7 +537,7 @@ function App() {
         </nav>
       </aside>
 
-      <main>
+      <main ref={mainRef}>
         {apiError ? (
           <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
         ) : null}
@@ -435,8 +552,12 @@ function App() {
 
         {activeTab === "week" ? (
           <WeekView
+            canLoadNewerWeeks={canLoadNewerWeeks}
+            canLoadOlderWeeks={canLoadOlderWeeks}
             isLoading={isLoadingWeek}
             onJumpToThisWeek={jumpToThisWeek}
+            onLoadNewerWeeks={appendNewerWeeks}
+            onLoadOlderWeeks={prependOlderWeeks}
             onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
             onSelectWeek={(start) => selectWeek(start, "week-stack")}
             selectedWeekStart={weekStart}
@@ -448,6 +569,8 @@ function App() {
             onEdit={openEdit}
             onDelete={deleteWorkout}
             onDuplicate={duplicateWorkout}
+            onCopyPriorWeek={copyPriorWeek}
+            copyingPriorWeekId={copyingPriorWeekId}
           />
         ) : null}
         {activeTab === "plan" ? <Placeholder title="Plan" icon={<Sparkles size={22} />} /> : null}
@@ -479,8 +602,12 @@ function App() {
 }
 
 function WeekView({
+  canLoadNewerWeeks,
+  canLoadOlderWeeks,
   isLoading,
   onJumpToThisWeek,
+  onLoadNewerWeeks,
+  onLoadOlderWeeks,
   onSelectTimeWeek,
   onSelectWeek,
   selectedWeekStart,
@@ -491,10 +618,16 @@ function WeekView({
   onCreate,
   onEdit,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  onCopyPriorWeek,
+  copyingPriorWeekId
 }: {
+  canLoadNewerWeeks: boolean;
+  canLoadOlderWeeks: boolean;
   isLoading: boolean;
   onJumpToThisWeek: () => void;
+  onLoadNewerWeeks: () => void;
+  onLoadOlderWeeks: () => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
@@ -506,10 +639,64 @@ function WeekView({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  copyingPriorWeekId: string | null;
 }) {
+  const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = olderWeeksSentinelRef.current;
+    const root = sentinel?.closest("main");
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadOlderWeeks) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadOlderWeeks();
+        }
+      },
+      {
+        root,
+        rootMargin: "520px 0px 0px",
+        threshold: 0
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadOlderWeeks, onLoadOlderWeeks]);
+
+  useEffect(() => {
+    const sentinel = newerWeeksSentinelRef.current;
+    const root = sentinel?.closest("main");
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadNewerWeeks) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadNewerWeeks();
+        }
+      },
+      {
+        root,
+        rootMargin: "0px 0px 520px",
+        threshold: 0
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadNewerWeeks, onLoadNewerWeeks]);
+
   return (
     <section className="week-stack-layout" aria-busy={isLoading}>
       <section className="week-timeline" aria-label="Training week timeline">
+        <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
             key={start}
@@ -519,12 +706,16 @@ function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
+            previousWeek={weekStack[addDays(start, -7)]}
             week={start === selectedWeekStart ? week : weekStack[start]}
             weekStart={start}
           />
         ))}
+        <div className="week-stack-sentinel" aria-hidden="true" ref={newerWeeksSentinelRef} />
       </section>
 
       <TrainingTimeRail
@@ -543,8 +734,11 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onCopyPriorWeek,
+  isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
+  previousWeek,
   week,
   weekStart
 }: {
@@ -554,8 +748,11 @@ function WeekRow({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
+  previousWeek?: TrainingWeek;
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
@@ -625,12 +822,16 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={isCopyingPriorWeek}
+            previousWeek={previousWeek}
             week={week ?? null}
             weekStart={weekStart}
           />
         ) : (
           <CollapsedWeekCard
             onSelectWeek={onSelectWeek}
+            previousWeek={previousWeek}
             tone={isPast ? "past" : "future"}
             week={week ?? undefined}
             weekStart={weekStart}
@@ -643,18 +844,24 @@ function WeekRow({
 
 function CollapsedWeekCard({
   onSelectWeek,
+  previousWeek,
   tone,
   week,
   weekStart
 }: {
   onSelectWeek: (weekStart: string) => void;
+  previousWeek?: TrainingWeek;
   tone: "past" | "future";
   week?: TrainingWeek;
   weekStart: string;
 }) {
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
   const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
+  const mileageTrend = getCollapsedMileageTrend(week, previousWeek);
   const detail = formatCollapsedWeekDetail(week, tone);
+  const dayBadges = collapsedWeekDayBadges(week, weekStart);
+  const dailySummary = dayBadges.map((badge) => `${formatWeekday(badge.date)} ${badge.label}`).join(", ");
+  const trendSummary = mileageTrend ? `, ${formatMileageTrendAriaLabel(mileageTrend)}` : "";
 
   return (
     <button
@@ -662,12 +869,21 @@ function CollapsedWeekCard({
       data-testid="week-preview-card"
       data-week-start={weekStart}
       type="button"
-      aria-label={`Go to week ${range}, ${mileageSummary}, ${detail}`}
+      aria-label={`Go to week ${range}, ${dailySummary}, ${mileageSummary}${trendSummary}, ${detail}`}
       onClick={() => onSelectWeek(weekStart)}
     >
       <span className="week-peek-range">{range}</span>
-      <strong>{mileageSummary}</strong>
-      <small>{detail}</small>
+      <span className="week-peek-days" aria-hidden="true">
+        {dayBadges.map((badge) => (
+          <span className={`week-peek-day-badge ${badge.kind}`} key={badge.date} title={badge.title}>
+            {badge.label}
+          </span>
+        ))}
+      </span>
+      <small className="week-peek-summary">
+        <span>{mileageSummary}</span>
+        <MileageTrendBadge compact trend={mileageTrend} />
+      </small>
       <ChevronRight className="week-peek-icon" size={16} aria-hidden="true" />
     </button>
   );
@@ -681,7 +897,10 @@ function ExpandedWeekBoard({
   onCreate,
   onEdit,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  onCopyPriorWeek,
+  isCopyingPriorWeek,
+  previousWeek
 }: {
   days: string[];
   isLoading?: boolean;
@@ -691,10 +910,15 @@ function ExpandedWeekBoard({
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  isCopyingPriorWeek: boolean;
+  previousWeek?: TrainingWeek;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
   const today = todayDateString();
+  const plannedTrend = getMileageTrend(week?.plannedMileage, previousWeek?.plannedMileage);
+  const actualTrend = getMileageTrend(week?.actualMileage, previousWeek?.actualMileage);
 
   if (isLoading) {
     return (
@@ -703,7 +927,12 @@ function ExpandedWeekBoard({
         aria-label={`Loading ${formatWeekRangeFromStart(weekStart)}`}
       >
         <section className="week-overview-panel" aria-label="Week overview">
-          <WeekStackHeader week={week} weekStart={weekStart} />
+          <WeekStackHeader
+            week={week}
+            weekStart={weekStart}
+            onCopyPriorWeek={onCopyPriorWeek}
+            isCopyingPriorWeek={isCopyingPriorWeek}
+          />
           <ExpandedWeekSkeletonOverview />
         </section>
         <ExpandedWeekSkeleton days={days} />
@@ -714,11 +943,16 @@ function ExpandedWeekBoard({
   return (
     <div className="expanded-week-board">
       <section className="week-overview-panel" aria-label="Week overview">
-        <WeekStackHeader week={week} weekStart={weekStart} />
+        <WeekStackHeader
+          week={week}
+          weekStart={weekStart}
+          onCopyPriorWeek={onCopyPriorWeek}
+          isCopyingPriorWeek={isCopyingPriorWeek}
+        />
 
         <section className="summary-grid" aria-label="Week summary">
-          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} />
-          <Metric label="Actual" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} />
+          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} trend={plannedTrend} />
+          <Metric label="Done" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} trend={actualTrend} />
           <Metric label="Hard days" value={String(week?.hardDays ?? 0)} />
           <Metric label="Long run" value={`${formatNumber(week?.longRunDistance ?? 0)} mi`} />
         </section>
@@ -727,7 +961,7 @@ function ExpandedWeekBoard({
           <span>Long run {formatNumber(week?.longRunPercentage ?? 0)}%</span>
           <span>{week?.hardDays ?? 0} hard days</span>
           <span>{workouts.length} planned sessions</span>
-          <span>{actualActivities.length} actual activities</span>
+          <span>{actualActivities.length} activities</span>
         </section>
       </section>
 
@@ -770,7 +1004,7 @@ function ExpandedWeekBoard({
                 ) : null}
               </div>
               <footer>
-                {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} actual
+                {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} done
               </footer>
             </article>
           );
@@ -782,10 +1016,14 @@ function ExpandedWeekBoard({
 
 function WeekStackHeader({
   week,
-  weekStart
+  weekStart,
+  onCopyPriorWeek,
+  isCopyingPriorWeek = false
 }: {
   week: TrainingWeek | null;
   weekStart: string;
+  onCopyPriorWeek?: (week: TrainingWeek) => void;
+  isCopyingPriorWeek?: boolean;
 }) {
   return (
     <header className="week-stack-header">
@@ -793,6 +1031,17 @@ function WeekStackHeader({
         <p className="eyebrow">Training week</p>
         <h1>{week ? formatWeekRange(week) : formatWeekRangeFromStart(weekStart)}</h1>
       </div>
+      {week && onCopyPriorWeek ? (
+        <button
+          className="week-copy-button"
+          disabled={isCopyingPriorWeek}
+          type="button"
+          onClick={() => onCopyPriorWeek(week)}
+        >
+          <Copy size={16} />
+          <span>{isCopyingPriorWeek ? "Copying" : "Copy prior week"}</span>
+        </button>
+      ) : null}
     </header>
   );
 }
@@ -801,7 +1050,7 @@ function ExpandedWeekSkeletonOverview() {
   return (
     <>
       <section className="summary-grid" aria-label="Loading week summary">
-        {["Planned", "Actual", "Hard days", "Long run"].map((label) => (
+        {["Planned", "Done", "Hard days", "Long run"].map((label) => (
           <div className="metric metric--skeleton" key={label}>
             <span>{label}</span>
             <strong>&nbsp;</strong>
@@ -847,7 +1096,7 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
     <div className="actual-item">
       <div>
         <strong>{activity.name}</strong>
-        <span>{activity.sportType} actual</span>
+        <span>{activity.sportType} completed</span>
       </div>
       <dl>
         <div>
@@ -1061,12 +1310,32 @@ function WorkoutEditor({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, trend }: { label: string; value: string; trend?: MileageTrend | null }) {
   return (
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+      <MileageTrendBadge trend={trend} />
     </div>
+  );
+}
+
+function MileageTrendBadge({ compact = false, trend }: { compact?: boolean; trend?: MileageTrend | null }) {
+  if (!trend) {
+    return null;
+  }
+
+  const Icon = trend.direction === "up" ? ArrowUp : trend.direction === "down" ? ArrowDown : Minus;
+
+  return (
+    <span
+      aria-label={formatMileageTrendAriaLabel(trend)}
+      className={`mileage-trend mileage-trend--${trend.direction} ${compact ? "mileage-trend--compact" : ""}`}
+      title={formatMileageTrendAriaLabel(trend)}
+    >
+      <Icon size={compact ? 10 : 12} aria-hidden="true" />
+      <span>{formatMileageTrendDelta(trend)}</span>
+    </span>
   );
 }
 
@@ -1310,6 +1579,42 @@ function weekRangeAround(weekStart: string) {
   );
 }
 
+function boundedWeekRangeAround(weekStart: string, timelineSummary: TrainingTimelineSummary | null) {
+  const starts = weekRangeAround(weekStart);
+  const oldestWeekStart = timelineSummary?.oldestWeekStartDate;
+  if (!oldestWeekStart || weekStart < oldestWeekStart) {
+    return starts;
+  }
+
+  return starts.filter((start) => start >= oldestWeekStart);
+}
+
+function getOlderWeekStarts(visibleWeekStarts: string[], timelineSummary: TrainingTimelineSummary | null) {
+  const oldestVisibleStart = visibleWeekStarts[0];
+  const oldestDataStart = timelineSummary?.oldestWeekStartDate;
+  if (!oldestVisibleStart || !oldestDataStart || oldestVisibleStart <= oldestDataStart) {
+    return [];
+  }
+
+  const starts: string[] = [];
+  for (let index = WEEK_STACK_LOAD_BATCH; index >= 1; index -= 1) {
+    const start = addDays(oldestVisibleStart, index * -7);
+    if (start >= oldestDataStart) {
+      starts.push(start);
+    }
+  }
+  return starts;
+}
+
+function getNewerWeekStarts(visibleWeekStarts: string[]) {
+  const newestVisibleStart = visibleWeekStarts.at(-1);
+  if (!newestVisibleStart) {
+    return [];
+  }
+
+  return Array.from({ length: WEEK_STACK_LOAD_BATCH }, (_, index) => addDays(newestVisibleStart, (index + 1) * 7));
+}
+
 function mergeWeekStarts(starts: string[]) {
   return Array.from(new Set(starts)).sort();
 }
@@ -1420,12 +1725,111 @@ function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function getMileageTrend(current: number | null | undefined, previous: number | null | undefined): MileageTrend | null {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return null;
+  }
+
+  if (current <= 0 && previous <= 0) {
+    return null;
+  }
+
+  const delta = current - previous;
+  const roundedDelta = Math.abs(delta) < 0.05 ? 0 : delta;
+
+  if (roundedDelta === 0) {
+    return {
+      direction: "same",
+      delta: 0
+    };
+  }
+
+  return {
+    direction: roundedDelta > 0 ? "up" : "down",
+    delta: roundedDelta
+  };
+}
+
+function getCollapsedMileageTrend(week: TrainingWeek | undefined, previousWeek: TrainingWeek | undefined) {
+  if (!week || !previousWeek) {
+    return null;
+  }
+
+  return getMileageTrend(preferredMileage(week), preferredMileage(previousWeek));
+}
+
+function preferredMileage(week: TrainingWeek) {
+  return week.actualMileage > 0 ? week.actualMileage : week.plannedMileage;
+}
+
+function formatMileageTrendDelta(trend: MileageTrend) {
+  if (trend.direction === "same") {
+    return "0";
+  }
+
+  return formatNumber(Math.abs(trend.delta));
+}
+
+function formatMileageTrendAriaLabel(trend: MileageTrend) {
+  if (trend.direction === "same") {
+    return "Mileage unchanged from prior week";
+  }
+
+  return `Mileage ${trend.direction === "up" ? "increased" : "decreased"} ${formatNumber(Math.abs(trend.delta))} miles from prior week`;
+}
+
 function sumDistance(workouts: Workout[]) {
   return workouts.reduce((sum, workout) => sum + (workout.plannedDistance ?? 0), 0);
 }
 
 function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
+}
+
+function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(weekStart, index);
+    const dayActuals = week?.actualActivities.filter((activity) => activity.activityDate === date) ?? [];
+    const dayWorkouts = week?.workouts.filter((workout) => workout.plannedDate === date) ?? [];
+    const actualMiles = sumActualDistance(dayActuals);
+    const plannedMiles = sumDistance(dayWorkouts);
+    const weekday = formatWeekday(date);
+    const dateLabel = formatShortDate(date);
+
+    if (!week) {
+      return {
+        date,
+        kind: "loading",
+        label: "...",
+        title: `${weekday} ${dateLabel}: loading`
+      };
+    }
+
+    if (dayActuals.length > 0) {
+      return {
+        date,
+        kind: actualMiles > 0 ? "actual" : "rest",
+        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "rest",
+        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} completed miles`
+      };
+    }
+
+    if (plannedMiles > 0) {
+      return {
+        date,
+        kind: "planned",
+        label: `${formatNumber(plannedMiles)} mi`,
+        title: `${weekday} ${dateLabel}: ${formatNumber(plannedMiles)} planned miles`
+      };
+    }
+
+    return {
+      date,
+      kind: "rest",
+      label: "rest",
+      title: `${weekday} ${dateLabel}: rest`
+    };
+  });
 }
 
 function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: "past" | "future") {
@@ -1438,13 +1842,11 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
   const isCurrentWeek = weekStart === startOfWeek(new Date());
 
   if (actual > 0 && planned > 0) {
-    return isCurrentWeek
-      ? `${formatNumber(actual)} / ${formatNumber(planned)} mi`
-      : `${formatNumber(actual)} mi actual / ${formatNumber(planned)} planned`;
+    return `${formatNumber(actual)} / ${formatNumber(planned)} mi`;
   }
 
   if (actual > 0) {
-    return isCurrentWeek ? `${formatNumber(actual)} mi actual · unplanned` : `${formatNumber(actual)} mi actual`;
+    return isCurrentWeek ? `${formatNumber(actual)} mi · unplanned` : `${formatNumber(actual)} mi`;
   }
 
   if (planned > 0) {

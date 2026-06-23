@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, status
@@ -30,14 +31,16 @@ def authorization_url() -> str:
             detail="Strava client credentials are not configured.",
         )
 
-    scope = ",".join(REQUIRED_SCOPES)
-    return (
-        f"{AUTH_URL}?client_id={settings.strava_client_id}"
-        f"&redirect_uri={settings.strava_redirect_uri}"
-        "&response_type=code"
-        "&approval_prompt=auto"
-        f"&scope={scope}"
+    query = urlencode(
+        {
+            "client_id": settings.strava_client_id,
+            "redirect_uri": settings.strava_redirect_uri,
+            "response_type": "code",
+            "approval_prompt": "auto",
+            "scope": ",".join(REQUIRED_SCOPES),
+        }
     )
+    return f"{AUTH_URL}?{query}"
 
 
 def get_token(db: Session) -> StravaOAuthToken | None:
@@ -261,7 +264,6 @@ def upsert_activity(db: Session, athlete_account_id: str, payload: dict[str, Any
         )
         db.add(activity)
 
-    incoming_raw = json.dumps(payload, sort_keys=True)
     if not created and raw_payload_matches(activity.raw_payload_json, payload):
         return "unchanged"
 
@@ -281,16 +283,21 @@ def upsert_activity(db: Session, athlete_account_id: str, payload: dict[str, Any
     activity.average_cadence = payload.get("average_cadence")
     activity.average_watts = payload.get("average_watts")
     activity.perceived_exertion = payload.get("perceived_exertion")
-    activity.private = int(bool(payload.get("private")))
-    activity.trainer = int(bool(payload.get("trainer")))
-    activity.commute = int(bool(payload.get("commute")))
-    activity.manual = int(bool(payload.get("manual")))
-    activity.raw_payload_json = incoming_raw
+    activity.private = bool(payload.get("private"))
+    activity.trainer = bool(payload.get("trainer"))
+    activity.commute = bool(payload.get("commute"))
+    activity.manual = bool(payload.get("manual"))
+    activity.raw_payload_json = payload
     db.commit()
     return "created" if created else "updated"
 
 
-def raw_payload_matches(existing_raw: str, incoming_payload: dict[str, Any]) -> bool:
+def raw_payload_matches(
+    existing_raw: dict[str, Any] | str,
+    incoming_payload: dict[str, Any],
+) -> bool:
+    if isinstance(existing_raw, dict):
+        return existing_raw == incoming_payload
     try:
         return json.loads(existing_raw) == incoming_payload
     except json.JSONDecodeError:

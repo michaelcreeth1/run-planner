@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     app_base_url: str = Field(default="http://localhost:5173", alias="APP_BASE_URL")
     api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
-    database_url: str = Field(default="sqlite:///./data/running_planner.db", alias="DATABASE_URL")
+    database_url: str = Field(
+        default="postgresql+psycopg://running_planner:running_planner@localhost:5432/running_planner",
+        alias="DATABASE_URL",
+    )
     session_secret: str = Field(default="dev-session-secret-change-me", alias="SESSION_SECRET")
     app_username: str = Field(default="michael", alias="APP_USERNAME")
     app_password: str = Field(default="", alias="APP_PASSWORD")
@@ -32,6 +35,9 @@ class Settings(BaseSettings):
         default="http://localhost:8000/api/auth/strava/callback",
         alias="STRAVA_REDIRECT_URI",
     )
+    strava_sync_enabled: bool = Field(default=True, alias="STRAVA_SYNC_ENABLED")
+    strava_sync_interval_seconds: int = Field(default=30 * 60, alias="STRAVA_SYNC_INTERVAL_SECONDS")
+    strava_sync_lookback_days: int = Field(default=14, alias="STRAVA_SYNC_LOOKBACK_DAYS")
 
     ai_provider: str = Field(default="stub", alias="AI_PROVIDER")
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
@@ -57,6 +63,14 @@ class Settings(BaseSettings):
         if not self.database_url.startswith(prefix):
             return None
         return Path(self.database_url.removeprefix(prefix))
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
 
 
 @lru_cache

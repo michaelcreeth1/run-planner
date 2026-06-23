@@ -207,6 +207,33 @@ main {
   padding: 0 0 10px;
 }
 
+.week-copy-button {
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: var(--primary-hover);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  font-weight: 700;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.week-copy-button:hover,
+.week-copy-button:focus-visible {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.week-copy-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .eyebrow {
   color: var(--text-secondary);
   font-size: 0.7rem;
@@ -292,6 +319,55 @@ h1 {
   font-size: 1.6rem;
   line-height: 1.1;
   margin-top: 5px;
+}
+
+.metric .mileage-trend {
+  margin-top: 6px;
+}
+
+.mileage-trend {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 800;
+  gap: 2px;
+  line-height: 1;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.mileage-trend span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.mileage-trend--up {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.mileage-trend--down {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.mileage-trend--same {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.mileage-trend--compact {
+  font-size: 0.64rem;
+  min-height: 17px;
+  padding: 2px 4px;
 }
 
 .risk-strip {
@@ -702,6 +778,10 @@ h1 {
   overflow: hidden;
 }
 
+.week-stack-sentinel {
+  height: 1px;
+}
+
 .week-row {
   min-width: 0;
   transition:
@@ -733,8 +813,8 @@ h1 {
   color: var(--text-primary);
   cursor: pointer;
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(120px, 1.1fr) minmax(120px, 1fr) auto auto;
+  gap: 10px;
+  grid-template-columns: 94px minmax(0, 1fr) minmax(132px, auto) 16px;
   min-height: 52px;
   padding: 10px 12px;
   text-align: left;
@@ -761,9 +841,107 @@ h1 {
   font-size: 0.84rem;
 }
 
-.week-preview-card strong {
-  font-size: 0.92rem;
+.week-peek-days {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 0;
+  width: 100%;
+}
+
+.week-preview-card .week-peek-day-badge {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.72rem;
   font-weight: 700;
+  justify-content: center;
+  min-height: 24px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 6px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.week-preview-card .week-peek-day-badge.actual {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.week-preview-card .week-peek-day-badge.planned {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: var(--primary-hover);
+}
+
+.week-preview-card .week-peek-day-badge.rest {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  opacity: 0.62;
+}
+
+.week-preview-card .week-peek-day-badge.loading {
+  color: transparent;
+  position: relative;
+}
+
+.week-preview-card .week-peek-day-badge.loading::after {
+  background: linear-gradient(90deg, #e5e7eb, #f8fafc, #e5e7eb);
+  border-radius: inherit;
+  content: "";
+  inset: 5px 7px;
+  position: absolute;
+}
+
+.week-peek-range {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.week-peek-summary {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.week-peek-summary > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.week-preview-card .mileage-trend,
+.week-preview-card .mileage-trend span {
+  color: inherit;
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.week-preview-card .mileage-trend--up {
+  color: #047857;
+}
+
+.week-preview-card .mileage-trend--down {
+  color: #be123c;
+}
+
+.week-preview-card .mileage-trend--same {
+  color: #475569;
 }
 
 .week-preview-card.future {
@@ -1667,6 +1845,7 @@ dt {
 
   .week-stack-header {
     align-items: flex-start;
+    flex-wrap: wrap;
     padding: 0 0 10px;
   }
 
@@ -1742,9 +1921,22 @@ dt {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .week-preview-card strong,
-  .week-preview-card small {
+  .week-peek-days {
+    gap: 4px;
     grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .week-preview-card .week-peek-day-badge {
+    font-size: 0.66rem;
+    min-height: 22px;
+    padding: 2px 4px;
+  }
+
+  .week-peek-summary {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: start;
   }
 
   .week-peek-icon {
