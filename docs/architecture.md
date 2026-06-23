@@ -90,7 +90,7 @@ GET  /api/sync/jobs
 GET  /api/activities
 ```
 
-Tokens are encrypted before storage. The current sync implementation supports manual backfill and a short incremental polling path. Webhooks remain deferred.
+Tokens are encrypted before storage. The current sync implementation supports manual backfill and worker-driven incremental polling. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. Webhooks remain deferred.
 
 ## Migrations
 

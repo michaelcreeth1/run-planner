@@ -35,6 +35,9 @@ class Settings(BaseSettings):
         default="http://localhost:8000/api/auth/strava/callback",
         alias="STRAVA_REDIRECT_URI",
     )
+    strava_sync_enabled: bool = Field(default=True, alias="STRAVA_SYNC_ENABLED")
+    strava_sync_interval_seconds: int = Field(default=30 * 60, alias="STRAVA_SYNC_INTERVAL_SECONDS")
+    strava_sync_lookback_days: int = Field(default=14, alias="STRAVA_SYNC_LOOKBACK_DAYS")
 
     ai_provider: str = Field(default="stub", alias="AI_PROVIDER")
     ai_api_key: str = Field(default="", alias="AI_API_KEY")

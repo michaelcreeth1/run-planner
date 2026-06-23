@@ -1,5 +1,7 @@
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   CalendarDays,
   ChevronRight,
@@ -7,6 +9,7 @@ import {
   Edit3,
   ExternalLink,
   Link,
+  Minus,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -191,6 +194,11 @@ const intensities: Array<{ value: Workout["intensityCategory"]; label: string }>
 
 type TabId = (typeof tabs)[number]["id"];
 type WeekSelectSource = "header" | "time-rail" | "week-stack";
+type MileageTrendDirection = "up" | "down" | "same";
+type MileageTrend = {
+  direction: MileageTrendDirection;
+  delta: number;
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("week");
@@ -702,6 +710,7 @@ function WeekView({
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
+            previousWeek={weekStack[addDays(start, -7)]}
             week={start === selectedWeekStart ? week : weekStack[start]}
             weekStart={start}
           />
@@ -729,6 +738,7 @@ function WeekRow({
   isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
+  previousWeek,
   week,
   weekStart
 }: {
@@ -742,6 +752,7 @@ function WeekRow({
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
+  previousWeek?: TrainingWeek;
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
@@ -813,12 +824,14 @@ function WeekRow({
             onEdit={onEdit}
             onCopyPriorWeek={onCopyPriorWeek}
             isCopyingPriorWeek={isCopyingPriorWeek}
+            previousWeek={previousWeek}
             week={week ?? null}
             weekStart={weekStart}
           />
         ) : (
           <CollapsedWeekCard
             onSelectWeek={onSelectWeek}
+            previousWeek={previousWeek}
             tone={isPast ? "past" : "future"}
             week={week ?? undefined}
             weekStart={weekStart}
@@ -831,20 +844,24 @@ function WeekRow({
 
 function CollapsedWeekCard({
   onSelectWeek,
+  previousWeek,
   tone,
   week,
   weekStart
 }: {
   onSelectWeek: (weekStart: string) => void;
+  previousWeek?: TrainingWeek;
   tone: "past" | "future";
   week?: TrainingWeek;
   weekStart: string;
 }) {
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
   const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
+  const mileageTrend = getCollapsedMileageTrend(week, previousWeek);
   const detail = formatCollapsedWeekDetail(week, tone);
   const dayBadges = collapsedWeekDayBadges(week, weekStart);
   const dailySummary = dayBadges.map((badge) => `${formatWeekday(badge.date)} ${badge.label}`).join(", ");
+  const trendSummary = mileageTrend ? `, ${formatMileageTrendAriaLabel(mileageTrend)}` : "";
 
   return (
     <button
@@ -852,7 +869,7 @@ function CollapsedWeekCard({
       data-testid="week-preview-card"
       data-week-start={weekStart}
       type="button"
-      aria-label={`Go to week ${range}, ${dailySummary}, ${mileageSummary}, ${detail}`}
+      aria-label={`Go to week ${range}, ${dailySummary}, ${mileageSummary}${trendSummary}, ${detail}`}
       onClick={() => onSelectWeek(weekStart)}
     >
       <span className="week-peek-range">{range}</span>
@@ -863,7 +880,10 @@ function CollapsedWeekCard({
           </span>
         ))}
       </span>
-      <small className="week-peek-summary">{mileageSummary}</small>
+      <small className="week-peek-summary">
+        <span>{mileageSummary}</span>
+        <MileageTrendBadge compact trend={mileageTrend} />
+      </small>
       <ChevronRight className="week-peek-icon" size={16} aria-hidden="true" />
     </button>
   );
@@ -879,7 +899,8 @@ function ExpandedWeekBoard({
   onDelete,
   onDuplicate,
   onCopyPriorWeek,
-  isCopyingPriorWeek
+  isCopyingPriorWeek,
+  previousWeek
 }: {
   days: string[];
   isLoading?: boolean;
@@ -891,10 +912,13 @@ function ExpandedWeekBoard({
   onDuplicate: (workout: Workout) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   isCopyingPriorWeek: boolean;
+  previousWeek?: TrainingWeek;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
   const today = todayDateString();
+  const plannedTrend = getMileageTrend(week?.plannedMileage, previousWeek?.plannedMileage);
+  const actualTrend = getMileageTrend(week?.actualMileage, previousWeek?.actualMileage);
 
   if (isLoading) {
     return (
@@ -927,8 +951,8 @@ function ExpandedWeekBoard({
         />
 
         <section className="summary-grid" aria-label="Week summary">
-          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} />
-          <Metric label="Actual" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} />
+          <Metric label="Planned" value={`${formatNumber(week?.plannedMileage ?? 0)} mi`} trend={plannedTrend} />
+          <Metric label="Done" value={`${formatNumber(week?.actualMileage ?? 0)} mi`} trend={actualTrend} />
           <Metric label="Hard days" value={String(week?.hardDays ?? 0)} />
           <Metric label="Long run" value={`${formatNumber(week?.longRunDistance ?? 0)} mi`} />
         </section>
@@ -937,7 +961,7 @@ function ExpandedWeekBoard({
           <span>Long run {formatNumber(week?.longRunPercentage ?? 0)}%</span>
           <span>{week?.hardDays ?? 0} hard days</span>
           <span>{workouts.length} planned sessions</span>
-          <span>{actualActivities.length} actual activities</span>
+          <span>{actualActivities.length} activities</span>
         </section>
       </section>
 
@@ -980,7 +1004,7 @@ function ExpandedWeekBoard({
                 ) : null}
               </div>
               <footer>
-                {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} actual
+                {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} done
               </footer>
             </article>
           );
@@ -1072,7 +1096,7 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
     <div className="actual-item">
       <div>
         <strong>{activity.name}</strong>
-        <span>{activity.sportType} actual</span>
+        <span>{activity.sportType} completed</span>
       </div>
       <dl>
         <div>
@@ -1286,12 +1310,32 @@ function WorkoutEditor({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, trend }: { label: string; value: string; trend?: MileageTrend | null }) {
   return (
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+      <MileageTrendBadge trend={trend} />
     </div>
+  );
+}
+
+function MileageTrendBadge({ compact = false, trend }: { compact?: boolean; trend?: MileageTrend | null }) {
+  if (!trend) {
+    return null;
+  }
+
+  const Icon = trend.direction === "up" ? ArrowUp : trend.direction === "down" ? ArrowDown : Minus;
+
+  return (
+    <span
+      aria-label={formatMileageTrendAriaLabel(trend)}
+      className={`mileage-trend mileage-trend--${trend.direction} ${compact ? "mileage-trend--compact" : ""}`}
+      title={formatMileageTrendAriaLabel(trend)}
+    >
+      <Icon size={compact ? 10 : 12} aria-hidden="true" />
+      <span>{formatMileageTrendDelta(trend)}</span>
+    </span>
   );
 }
 
@@ -1681,6 +1725,59 @@ function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function getMileageTrend(current: number | null | undefined, previous: number | null | undefined): MileageTrend | null {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return null;
+  }
+
+  if (current <= 0 && previous <= 0) {
+    return null;
+  }
+
+  const delta = current - previous;
+  const roundedDelta = Math.abs(delta) < 0.05 ? 0 : delta;
+
+  if (roundedDelta === 0) {
+    return {
+      direction: "same",
+      delta: 0
+    };
+  }
+
+  return {
+    direction: roundedDelta > 0 ? "up" : "down",
+    delta: roundedDelta
+  };
+}
+
+function getCollapsedMileageTrend(week: TrainingWeek | undefined, previousWeek: TrainingWeek | undefined) {
+  if (!week || !previousWeek) {
+    return null;
+  }
+
+  return getMileageTrend(preferredMileage(week), preferredMileage(previousWeek));
+}
+
+function preferredMileage(week: TrainingWeek) {
+  return week.actualMileage > 0 ? week.actualMileage : week.plannedMileage;
+}
+
+function formatMileageTrendDelta(trend: MileageTrend) {
+  if (trend.direction === "same") {
+    return "0";
+  }
+
+  return formatNumber(Math.abs(trend.delta));
+}
+
+function formatMileageTrendAriaLabel(trend: MileageTrend) {
+  if (trend.direction === "same") {
+    return "Mileage unchanged from prior week";
+  }
+
+  return `Mileage ${trend.direction === "up" ? "increased" : "decreased"} ${formatNumber(Math.abs(trend.delta))} miles from prior week`;
+}
+
 function sumDistance(workouts: Workout[]) {
   return workouts.reduce((sum, workout) => sum + (workout.plannedDistance ?? 0), 0);
 }
@@ -1713,7 +1810,7 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
         date,
         kind: actualMiles > 0 ? "actual" : "rest",
         label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "rest",
-        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} actual miles`
+        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} completed miles`
       };
     }
 
@@ -1745,13 +1842,11 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
   const isCurrentWeek = weekStart === startOfWeek(new Date());
 
   if (actual > 0 && planned > 0) {
-    return isCurrentWeek
-      ? `${formatNumber(actual)} / ${formatNumber(planned)} mi`
-      : `${formatNumber(actual)} mi actual / ${formatNumber(planned)} planned`;
+    return `${formatNumber(actual)} / ${formatNumber(planned)} mi`;
   }
 
   if (actual > 0) {
-    return isCurrentWeek ? `${formatNumber(actual)} mi actual · unplanned` : `${formatNumber(actual)} mi actual`;
+    return isCurrentWeek ? `${formatNumber(actual)} mi · unplanned` : `${formatNumber(actual)} mi`;
   }
 
   if (planned > 0) {

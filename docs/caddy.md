@@ -11,6 +11,15 @@ When deploying behind the existing Caddy LXC, route `run.home.arpa` and
 `run.creeth.net` to the Docker host at `192.168.1.34`, with the frontend on
 port `5173` and the API on port `8000`.
 
+Deploy from the dev machine with:
+
+```sh
+scripts/deploy-remote.sh
+```
+
+That syncs the local checkout to `/home/mike/compose/run-planner` on the Docker
+host, preserves the host-local `.env`, then runs `scripts/deploy.sh` there.
+
 The checked-in copy of this route lives at
 [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile). Keep the shared live
 proxy config on the Caddy LXC in sync with that file.

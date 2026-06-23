@@ -321,6 +321,55 @@ h1 {
   margin-top: 5px;
 }
 
+.metric .mileage-trend {
+  margin-top: 8px;
+}
+
+.mileage-trend {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 800;
+  gap: 3px;
+  line-height: 1;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.mileage-trend span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.mileage-trend--up {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.mileage-trend--down {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.mileage-trend--same {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.mileage-trend--compact {
+  font-size: 0.68rem;
+  min-height: 20px;
+  padding: 3px 6px;
+}
+
 .risk-strip {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
@@ -765,7 +814,7 @@ h1 {
   cursor: pointer;
   display: grid;
   gap: 10px;
-  grid-template-columns: 94px minmax(0, 1fr) 132px 16px;
+  grid-template-columns: 94px minmax(0, 1fr) minmax(132px, auto) 16px;
   min-height: 52px;
   padding: 10px 12px;
   text-align: left;
@@ -860,11 +909,39 @@ h1 {
 }
 
 .week-peek-summary {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
   justify-self: end;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.week-peek-summary > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.week-preview-card .mileage-trend,
+.week-preview-card .mileage-trend span {
+  color: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.week-preview-card .mileage-trend--up {
+  color: #047857;
+}
+
+.week-preview-card .mileage-trend--down {
+  color: #be123c;
+}
+
+.week-preview-card .mileage-trend--same {
+  color: #475569;
 }
 
 .week-preview-card.future {

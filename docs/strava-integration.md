@@ -13,7 +13,15 @@ GET  /api/sync/jobs
 GET  /api/activities
 ```
 
-MVP sync mode is manual backfill and polling only. Webhooks are deferred because they require a public callback URL, while this app is intended to live privately behind Tailscale when possible.
+MVP sync mode is manual backfill and worker polling only. The worker imports on startup and then polls every 30 minutes by default with a 14-day lookback so delayed uploads and activity edits are picked up. Webhooks are deferred because they require a public callback URL, while this app is intended to live privately behind Tailscale when possible.
+
+Polling is controlled by:
+
+```text
+STRAVA_SYNC_ENABLED=true
+STRAVA_SYNC_INTERVAL_SECONDS=1800
+STRAVA_SYNC_LOOKBACK_DAYS=14
+```
 
 Initial scopes:
 
