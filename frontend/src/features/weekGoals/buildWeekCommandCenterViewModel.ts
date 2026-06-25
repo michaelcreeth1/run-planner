@@ -195,7 +195,7 @@ export function buildWeekCommandCenterViewModel({
     purpose: buildPurpose(week, goalCards),
     primarySummary: buildPrimarySummary(week, goalCards, mode, today),
     secondarySummary: buildSecondarySummary(week, mode, today),
-    actionButtons: buildActions(mode),
+    actionButtons: buildActions(mode, week),
     goalCards,
     primaryGoalCards,
     detailGoalCards,
@@ -499,46 +499,29 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
   return "Review outcomes against the intent, not just the activity totals.";
 }
 
-function buildActions(mode: WeekMode): WeekActionViewModel[] {
+function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "planning") {
+    const hasSavedPlan = week.workouts.length > 0 || week.goals.length > 0 || week.notes.trim().length > 0;
     return [
-      { id: "set_goals", label: "Set goals", variant: "primary", icon: "target" },
-      { id: "copy_prior", label: "Copy prior week", variant: "secondary", icon: "copy" },
       {
-        id: "clear_week",
-        label: "Clear week",
-        variant: "ghost",
-        icon: "trash",
-        disabled: true,
-        tooltip: "Clear week is not wired up yet."
+        id: hasSavedPlan ? "edit_plan" : "plan_week",
+        label: hasSavedPlan ? "Edit plan" : "Plan week",
+        variant: "primary",
+        icon: "calendar"
       }
     ];
   }
 
   if (mode === "execution") {
     return [
-      { id: "sync", label: "Sync", variant: "primary", icon: "refresh" },
-      {
-        id: "adjust_rest",
-        label: "Adjust rest of week",
-        variant: "secondary",
-        icon: "calendar",
-        disabled: true,
-        tooltip: "Adjustment tools are coming next."
-      },
+      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" },
+      { id: "sync", label: "Sync", variant: "secondary", icon: "refresh" },
       { id: "edit_goals", label: "Edit goals", variant: "ghost", icon: "target" }
     ];
   }
 
   return [
-    {
-      id: "review_week",
-      label: "Review week",
-      variant: "primary",
-      icon: "check",
-      disabled: true,
-      tooltip: "Week review notes are coming next."
-    },
+    { id: "review_week", label: "Review week", variant: "primary", icon: "check" },
     {
       id: "use_as_template",
       label: "Use as template",

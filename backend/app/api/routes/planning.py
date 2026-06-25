@@ -10,6 +10,7 @@ from app.schemas.planning import (
     PlannedWorkoutMove,
     PlannedWorkoutRead,
     PlannedWorkoutUpdate,
+    PlanWeekSave,
     TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
@@ -68,6 +69,16 @@ def recalculate_week(week_id: str, db: DbSession) -> dict:
 @router.post("/weeks/{week_id}/copy-prior", response_model=TrainingWeekRead)
 def copy_prior_week(week_id: str, db: DbSession) -> dict:
     week = planning.copy_prior_week(db, week_id)
+    return planning.serialize_week(week, db)
+
+
+@router.put("/weeks/{week_id}/plan", response_model=TrainingWeekRead)
+def save_week_plan(
+    week_id: str,
+    payload: PlanWeekSave,
+    db: DbSession,
+) -> dict:
+    week = planning.save_week_plan(db, week_id, payload)
     return planning.serialize_week(week, db)
 
 

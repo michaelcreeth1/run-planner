@@ -8,7 +8,13 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import Base
 from app.main import app
 from app.models import PlannedWorkoutStep, StravaActivity
-from app.schemas.planning import PlannedWorkoutCreate, WeekGoalCreate
+from app.schemas.planning import (
+    PlannedWorkoutCreate,
+    PlanWeekGoal,
+    PlanWeekSave,
+    PlanWeekWorkout,
+    WeekGoalCreate,
+)
 from app.services import planning
 
 
@@ -330,5 +336,74 @@ def test_copy_prior_week_copies_goals_forward() -> None:
         assert copied_week.goals[0].label == "Practice fueling"
         assert copied_week.goals[0].status == "not_started"
         assert copied_week.goals[0].source == "template"
+    finally:
+        db.close()
+
+
+def test_save_week_plan_replaces_purpose_workouts_and_goals() -> None:
+    db = make_session()
+    try:
+        week = planning.get_or_create_week(db, date(2099, 7, 6))
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 7, 7),
+                title="Old easy 4",
+                planned_distance=4,
+            ),
+        )
+        planning.create_week_goal(
+            db,
+            week.id,
+            WeekGoalCreate(
+                category="mileage",
+                label="Run 4 miles",
+                target_value=4,
+                unit="mi",
+                evaluation_mode="range",
+                priority="primary",
+            ),
+        )
+
+        saved_week = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(
+                purpose="Aerobic build",
+                target_long_run_distance=8,
+                workouts=[
+                    PlanWeekWorkout(
+                        planned_date=date(2099, 7, 8),
+                        title="Easy 6",
+                        planned_distance=6,
+                    ),
+                    PlanWeekWorkout(
+                        planned_date=date(2099, 7, 12),
+                        title="Long 8",
+                        workout_type="long_run",
+                        planned_distance=8,
+                    ),
+                ],
+                goals=[
+                    PlanWeekGoal(
+                        category="mileage",
+                        label="Run 14 miles",
+                        target_value=14,
+                        min_acceptable=13,
+                        max_acceptable=15,
+                        unit="mi",
+                        evaluation_mode="range",
+                        priority="primary",
+                        source="manual",
+                    )
+                ],
+            ),
+        )
+
+        assert saved_week.notes == "Aerobic build"
+        assert saved_week.target_long_run_distance == 8
+        assert saved_week.planned_mileage == 14
+        assert [workout.title for workout in saved_week.workouts] == ["Easy 6", "Long 8"]
+        assert [goal.label for goal in saved_week.goals] == ["Run 14 miles"]
     finally:
         db.close()

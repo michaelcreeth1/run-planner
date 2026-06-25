@@ -215,6 +215,21 @@ class TrainingWeekPatch(ApiModel):
     target_long_run_distance: float | None = Field(default=None, ge=0)
 
 
+class PlanWeekWorkout(PlannedWorkoutBase):
+    pass
+
+
+class PlanWeekGoal(WeekGoalBase):
+    pass
+
+
+class PlanWeekSave(ApiModel):
+    purpose: str = Field(min_length=1, max_length=240)
+    target_long_run_distance: float | None = Field(default=None, ge=0)
+    workouts: list[PlanWeekWorkout] = []
+    goals: list[PlanWeekGoal] = []
+
+
 class TrainingWeekRead(ApiModel):
     id: str
     week_start_date: date

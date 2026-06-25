@@ -16,6 +16,7 @@ from app.models.strava import StravaActivity
 from app.schemas.planning import (
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
+    PlanWeekSave,
     TrainingWeekPatch,
     WeekGoalCreate,
     WeekGoalUpdate,
@@ -437,6 +438,41 @@ def copy_prior_week(db: Session, week_id: str) -> TrainingWeek:
     db.add(target)
     db.commit()
     return load_week(db, target.week_start_date)
+
+
+def save_week_plan(db: Session, week_id: str, payload: PlanWeekSave) -> TrainingWeek:
+    week = get_week_by_id(db, week_id)
+    week.notes = payload.purpose
+    week.target_long_run_distance = payload.target_long_run_distance
+
+    for workout in list(week.workouts):
+        db.delete(workout)
+    for goal in list(week.goals):
+        db.delete(goal)
+    db.flush()
+
+    for workout_payload in payload.workouts:
+        db.add(
+            PlannedWorkout(
+                athlete_account_id=week.athlete_account_id,
+                training_week_id=week.id,
+                **workout_payload.model_dump(),
+            )
+        )
+
+    for goal_payload in payload.goals:
+        db.add(
+            WeekGoal(
+                training_week_id=week.id,
+                athlete_account_id=week.athlete_account_id,
+                week_start_date=week.week_start_date,
+                **goal_payload.model_dump(),
+            )
+        )
+
+    db.add(week)
+    db.commit()
+    return load_week(db, week.week_start_date)
 
 
 def clone_workout(
