@@ -57,6 +57,45 @@ class TrainingWeek(Base):
         cascade="all, delete-orphan",
         order_by="PlannedWorkout.planned_date",
     )
+    goals: Mapped[list["WeekGoal"]] = relationship(
+        back_populates="training_week",
+        cascade="all, delete-orphan",
+        order_by="WeekGoal.created_at",
+    )
+
+
+class WeekGoal(Base):
+    __tablename__ = "week_goals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    training_week_id: Mapped[str] = mapped_column(ForeignKey("training_weeks.id"), nullable=False)
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id"),
+        nullable=False,
+    )
+    week_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    target_value: Mapped[float | None] = mapped_column(Float)
+    min_acceptable: Mapped[float | None] = mapped_column(Float)
+    max_acceptable: Mapped[float | None] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String, nullable=False, default="custom")
+    evaluation_mode: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    priority: Mapped[str] = mapped_column(String, nullable=False, default="secondary")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="not_started")
+    source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    is_editable: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    training_week: Mapped[TrainingWeek] = relationship(back_populates="goals")
 
 
 class PlannedWorkout(Base):

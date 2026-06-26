@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     frontend_min_version: str = Field(default="0.1.0", alias="FRONTEND_MIN_VERSION")
     backend_version: str = Field(default="0.1.0", alias="BACKEND_VERSION")
-    schema_version: str = Field(default="2026_06_17_001", alias="SCHEMA_VERSION")
+    schema_version: str = Field(default="2026_06_22_004", alias="SCHEMA_VERSION")
     force_reload: bool = Field(default=False, alias="FORCE_RELOAD")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

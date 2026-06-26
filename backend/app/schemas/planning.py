@@ -43,6 +43,33 @@ WorkoutStatus = Literal[
     "skipped_intentionally",
     "partial",
 ]
+WeekGoalCategory = Literal[
+    "mileage",
+    "sessions",
+    "long_run",
+    "quality",
+    "recovery",
+    "strength",
+    "custom",
+]
+WeekGoalType = Literal["achievement", "guardrail"]
+WeekGoalUnit = Literal["mi", "sessions", "days", "percent", "boolean", "custom"]
+WeekGoalEvaluationMode = Literal["at_least", "at_most", "range", "exact-ish", "boolean", "manual"]
+WeekGoalPriority = Literal["primary", "secondary", "guardrail"]
+WeekGoalStatus = Literal[
+    "not_started",
+    "on_track",
+    "at_risk",
+    "achieved",
+    "partially_achieved",
+    "missed",
+    "exceeded",
+    "waived",
+]
+WeekGoalSource = Literal["manual", "derived_from_plan", "template", "ai_suggested"]
+GuardrailStatus = Literal["ok", "warning", "danger", "waived", "not_applicable"]
+GoalSeverity = Literal["info", "success", "warning", "danger"]
+WeekState = Literal["past", "current", "future"]
 
 
 class PlannedWorkoutStepRead(ApiModel):
@@ -120,9 +147,87 @@ class ActualActivityRead(ApiModel):
     average_heartrate: float | None = None
 
 
+class WeekGoalBase(ApiModel):
+    category: WeekGoalCategory = "custom"
+    goal_type: WeekGoalType = "achievement"
+    label: str = Field(min_length=1, max_length=140)
+    description: str = ""
+    target_value: float | None = None
+    min_acceptable: float | None = None
+    max_acceptable: float | None = None
+    unit: WeekGoalUnit = "custom"
+    evaluation_mode: WeekGoalEvaluationMode = "manual"
+    priority: WeekGoalPriority = "secondary"
+    status: WeekGoalStatus = "not_started"
+    source: WeekGoalSource = "manual"
+    is_editable: bool = True
+    is_enabled: bool = True
+
+
+class WeekGoalCreate(WeekGoalBase):
+    pass
+
+
+class WeekGoalUpdate(ApiModel):
+    category: WeekGoalCategory | None = None
+    goal_type: WeekGoalType | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=140)
+    description: str | None = None
+    target_value: float | None = None
+    min_acceptable: float | None = None
+    max_acceptable: float | None = None
+    unit: WeekGoalUnit | None = None
+    evaluation_mode: WeekGoalEvaluationMode | None = None
+    priority: WeekGoalPriority | None = None
+    status: WeekGoalStatus | None = None
+    source: WeekGoalSource | None = None
+    is_editable: bool | None = None
+    is_enabled: bool | None = None
+
+
+class WeekGoalEvaluationRead(ApiModel):
+    goal_id: str
+    week_start_date: date
+    status: WeekGoalStatus
+    guardrail_status: GuardrailStatus | None = None
+    actual_value: float | None = None
+    planned_value: float | None = None
+    remaining_planned_value: float | None = None
+    summary: str
+    detail: str | None = None
+    severity: GoalSeverity = "info"
+    evaluated_at: str
+    contributing_workout_ids: list[str] = []
+    contributing_activity_ids: list[str] = []
+
+
+class WeekGoalRead(WeekGoalBase):
+    id: str
+    training_week_id: str
+    athlete_account_id: str
+    week_start_date: date
+    created_at: str
+    updated_at: str
+
+
 class TrainingWeekPatch(ApiModel):
     notes: str | None = None
     target_long_run_distance: float | None = Field(default=None, ge=0)
+
+
+class PlanWeekWorkout(PlannedWorkoutBase):
+    pass
+
+
+class PlanWeekGoal(WeekGoalBase):
+    pass
+
+
+class PlanWeekSave(ApiModel):
+    purpose: str = Field(min_length=1, max_length=240)
+    target_long_run_distance: float | None = Field(default=None, ge=0)
+    workouts: list[PlanWeekWorkout] = []
+    goals: list[PlanWeekGoal] = []
 
 
 class TrainingWeekRead(ApiModel):
@@ -137,6 +242,10 @@ class TrainingWeekRead(ApiModel):
     notes: str
     workouts: list[PlannedWorkoutRead]
     actual_activities: list[ActualActivityRead]
+    goals: list[WeekGoalRead]
+    goal_evaluations: list[WeekGoalEvaluationRead]
+    week_state: WeekState
+    goal_review_summary: str
     hard_days: int
     long_run_distance: float
     long_run_percentage: float
