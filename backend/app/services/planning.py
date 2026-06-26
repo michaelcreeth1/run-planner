@@ -445,10 +445,8 @@ def save_week_plan(db: Session, week_id: str, payload: PlanWeekSave) -> Training
     week.notes = payload.purpose
     week.target_long_run_distance = payload.target_long_run_distance
 
-    for workout in list(week.workouts):
-        db.delete(workout)
-    for goal in list(week.goals):
-        db.delete(goal)
+    week.workouts.clear()
+    week.goals.clear()
     db.flush()
 
     for workout_payload in payload.workouts:
@@ -909,7 +907,7 @@ def evaluate_mileage_goal(
     activities: list[StravaActivity],
     week_state: str,
 ) -> dict:
-    remaining = remaining_planned_mileage(workouts)
+    remaining = remaining_planned_mileage(workouts, activities)
     actual = round(
         sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity)), 1
     )
@@ -1286,13 +1284,22 @@ def goal_evaluation(
     }
 
 
-def remaining_planned_mileage(workouts: list[PlannedWorkout]) -> float:
+def remaining_planned_mileage(
+    workouts: list[PlannedWorkout], activities: list[StravaActivity] | None = None
+) -> float:
     today = date.today()
+    completed_run_dates = {
+        activity.start_date_local.date()
+        for activity in activities or []
+        if is_run_activity(activity)
+    }
     return round(
         sum(
             workout.planned_distance or 0
             for workout in workouts
-            if workout.sport == "run" and workout.planned_date >= today
+            if workout.sport == "run"
+            and workout.planned_date >= today
+            and workout.planned_date not in completed_run_dates
         ),
         1,
     )

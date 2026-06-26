@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Copy,
   Edit3,
@@ -1335,47 +1336,150 @@ function ExpandedWeekBoard({
   }
 
   return (
-    <div className="expanded-week-board">
-      {week ? (
-        <WeekCommandCenter
-          viewModel={buildWeekCommandCenterViewModel({ week, today })}
-          onAction={(actionId) =>
-            handleWeekCommandAction(actionId, {
-              onCopyPriorWeek,
-              onCreateGoal,
-              onDeriveWeekGoals,
-              onEditGoal,
-              onOpenPlanWeek,
-              onSync,
-              week
-            })
+    <WeekSlate
+      actualActivities={actualActivities}
+      days={days}
+      onCopyPriorWeek={onCopyPriorWeek}
+      onCreate={onCreate}
+      onCreateGoal={onCreateGoal}
+      onDelete={onDelete}
+      onDeriveWeekGoals={onDeriveWeekGoals}
+      onDuplicate={onDuplicate}
+      onEdit={onEdit}
+      onEditGoal={onEditGoal}
+      onOpenPlanWeek={onOpenPlanWeek}
+      onSync={onSync}
+      today={today}
+      week={week}
+      workouts={workouts}
+    />
+  );
+}
+
+function WeekSlate({
+  actualActivities,
+  days,
+  onCopyPriorWeek,
+  onCreate,
+  onCreateGoal,
+  onDelete,
+  onDeriveWeekGoals,
+  onDuplicate,
+  onEdit,
+  onEditGoal,
+  onOpenPlanWeek,
+  onSync,
+  today,
+  week,
+  workouts
+}: {
+  actualActivities: ActualActivity[];
+  days: string[];
+  onCopyPriorWeek: (week: TrainingWeek) => void;
+  onCreate: (plannedDate: string) => void;
+  onCreateGoal: (week: TrainingWeek) => void;
+  onDelete: (workout: Workout) => void;
+  onDeriveWeekGoals: (week: TrainingWeek) => void;
+  onDuplicate: (workout: Workout) => void;
+  onEdit: (workout: Workout) => void;
+  onEditGoal: (goal: WeekGoal) => void;
+  onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSync: () => void;
+  today: string;
+  week: TrainingWeek | null | undefined;
+  workouts: Workout[];
+}) {
+  if (!week) {
+    return <div className="expanded-week-board" />;
+  }
+
+  const viewModel = buildWeekCommandCenterViewModel({ week, today });
+
+  return (
+    <section className={`expanded-week-board week-slate week-slate--${viewModel.mode}`} aria-label="Selected training week">
+      <WeekCommandCenter
+        viewModel={viewModel}
+        onAction={(actionId) =>
+          handleWeekCommandAction(actionId, {
+            onCopyPriorWeek,
+            onCreateGoal,
+            onDeriveWeekGoals,
+            onEditGoal,
+            onOpenPlanWeek,
+            onSync,
+            week
+          })
+        }
+        onEditGoal={(goalId) => {
+          const goal = week.goals.find((candidate) => candidate.id === goalId);
+          if (goal) {
+            onOpenPlanWeek(week);
           }
-          onEditGoal={(goalId) => {
-            const goal = week.goals.find((candidate) => candidate.id === goalId);
-            if (goal) {
-              onOpenPlanWeek(week);
-            }
-          }}
+        }}
+      />
+
+      {!viewModel.isUnplanned ? (
+        <WeekSchedule
+          actualActivities={actualActivities}
+          days={days}
+          onCreate={onCreate}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+          onEdit={onEdit}
+          today={today}
+          workouts={workouts}
         />
       ) : null}
+    </section>
+  );
+}
 
-      <section className="week-board" aria-label="Weekly planning board">
+function WeekSchedule({
+  actualActivities,
+  days,
+  onCreate,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  today,
+  workouts
+}: {
+  actualActivities: ActualActivity[];
+  days: string[];
+  onCreate: (plannedDate: string) => void;
+  onDelete: (workout: Workout) => void;
+  onDuplicate: (workout: Workout) => void;
+  onEdit: (workout: Workout) => void;
+  today: string;
+  workouts: Workout[];
+}) {
+  return (
+    <section className="week-schedule-panel" aria-label="Weekly schedule">
+      <header>
+        <div>
+          <span>Schedule</span>
+        </div>
+      </header>
+      <div className="week-board">
         {days.map((dateValue) => {
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
           const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
           return (
-            <article className={`day-column ${isEmpty ? "day-column--empty" : ""}`} key={dateValue}>
+            <article className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty)}`} key={dateValue}>
               <header>
                 <div>
-                  <strong>{formatWeekday(dateValue)}</strong>
-                  <span>{formatShortDate(dateValue)}</span>
+                  <span>{formatWeekdayShort(dateValue)}</span>
+                  <strong>{formatDayNumber(dateValue)}</strong>
                 </div>
                 <button type="button" title="Add workout" onClick={() => onCreate(dateValue)}>
-                  <Plus size={17} />
+                  <Plus size={15} />
                 </button>
               </header>
               <div className="workout-stack">
+                {dayActuals.map((activity) => (
+                  <ActualActivityItem activity={activity} key={activity.id} />
+                ))}
                 {dayWorkouts.map((workout) => (
                   <WorkoutItem
                     key={workout.id}
@@ -1385,26 +1489,20 @@ function ExpandedWeekBoard({
                     onEdit={onEdit}
                   />
                 ))}
-                {dayActuals.map((activity) => (
-                  <ActualActivityItem activity={activity} key={activity.id} />
-                ))}
                 {isEmpty && dateValue < today ? (
-                  <span className="empty-day-action empty-day-action--static">No activity</span>
+                  <span className="empty-day-action empty-day-action--static">Rest</span>
                 ) : null}
                 {isEmpty && dateValue >= today ? (
                   <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
-                    + Add session
+                    Add session
                   </button>
                 ) : null}
               </div>
-              <footer>
-                {formatNumber(sumDistance(dayWorkouts))} planned · {formatNumber(sumActualDistance(dayActuals))} done
-              </footer>
             </article>
           );
         })}
-      </section>
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -1491,24 +1589,12 @@ function ExpandedWeekSkeleton({ days }: { days: string[] }) {
 function ActualActivityItem({ activity }: { activity: ActualActivity }) {
   return (
     <div className="actual-item">
-      <div>
-        <strong>{activity.name}</strong>
-        <span>{activity.sportType} completed</span>
-      </div>
-      <dl>
-        <div>
-          <dt>Miles</dt>
-          <dd>{formatNumber(activity.distanceMiles)} mi</dd>
-        </div>
-        <div>
-          <dt>Pace</dt>
-          <dd>{formatPace(activity.movingTime, activity.distanceMiles)}</dd>
-        </div>
-      </dl>
-      <small>
-        {formatTime(activity.startDateLocal)}
-        {activity.averageHeartrate ? ` · ${Math.round(activity.averageHeartrate)} bpm` : ""}
-      </small>
+      <span className="workout-kind">Actual</span>
+      <strong>{activity.name}</strong>
+      <p className="workout-meta">
+        {formatNumber(activity.distanceMiles)} mi · {formatPace(activity.movingTime, activity.distanceMiles)}
+      </p>
+      <small>{activity.averageHeartrate ? `${Math.round(activity.averageHeartrate)} bpm` : formatTime(activity.startDateLocal)}</small>
       <div className="activity-controls">
         <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activity)}>
           <ExternalLink size={15} />
@@ -1543,21 +1629,10 @@ function WorkoutItem({
       tabIndex={0}
     >
       <div className="workout-title-row">
-        <div>
-          <strong>{workout.title}</strong>
-          <span>{labelForWorkoutType(workout.workoutType)}</span>
-        </div>
+        <span className="workout-kind">{labelForWorkoutType(workout.workoutType)}</span>
+        <strong>{workout.title}</strong>
       </div>
-      <dl>
-        <div>
-          <dt>Plan</dt>
-          <dd>{formatNumber(workout.plannedDistance ?? 0)} mi</dd>
-        </div>
-        <div>
-          <dt>Pace</dt>
-          <dd>{formatPace(workout.plannedDuration, workout.plannedDistance)}</dd>
-        </div>
-      </dl>
+      <p className="workout-meta">{formatWorkoutMeta(workout)}</p>
       <small>{workout.status.replaceAll("_", " ")}</small>
       <div
         className="workout-controls"
@@ -1892,7 +1967,10 @@ function PlanWeekDrawer({
   const alignment = evaluatePlanAlignment(draft);
   const mismatches = alignment.filter((item) => item.status === "mismatch");
   const achievementGoals = draft.goals.filter((goal) => goal.goalType === "achievement");
+  const detailedAchievementGoals = achievementGoals.filter((goal) => !["mileage", "quality"].includes(goal.category));
   const guardrailGoals = draft.goals.filter((goal) => goal.goalType === "guardrail");
+  const scheduledMileage = sumDraftRunDistance(draft.workouts);
+  const scheduledQuality = countDraftHardSessions(draft.workouts);
   const purpose = weekPurposes.find((option) => option.value === draft.purpose) ?? weekPurposes[0];
   const drawerTitle =
     draft.weekState === "past"
@@ -1974,11 +2052,20 @@ function PlanWeekDrawer({
   }
 
   function applySuggestedGoals() {
-    updateDraft((current) => ({
-      ...current,
-      goals: deriveGoalDraftsFromSchedule(current, "Suggested"),
-      mismatchAcknowledged: false
-    }));
+    updateDraft((current) => {
+      const adjustedWorkouts = scaleDraftWorkoutsToMileage(current.workouts, current.load.suggestedMileage);
+      const nextLoad = suggestLoad(current.load.priorMileage, current.purpose, adjustedWorkouts);
+      const nextDraft = {
+        ...current,
+        load: nextLoad,
+        workouts: adjustedWorkouts.sort(sortDraftWorkouts),
+        mismatchAcknowledged: false
+      };
+      return {
+        ...nextDraft,
+        goals: deriveGoalDraftsFromSchedule(nextDraft, "Suggested")
+      };
+    });
   }
 
   return (
@@ -2063,8 +2150,14 @@ function PlanWeekDrawer({
                 <strong>{draft.load.priorMileage === null ? "No prior load" : `${formatNumber(draft.load.priorMileage)} mi`}</strong>
               </div>
               <div>
-                <span>Suggested</span>
+                <span>Mileage</span>
                 <strong>{formatNumber(draft.load.suggestedMileage)} mi</strong>
+                <small>{scheduledMileage ? `${formatNumber(scheduledMileage)} scheduled` : "No schedule yet"}</small>
+              </div>
+              <div>
+                <span>Quality</span>
+                <strong>{scheduledQuality} hard</strong>
+                <small>{scheduledQuality === 1 ? "session" : "sessions"}</small>
               </div>
             </div>
             <p className="plan-week-note">{draft.load.reason}</p>
@@ -2073,17 +2166,24 @@ function PlanWeekDrawer({
             </button>
           </section>
 
-          <section className="plan-week-section">
-            <div className="section-heading">
-              <span>4</span>
-              <h3>Proposed goals</h3>
-            </div>
+          <details className="plan-week-section plan-goals-disclosure">
+            <summary>
+              <div className="section-heading">
+                <span>4</span>
+                <h3>Proposed goals</h3>
+              </div>
+              <small>{detailedAchievementGoals.length} supporting goal{detailedAchievementGoals.length === 1 ? "" : "s"}</small>
+              <ChevronDown size={16} />
+            </summary>
             <div className="draft-goal-list">
-              {achievementGoals.map((goal) => (
+              {detailedAchievementGoals.map((goal) => (
                 <DraftGoalEditor goal={goal} key={goal.draftId} onChange={(updates) => updateGoal(goal.draftId, updates)} />
               ))}
+              {!detailedAchievementGoals.length ? (
+                <p className="plan-week-note">Mileage and quality are handled in proposed load.</p>
+              ) : null}
             </div>
-          </section>
+          </details>
 
           {guardrailGoals.length ? (
             <section className="plan-week-section">
@@ -2152,6 +2252,10 @@ function PlanWeekDrawer({
             <div className="section-heading">
               <span>{guardrailGoals.length ? "7" : "6"}</span>
               <h3>Plan alignment</h3>
+            </div>
+            <div className="alignment-summary">
+              <strong>{mismatches.length ? `${mismatches.length} mismatch${mismatches.length === 1 ? "" : "es"}` : "Plan aligned"}</strong>
+              <span>{alignment.length} checks</span>
             </div>
             <div className="alignment-list">
               {alignment.map((item) => (
@@ -2595,7 +2699,7 @@ function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, Traini
     customPurpose: purpose === "custom" ? week.notes : "",
     priorWeekStartDate: priorWeek?.weekStartDate ?? null,
     noPriorUsableWeek: !hasExistingPlan && !priorWeek,
-    load: suggestLoad(priorWeek ? preferredMileage(priorWeek) : null, purpose, week.workouts),
+    load: suggestLoad(loadBaselineMileageOrNull(priorWeek), purpose, week.workouts),
     workouts: [],
     goals: [],
     hasExistingPlan,
@@ -2619,9 +2723,9 @@ function rebuildPlanWeekDraftForStartingPoint(
       : draftWorkoutsFromWeek(sourceWeek, draft.weekStartDate);
   const adjustedWorkouts =
     startingPoint === "smart_adjustment"
-      ? scaleDraftWorkoutsToMileage(sourceWorkouts, suggestLoad(preferredMileageOrNull(loadSourceWeek), draft.purpose, sourceWorkouts).suggestedMileage)
+      ? scaleDraftWorkoutsToMileage(sourceWorkouts, suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, sourceWorkouts).suggestedMileage)
       : sourceWorkouts;
-  const nextLoad = suggestLoad(preferredMileageOrNull(loadSourceWeek), draft.purpose, adjustedWorkouts);
+  const nextLoad = suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, adjustedWorkouts);
   const nextDraft = {
     ...draft,
     startingPoint,
@@ -2656,11 +2760,11 @@ function isUsablePriorWeek(week: TrainingWeek) {
   return week.workouts.length > 0 || week.actualActivities.length > 0;
 }
 
-function preferredMileageOrNull(week: TrainingWeek | null | undefined) {
+function loadBaselineMileageOrNull(week: TrainingWeek | null | undefined) {
   if (!week) {
     return null;
   }
-  return preferredMileage(week);
+  return comparisonMileage(week);
 }
 
 function suggestLoad(priorMileage: number | null, purpose: WeekPurposeId, workouts: Array<Workout | PlanWeekWorkoutDraft>): ProposedLoad {
@@ -3373,6 +3477,22 @@ function formatPace(seconds: number | null | undefined, miles: number | null | u
   return `${minutes}:${remainder}/mi`;
 }
 
+function formatWorkoutMeta(workout: Workout) {
+  if (workout.sport === "rest" || workout.intensityCategory === "rest") {
+    return "Rest";
+  }
+
+  const pieces = [];
+  if (workout.plannedDistance !== null && workout.plannedDistance > 0) {
+    pieces.push(`${formatNumber(workout.plannedDistance)} mi`);
+  }
+  const pace = formatPace(workout.plannedDuration, workout.plannedDistance);
+  if (pace !== "-") {
+    pieces.push(pace);
+  }
+  return pieces.join(" · ") || workout.status.replaceAll("_", " ");
+}
+
 function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
@@ -3407,11 +3527,34 @@ function getCollapsedMileageTrend(week: TrainingWeek | undefined, previousWeek: 
     return null;
   }
 
-  return getMileageTrend(preferredMileage(week), preferredMileage(previousWeek));
+  return getMileageTrend(comparisonMileage(week), comparisonMileage(previousWeek));
 }
 
 function preferredMileage(week: TrainingWeek) {
   return week.actualMileage > 0 ? week.actualMileage : week.plannedMileage;
+}
+
+function comparisonMileage(week: TrainingWeek) {
+  if (week.weekState === "future") {
+    return week.plannedMileage;
+  }
+  if (week.weekState === "current") {
+    return projectedMileage(week);
+  }
+  return week.actualMileage > 0 ? week.actualMileage : week.plannedMileage;
+}
+
+function projectedMileage(week: TrainingWeek) {
+  const mileageEvaluation = week.goalEvaluations.find((evaluation) => {
+    const goal = week.goals.find((candidate) => candidate.id === evaluation.goalId);
+    return goal?.category === "mileage";
+  });
+
+  if (mileageEvaluation?.actualValue !== null && mileageEvaluation?.actualValue !== undefined) {
+    return mileageEvaluation.actualValue + (mileageEvaluation.remainingPlannedValue ?? 0);
+  }
+
+  return week.plannedMileage > 0 ? week.plannedMileage : week.actualMileage;
 }
 
 function formatMileageTrendDelta(trend: MileageTrend) {
@@ -3436,6 +3579,25 @@ function sumDistance(workouts: Workout[]) {
 
 function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
+}
+
+function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmpty: boolean) {
+  if (activities.length > 0) {
+    return "day-column--actual";
+  }
+  const firstWorkout = workouts.find((workout) => workout.sport !== "rest") ?? workouts[0];
+  if (!firstWorkout) {
+    return isEmpty ? "day-column--empty day-column--rest" : "";
+  }
+  return `day-column--${firstWorkout.intensityCategory} ${firstWorkout.workoutType.replaceAll("_", "-")}`;
+}
+
+function formatWeekdayShort(dateValue: string) {
+  return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(parseDate(dateValue)).toUpperCase();
+}
+
+function formatDayNumber(dateValue: string) {
+  return new Intl.DateTimeFormat("en-US", { day: "numeric" }).format(parseDate(dateValue));
 }
 
 function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {

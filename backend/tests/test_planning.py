@@ -265,7 +265,7 @@ def test_past_week_goal_evaluation_uses_actual_activities() -> None:
     try:
         athlete = planning.ensure_default_athlete(db)
         week = planning.get_or_create_week(db, date(2024, 4, 1))
-        planning.create_week_goal(
+        mileage_goal = planning.create_week_goal(
             db,
             week.id,
             WeekGoalCreate(
@@ -300,6 +300,79 @@ def test_past_week_goal_evaluation_uses_actual_activities() -> None:
         evaluation = serialized["goal_evaluations"][0]
         assert evaluation["status"] == "achieved"
         assert evaluation["actual_value"] == 19.2
+    finally:
+        db.close()
+
+
+def test_current_week_mileage_projection_does_not_double_count_completed_today() -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        today = date.today()
+        week_start = planning.week_start_for(today)
+        week = planning.get_or_create_week(db, week_start)
+        week_end = planning.week_end_for(week_start)
+        future_date = today + timedelta(days=1) if today < week_end else None
+        future_miles = 20 if future_date else 0
+        target_miles = 26.2 + future_miles
+
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=today,
+                title="Today planned 10",
+                planned_distance=10,
+            ),
+        )
+        if future_date:
+            planning.create_workout(
+                db,
+                PlannedWorkoutCreate(
+                    planned_date=future_date,
+                    title="Future easy 20",
+                    planned_distance=future_miles,
+                ),
+            )
+        mileage_goal = planning.create_week_goal(
+            db,
+            week.id,
+            WeekGoalCreate(
+                category="mileage",
+                label=f"Run {target_miles} miles",
+                target_value=target_miles,
+                min_acceptable=target_miles - 3,
+                max_acceptable=target_miles + 3,
+                unit="mi",
+                evaluation_mode="range",
+                priority="primary",
+            ),
+        )
+        db.add(
+            StravaActivity(
+                strava_activity_id="activity-current-mileage",
+                athlete_account_id=athlete.id,
+                name="Today actual",
+                sport_type="Run",
+                start_date=datetime.combine(today, datetime.min.time()),
+                start_date_local=datetime.combine(today, datetime.min.time()),
+                distance=1609.344 * 26.2,
+                raw_payload_json={},
+            )
+        )
+        db.commit()
+        week = planning.get_week_by_id(db, week.id)
+
+        serialized = planning.serialize_week(week, db)
+
+        mileage_evaluation = next(
+            evaluation
+            for evaluation in serialized["goal_evaluations"]
+            if evaluation["goal_id"] == mileage_goal.id
+        )
+        assert mileage_evaluation["status"] == "on_track"
+        assert mileage_evaluation["actual_value"] == 26.2
+        assert mileage_evaluation["planned_value"] == 10 + future_miles
+        assert mileage_evaluation["remaining_planned_value"] == future_miles
     finally:
         db.close()
 

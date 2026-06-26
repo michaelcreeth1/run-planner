@@ -26,11 +26,34 @@ type WeekCommandCenterProps = {
 };
 
 export function WeekCommandCenter({ onAction, onEditGoal, viewModel }: WeekCommandCenterProps) {
+  if (viewModel.isUnplanned) {
+    return (
+      <section className={`week-command-center week-command-center--${viewModel.mode} week-command-center--unplanned`} aria-label="Week slate">
+        <header className="week-command-header">
+          <div className="week-command-title">
+            <p className="eyebrow">{viewModel.purposeTag}</p>
+            <h1>{viewModel.title}</h1>
+            <span>{viewModel.modeLabel}</span>
+          </div>
+          <div className="week-command-actions" aria-label="Week actions">
+            {viewModel.actionButtons.map((action) => (
+              <WeekActionButton action={action} key={action.id} onAction={onAction} />
+            ))}
+          </div>
+        </header>
+        <div className="week-empty-planning-state">
+          <strong>Start with a training purpose.</strong>
+          <p>{viewModel.narrative}</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className={`week-command-center week-command-center--${viewModel.mode}`} aria-label="Week command center">
+    <section className={`week-command-center week-command-center--${viewModel.mode}`} aria-label="Week slate summary">
       <header className="week-command-header">
         <div className="week-command-title">
-          <p className="eyebrow">Training week</p>
+          <p className="eyebrow">{viewModel.purposeTag}</p>
           <h1>{viewModel.title}</h1>
           <span>{viewModel.modeLabel}</span>
         </div>
@@ -41,19 +64,24 @@ export function WeekCommandCenter({ onAction, onEditGoal, viewModel }: WeekComma
         </div>
       </header>
 
-      <div className="week-command-intent">
-        <div>
-          <span>Intent</span>
-          <strong>{viewModel.purpose ?? intentFallback(viewModel.mode)}</strong>
-        </div>
-        <div>
-          <span>{questionLabel(viewModel.mode)}</span>
-          <strong>{viewModel.primarySummary}</strong>
-          {viewModel.secondarySummary ? <small>{viewModel.secondarySummary}</small> : null}
-        </div>
+      <div className="week-slate-context">
+        <span>{viewModel.mode === "review" ? "Outcome" : "Training narrative"}</span>
+        <strong>{viewModel.narrative}</strong>
       </div>
 
-      <GoalScorecard goals={viewModel.primaryGoalCards} onEditGoal={onEditGoal} variant="primary" />
+      {viewModel.primaryGoalCards.length ? <GoalSummaryStrip goals={viewModel.primaryGoalCards} /> : null}
+
+      {viewModel.compactStats?.length ? (
+        <div className="week-command-stats" aria-label="Week summary">
+          {viewModel.compactStats.map((stat) => (
+            <div className={`week-command-stat week-command-stat--${stat.severity ?? "neutral"}`} key={stat.label}>
+              <span>{stat.label}</span>
+              <strong>{stat.value}</strong>
+              {stat.detail ? <small>{stat.detail}</small> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <details className="all-goals-details">
         <summary>
@@ -86,6 +114,25 @@ export function WeekCommandCenter({ onAction, onEditGoal, viewModel }: WeekComma
           ) : null}
         </div>
       </details>
+    </section>
+  );
+}
+
+function GoalSummaryStrip({ goals }: { goals: GoalCardViewModel[] }) {
+  const visibleGoals = goals.filter((goal) => !["mileage", "quality", "long_run", "recovery"].includes(goal.id));
+  if (!visibleGoals.length) {
+    return null;
+  }
+
+  return (
+    <section className="week-goal-summary" aria-label="Primary goal status">
+      {visibleGoals.map((goal) => (
+        <div className={`week-goal-summary-item week-goal-summary-item--${goal.severity}`} key={`${goal.id}-${goal.goalId ?? "informational"}`}>
+          <span>{goal.label}</span>
+          <strong>{goal.statusLabel}</strong>
+          <small>{goal.explanation}</small>
+        </div>
+      ))}
     </section>
   );
 }
@@ -207,24 +254,4 @@ function iconForStatus(status: GoalDisplayStatus) {
     return Flag;
   }
   return Plus;
-}
-
-function questionLabel(mode: WeekCommandCenterViewModel["mode"]) {
-  if (mode === "planning") {
-    return "Is this plan right?";
-  }
-  if (mode === "execution") {
-    return "Am I on track?";
-  }
-  return "Did it accomplish the intent?";
-}
-
-function intentFallback(mode: WeekCommandCenterViewModel["mode"]) {
-  if (mode === "planning") {
-    return "Set the purpose for this training week.";
-  }
-  if (mode === "execution") {
-    return "Execute the plan and adjust the remaining week.";
-  }
-  return "Review the outcome against the original intent.";
 }
