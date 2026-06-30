@@ -1,4 +1,4 @@
-const CACHE_NAME = "running-planner-static-v0.1.0";
+const CACHE_NAME = "running-planner-static-v0.1.1";
 const STATIC_ASSETS = ["/", "/manifest.webmanifest", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {

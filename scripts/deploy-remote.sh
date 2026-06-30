@@ -21,8 +21,8 @@ Examples:
   scripts/deploy-remote.sh -- --skip-build
   scripts/deploy-remote.sh --host docker --remote-dir /home/mike/compose/run-planner
 
-The remote .env is intentionally not synced. Create and maintain it on the
-Docker host, or the remote deploy step will fail before touching containers.
+The local .env is synced with the checkout and is the source of truth for the
+remote Compose deploy.
 EOF
 }
 
@@ -31,6 +31,24 @@ require_command() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+load_env_value() {
+  local name="$1"
+  local line
+
+  line="$(grep -E "^${name}=" "$ROOT_DIR/.env" | tail -n 1 || true)"
+  if [[ -z "$line" ]]; then
+    printf ""
+    return
+  fi
+
+  line="${line#*=}"
+  line="${line%\"}"
+  line="${line#\"}"
+  line="${line%\'}"
+  line="${line#\'}"
+  printf "%s" "$line"
 }
 
 fail_on_extra_env_files() {
@@ -106,6 +124,18 @@ done
 require_command ssh
 require_command tar
 
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  echo "Missing local .env. Create it before deploying so local and remote config match." >&2
+  exit 1
+fi
+
+DATABASE_URL_VALUE="$(load_env_value DATABASE_URL)"
+if [[ "$DATABASE_URL_VALUE" == *"@localhost:"* ]] || [[ "$DATABASE_URL_VALUE" == *"@127.0.0.1:"* ]]; then
+  echo "Refusing remote deploy with a local-only DATABASE_URL host." >&2
+  echo "Use a Docker-network or remote-reachable database host in .env before deploying." >&2
+  exit 1
+fi
+
 fail_on_extra_env_files
 
 TAR_EXCLUDES=(
@@ -113,7 +143,6 @@ TAR_EXCLUDES=(
   --exclude "./.DS_Store"
   --exclude "./._*"
   --exclude "*/._*"
-  --exclude "./.env"
   --exclude "./__pycache__"
   --exclude "./*.py[cod]"
   --exclude "./.pytest_cache"
@@ -135,17 +164,16 @@ DEPLOY_ARGS_QUOTED=""
 if (( ${#DEPLOY_ARGS[@]} > 0 )); then
   DEPLOY_ARGS_QUOTED="$(join_quoted_args "${DEPLOY_ARGS[@]}")"
 fi
-REMOTE_DEPLOY_COMMAND="cd $REMOTE_DIR_QUOTED && if [[ ! -f .env ]]; then echo 'Missing remote .env. Create it on the Docker host before deploying.' >&2; exit 1; fi && scripts/deploy.sh"
+REMOTE_DEPLOY_COMMAND="cd $REMOTE_DIR_QUOTED && scripts/deploy.sh"
 
 if [[ -n "$DEPLOY_ARGS_QUOTED" ]]; then
   REMOTE_DEPLOY_COMMAND+=" $DEPLOY_ARGS_QUOTED"
 fi
 
 echo "Syncing $ROOT_DIR to $REMOTE_HOST:$REMOTE_DIR"
-echo "Preserving remote .env and generated local artifacts."
+echo "Syncing local .env as the deploy config source of truth."
 
 if (( DRY_RUN == 1 )); then
-  ssh "$REMOTE_HOST" "test -f $REMOTE_DIR_QUOTED/.env && echo 'Remote .env exists.' || { echo 'Missing remote .env.' >&2; exit 1; }"
   echo
   echo "Archive would include:"
   COPYFILE_DISABLE=1 tar -czvf /dev/null "${TAR_EXCLUDES[@]}" -C "$ROOT_DIR" .
@@ -170,12 +198,7 @@ trap cleanup EXIT
 tar -xzf - -C \"\$staging\"
 mkdir -p \"\$remote_dir\"
 
-if [[ ! -f \"\$remote_dir/.env\" ]]; then
-  echo 'Missing remote .env. Create it on the Docker host before deploying.' >&2
-  exit 1
-fi
-
-for path in .env backend/data data backups; do
+for path in backend/data data backups; do
   if [[ -e \"\$remote_dir/\$path\" ]]; then
     mkdir -p \"\$preserve_dir/\$(dirname \"\$path\")\"
     mv \"\$remote_dir/\$path\" \"\$preserve_dir/\$path\"
@@ -185,7 +208,7 @@ done
 find \"\$remote_dir\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -a \"\$staging\"/. \"\$remote_dir\"/
 
-for path in .env backend/data data backups; do
+for path in backend/data data backups; do
   if [[ -e \"\$preserve_dir/\$path\" ]]; then
     mkdir -p \"\$remote_dir/\$(dirname \"\$path\")\"
     mv \"\$preserve_dir/\$path\" \"\$remote_dir/\$path\"

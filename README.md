@@ -71,12 +71,16 @@ The compose stack expects `DATABASE_URL` to point at the shared Postgres instanc
 ## Deployment
 
 The normal homelab deploy starts on the dev machine. It syncs this local checkout
-to the Docker host bundle at `/home/mike/compose/run-planner`, preserves the
-server-side `.env`, then runs the host-side Compose deploy:
+to the Docker host bundle at `/home/mike/compose/run-planner`, including the
+local `.env` as the deploy configuration, then runs the host-side Compose deploy:
 
 ```sh
 scripts/deploy-remote.sh
 ```
+
+Remote deploy refuses local-only database URLs such as `localhost` or `127.0.0.1`;
+the local `.env` must use the same Docker-network or remote-reachable database host
+that the deployed containers will use.
 
 Preview the sync without changing the server:
 
@@ -102,6 +106,10 @@ scripts/deploy.sh
 The script validates the env file, requires production-safe cookie settings when
 `APP_ENV=production`, runs `docker compose up -d --build`, and waits for the API
 health check before returning.
+
+`APP_USERNAME` and `APP_PASSWORD` bootstrap the first admin account when the database has
+no users. After that, users and athlete profiles are managed in the app, and each request
+is scoped to the selected profile.
 
 For the Caddy deployment on `https://run.home.arpa` and `https://run.creeth.net`, set:
 
@@ -175,6 +183,18 @@ POST /api/sync/strava/backfill
 The worker runs an incremental Strava import immediately on startup and then every
 30 minutes by default. Tune this with `STRAVA_SYNC_ENABLED`,
 `STRAVA_SYNC_INTERVAL_SECONDS`, and `STRAVA_SYNC_LOOKBACK_DAYS`.
+
+For push-based activity updates, expose the Strava webhook callback and register
+a Strava push subscription:
+
+```http
+GET/POST /api/webhooks/strava
+```
+
+Set `STRAVA_WEBHOOK_ENABLED=true`, `STRAVA_WEBHOOK_VERIFY_TOKEN`, and, after
+registration, `STRAVA_WEBHOOK_SUBSCRIPTION_ID`. Webhooks import activity
+create/update events immediately and mark delete events locally; keep a slower
+poll as reconciliation for missed webhook deliveries.
 
 Imported activities are available at:
 

@@ -12,6 +12,7 @@ import {
   Edit3,
   ExternalLink,
   Link,
+  LogOut,
   Minus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -23,6 +24,8 @@ import {
   ShieldAlert,
   Sparkles,
   Trash2,
+  UserCircle,
+  Users,
   WifiOff,
   X
 } from "lucide-react";
@@ -34,7 +37,7 @@ import { buildWeekCommandCenterViewModel } from "./features/weekGoals/buildWeekC
 import type { TrainingTimelineIndex, TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 
-const FRONTEND_VERSION = "0.1.0";
+const FRONTEND_VERSION = "0.1.1";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const WEEK_STACK_RADIUS = 3;
 const WEEK_STACK_LOAD_BATCH = 6;
@@ -210,6 +213,48 @@ type SyncJob = {
   activitiesCreated: number;
   activitiesUpdated: number;
   errorMessage: string | null;
+};
+
+type SessionUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  isAdmin: boolean;
+};
+
+type AthleteProfile = {
+  id: string;
+  displayName: string;
+  timezone: string;
+  stravaAthleteId: string | null;
+};
+
+type SessionStatus = {
+  authenticated: boolean;
+  configured: boolean;
+  username: string | null;
+  user: SessionUser | null;
+  activeAthleteAccountId: string | null;
+  profiles: AthleteProfile[];
+};
+
+type LoginForm = {
+  username: string;
+  password: string;
+};
+
+type AdminUserForm = {
+  username: string;
+  displayName: string;
+  password: string;
+  initialProfileName: string;
+  timezone: string;
+  isAdmin: boolean;
+};
+
+type ProfileForm = {
+  displayName: string;
+  timezone: string;
 };
 
 type WorkoutForm = {
@@ -439,6 +484,12 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>("week");
   const [apiVersion, setApiVersion] = useState<ApiVersion | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [session, setSession] = useState<SessionStatus | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState<LoginForm>({ username: "", password: "" });
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isSwitchingProfile, setIsSwitchingProfile] = useState(false);
   const [weekStart, setWeekStart] = useState(getInitialWeekStart);
   const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(getInitialWeekStart()));
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
@@ -480,6 +531,8 @@ function App() {
       currentWeekStart,
       weekStart
     ).length > 0;
+  const activeProfile =
+    session?.profiles.find((profile) => profile.id === session.activeAthleteAccountId) ?? null;
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -490,6 +543,10 @@ function App() {
       .catch((error: Error) => {
         setApiError(error.message);
       });
+  }, []);
+
+  useEffect(() => {
+    loadSession();
   }, []);
 
   useLayoutEffect(() => {
@@ -507,11 +564,17 @@ function App() {
   }, [visibleWeekStarts]);
 
   useEffect(() => {
-    loadWeeks(visibleWeekStarts);
+    if (!session?.authenticated || !session.activeAthleteAccountId) {
+      return;
+    }
+    clearAppData();
+    const starts = weekRangeAround(getInitialWeekStart());
+    setVisibleWeekStarts(starts);
+    loadWeeks(starts, { force: true });
     loadTrainingTimeline();
     loadStravaStatus();
     loadActivities();
-  }, []);
+  }, [session?.activeAthleteAccountId, session?.authenticated]);
 
   useEffect(() => {
     if (!timelineSummary || didApplyInitialTimelineRange.current) {
@@ -534,6 +597,85 @@ function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [timelineSummary]);
+
+  function clearAppData() {
+    setWeekStack({});
+    setTimelineSummary(null);
+    setActivities([]);
+    setStravaStatus(null);
+    setLastSyncJob(null);
+    setEditor(null);
+    setGoalEditor(null);
+    setPlanWeekDraft(null);
+    setLoadingWeekStarts(new Set());
+    didApplyInitialTimelineRange.current = false;
+  }
+
+  function loadSession() {
+    setSessionLoading(true);
+    fetchJson<SessionStatus>("/api/auth/session/status")
+      .then((body) => {
+        setSession(body);
+        setLoginError(null);
+      })
+      .catch((error: Error) => {
+        setApiError(error.message);
+      })
+      .finally(() => setSessionLoading(false));
+  }
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      const body = await fetchJson<SessionStatus>("/api/auth/session/login", {
+        method: "POST",
+        body: JSON.stringify(loginForm)
+      });
+      setSession(body);
+      setLoginForm({ username: "", password: "" });
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Login failed.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  async function logout() {
+    try {
+      const body = await fetchJson<SessionStatus>("/api/auth/session/logout", { method: "POST" });
+      setSession(body);
+      clearAppData();
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Logout failed.");
+    }
+  }
+
+  async function switchProfile(athleteAccountId: string) {
+    if (!athleteAccountId || athleteAccountId === session?.activeAthleteAccountId) {
+      return;
+    }
+    setIsSwitchingProfile(true);
+    try {
+      const body = await fetchJson<SessionStatus>("/api/auth/session/profile", {
+        method: "POST",
+        body: JSON.stringify({ athleteAccountId })
+      });
+      setSession(body);
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Profile switch failed.");
+    } finally {
+      setIsSwitchingProfile(false);
+    }
+  }
+
+  function refreshSession() {
+    fetchJson<SessionStatus>("/api/auth/session/status")
+      .then(setSession)
+      .catch((error: Error) => setApiError(error.message));
+  }
 
   function loadWeeks(starts: string[], options: { force?: boolean } = {}) {
     const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
@@ -832,6 +974,24 @@ function App() {
     }
   }
 
+  if (sessionLoading) {
+    return <Placeholder title="Loading" icon={<RefreshCw size={22} />} />;
+  }
+
+  if (!session?.authenticated) {
+    return (
+      <LoginView
+        apiError={apiError}
+        form={loginForm}
+        isConfigured={Boolean(session?.configured)}
+        isLoggingIn={isLoggingIn}
+        loginError={loginError}
+        setForm={setLoginForm}
+        onSubmit={login}
+      />
+    );
+  }
+
   return (
     <div className={`app-shell ${isSidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${isSidebarCollapsed ? "sidebar--collapsed" : ""}`}>
@@ -874,6 +1034,15 @@ function App() {
       </aside>
 
       <main ref={mainRef}>
+        <AppHeader
+          activeProfile={activeProfile}
+          isSwitchingProfile={isSwitchingProfile}
+          profiles={session.profiles}
+          user={session.user}
+          onLogout={logout}
+          onOpenSettings={() => setActiveTab("settings")}
+          onSwitchProfile={switchProfile}
+        />
         {apiError ? (
           <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
         ) : null}
@@ -925,7 +1094,9 @@ function App() {
             onBackfill={runBackfill}
             onRefreshActivities={loadActivities}
             onRefreshStatus={loadStravaStatus}
+            onRefreshSession={refreshSession}
             stravaStatus={stravaStatus}
+            session={session}
           />
         ) : null}
       </main>
@@ -958,6 +1129,199 @@ function App() {
       ) : null}
     </div>
   );
+}
+
+function LoginView({
+  apiError,
+  form,
+  isConfigured,
+  isLoggingIn,
+  loginError,
+  setForm,
+  onSubmit
+}: {
+  apiError: string | null;
+  form: LoginForm;
+  isConfigured: boolean;
+  isLoggingIn: boolean;
+  loginError: string | null;
+  setForm: Dispatch<SetStateAction<LoginForm>>;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <main className="login-shell">
+      <form className="login-panel" onSubmit={onSubmit}>
+        <div>
+          <p className="eyebrow">Running Planner</p>
+          <h1>Sign in</h1>
+        </div>
+        {!isConfigured ? (
+          <StatusBanner
+            tone="warning"
+            icon={<ShieldAlert size={18} />}
+            title="Accounts are not configured"
+            detail="Set the bootstrap username and password before signing in."
+          />
+        ) : null}
+        {apiError ? (
+          <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
+        ) : null}
+        {loginError ? (
+          <StatusBanner tone="danger" icon={<ShieldAlert size={18} />} title="Login failed" detail={loginError} />
+        ) : null}
+        <label>
+          <span>Username</span>
+          <input
+            value={form.username}
+            autoComplete="username"
+            onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
+          />
+        </label>
+        <label>
+          <span>Password</span>
+          <input
+            type="password"
+            value={form.password}
+            autoComplete="current-password"
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+          />
+        </label>
+        <button className="primary" type="submit" disabled={!isConfigured || isLoggingIn}>
+          {isLoggingIn ? <RefreshCw size={17} /> : <UserCircle size={17} />}
+          <span>{isLoggingIn ? "Signing in" : "Sign in"}</span>
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function AppHeader({
+  activeProfile,
+  isSwitchingProfile,
+  profiles,
+  user,
+  onLogout,
+  onOpenSettings,
+  onSwitchProfile
+}: {
+  activeProfile: AthleteProfile | null;
+  isSwitchingProfile: boolean;
+  profiles: AthleteProfile[];
+  user: SessionUser | null;
+  onLogout: () => void;
+  onOpenSettings: () => void;
+  onSwitchProfile: (athleteAccountId: string) => void;
+}) {
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountName = user?.displayName ?? user?.username ?? "Account";
+
+  useEffect(() => {
+    if (!isAccountMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setIsAccountMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsAccountMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isAccountMenuOpen]);
+
+  return (
+    <header className="app-header">
+      <div className="app-header-actions">
+        <div className="account-menu" ref={accountMenuRef}>
+          <button
+            type="button"
+            className="account-menu-trigger"
+            title={accountName}
+            aria-label="Open account menu"
+            aria-haspopup="menu"
+            aria-expanded={isAccountMenuOpen}
+            onClick={() => setIsAccountMenuOpen((current) => !current)}
+          >
+            <span>{accountInitials(accountName)}</span>
+          </button>
+          {isAccountMenuOpen ? (
+            <div className="account-menu-panel" role="menu">
+              <div className="account-menu-identity">
+                <span className="account-avatar">{accountInitials(accountName)}</span>
+                <div>
+                  <strong>{accountName}</strong>
+                  <span>{user?.isAdmin ? "Admin" : user?.username}</span>
+                </div>
+              </div>
+              <label className="account-menu-profile">
+                <span>Profile</span>
+                <select
+                  value={activeProfile?.id ?? ""}
+                  disabled={isSwitchingProfile || profiles.length === 0}
+                  onChange={(event) => onSwitchProfile(event.target.value)}
+                >
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="account-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setIsAccountMenuOpen(false);
+                  onOpenSettings();
+                }}
+              >
+                <Settings size={17} />
+                <span>Settings</span>
+              </button>
+              <button
+                type="button"
+                className="account-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setIsAccountMenuOpen(false);
+                  onLogout();
+                }}
+              >
+                <LogOut size={17} />
+                <span>Log out</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function accountInitials(name: string) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+
+  return initials || "A";
 }
 
 function WeekView({
@@ -2519,30 +2883,123 @@ function ActivitiesView({ activities }: { activities: StravaActivity[] }) {
 function SettingsView({
   apiVersion,
   stravaStatus,
+  session,
   isSyncing,
   lastSyncJob,
   onBackfill,
   onRefreshActivities,
-  onRefreshStatus
+  onRefreshStatus,
+  onRefreshSession
 }: {
   apiVersion: ApiVersion | null;
   stravaStatus: StravaStatus | null;
+  session: SessionStatus;
   isSyncing: boolean;
   lastSyncJob: SyncJob | null;
   onBackfill: () => void;
   onRefreshActivities: () => void;
   onRefreshStatus: () => void;
+  onRefreshSession: () => void;
 }) {
+  const [profileForm, setProfileForm] = useState<ProfileForm>({
+    displayName: "",
+    timezone: "America/Denver"
+  });
+  const [userForm, setUserForm] = useState<AdminUserForm>({
+    username: "",
+    displayName: "",
+    password: "",
+    initialProfileName: "",
+    timezone: "America/Denver",
+    isAdmin: false
+  });
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [isDisconnectingStrava, setIsDisconnectingStrava] = useState(false);
+
+  async function createProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSettingsError(null);
+    try {
+      await fetchJson<AthleteProfile>("/api/auth/profiles", {
+        method: "POST",
+        body: JSON.stringify(profileForm)
+      });
+      setProfileForm({ displayName: "", timezone: "America/Denver" });
+      setSettingsMessage("Profile created.");
+      onRefreshSession();
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Could not create profile.");
+    }
+  }
+
+  async function createUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSettingsError(null);
+    try {
+      await fetchJson<SessionUser>("/api/auth/users", {
+        method: "POST",
+        body: JSON.stringify(userForm)
+      });
+      setUserForm({
+        username: "",
+        displayName: "",
+        password: "",
+        initialProfileName: "",
+        timezone: "America/Denver",
+        isAdmin: false
+      });
+      setSettingsMessage("User created.");
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Could not create user.");
+    }
+  }
+
+  async function disconnectStrava() {
+    setSettingsError(null);
+    setIsDisconnectingStrava(true);
+    try {
+      await fetchJson<{ status: string }>("/api/auth/strava/disconnect", {
+        method: "POST"
+      });
+      setSettingsMessage("Strava disconnected. Connect again to refresh stored tokens.");
+      onRefreshStatus();
+      onRefreshActivities();
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Could not disconnect Strava.");
+    } finally {
+      setIsDisconnectingStrava(false);
+    }
+  }
+
   return (
     <section className="settings-view">
+      {settingsError ? (
+        <StatusBanner tone="danger" icon={<ShieldAlert size={18} />} title="Settings error" detail={settingsError} />
+      ) : null}
+      {settingsMessage ? (
+        <div className="settings-note">{settingsMessage}</div>
+      ) : null}
       <div className="settings-row">
         <span>Strava</span>
         <strong>{stravaStatus?.connected ? stravaStatus.athleteName ?? "Connected" : "Not connected"}</strong>
       </div>
+      {stravaStatus?.message ? (
+        <div className="settings-note">{stravaStatus.message}</div>
+      ) : null}
       <div className="settings-actions">
         <button type="button" onClick={() => (window.location.href = `${API_BASE_URL}/api/auth/strava/start`)}>
           <Link size={17} />
           <span>{stravaStatus?.connected ? "Reconnect Strava" : "Connect Strava"}</span>
+        </button>
+        <button
+          className="danger"
+          disabled={!stravaStatus?.connected || isDisconnectingStrava}
+          type="button"
+          onClick={disconnectStrava}
+        >
+          <Trash2 size={17} />
+          <span>{isDisconnectingStrava ? "Disconnecting" : "Disconnect"}</span>
         </button>
         <button
           className="primary"
@@ -2590,12 +3047,101 @@ function SettingsView({
         <span>AI</span>
         <strong>Stub</strong>
       </div>
+      <form className="settings-form" onSubmit={createProfile}>
+        <header>
+          <Users size={18} />
+          <strong>Add profile</strong>
+        </header>
+        <div className="form-grid">
+          <label>
+            <span>Profile name</span>
+            <input
+              value={profileForm.displayName}
+              onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))}
+            />
+          </label>
+          <label>
+            <span>Timezone</span>
+            <input
+              value={profileForm.timezone}
+              onChange={(event) => setProfileForm((current) => ({ ...current, timezone: event.target.value }))}
+            />
+          </label>
+        </div>
+        <button className="primary" type="submit">
+          <Plus size={17} />
+          <span>Add profile</span>
+        </button>
+      </form>
+      {session.user?.isAdmin ? (
+        <form className="settings-form" onSubmit={createUser}>
+          <header>
+            <UserCircle size={18} />
+            <strong>Create user</strong>
+          </header>
+          <div className="form-grid form-grid--three">
+            <label>
+              <span>Username</span>
+              <input
+                value={userForm.username}
+                autoComplete="off"
+                onChange={(event) => setUserForm((current) => ({ ...current, username: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Display name</span>
+              <input
+                value={userForm.displayName}
+                onChange={(event) => setUserForm((current) => ({ ...current, displayName: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                value={userForm.password}
+                autoComplete="new-password"
+                onChange={(event) => setUserForm((current) => ({ ...current, password: event.target.value }))}
+              />
+            </label>
+          </div>
+          <div className="form-grid">
+            <label>
+              <span>Initial profile</span>
+              <input
+                value={userForm.initialProfileName}
+                onChange={(event) => setUserForm((current) => ({ ...current, initialProfileName: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Timezone</span>
+              <input
+                value={userForm.timezone}
+                onChange={(event) => setUserForm((current) => ({ ...current, timezone: event.target.value }))}
+              />
+            </label>
+          </div>
+          <label className="checkbox-row">
+            <input
+              checked={userForm.isAdmin}
+              type="checkbox"
+              onChange={(event) => setUserForm((current) => ({ ...current, isAdmin: event.target.checked }))}
+            />
+            <span>Admin</span>
+          </label>
+          <button className="primary" type="submit">
+            <Plus size={17} />
+            <span>Create user</span>
+          </button>
+        </form>
+      ) : null}
     </section>
   );
 }
 
 async function fetchJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...init.headers

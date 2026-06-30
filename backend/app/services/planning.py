@@ -66,12 +66,17 @@ def ensure_default_athlete(db: Session) -> AthleteAccount:
     return athlete
 
 
-def get_or_create_week(db: Session, week_start: date) -> TrainingWeek:
-    athlete = ensure_default_athlete(db)
+def get_or_create_week(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
     week = db.scalars(
         select(TrainingWeek)
         .where(
-            TrainingWeek.athlete_account_id == athlete.id,
+            TrainingWeek.athlete_account_id == active_athlete_id,
             TrainingWeek.week_start_date == week_start,
         )
         .options(selectinload(TrainingWeek.workouts).selectinload(PlannedWorkout.steps))
@@ -82,20 +87,29 @@ def get_or_create_week(db: Session, week_start: date) -> TrainingWeek:
         return week
 
     week = TrainingWeek(
-        athlete_account_id=athlete.id,
+        athlete_account_id=active_athlete_id,
         week_start_date=week_start,
         week_end_date=week_end_for(week_start),
     )
     db.add(week)
     db.commit()
     db.refresh(week)
-    return load_week(db, week.week_start_date)
+    return load_week(db, week.week_start_date, active_athlete_id)
 
 
-def load_week(db: Session, week_start: date) -> TrainingWeek:
+def load_week(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
     week = db.scalars(
         select(TrainingWeek)
-        .where(TrainingWeek.week_start_date == week_start)
+        .where(
+            TrainingWeek.athlete_account_id == active_athlete_id,
+            TrainingWeek.week_start_date == week_start,
+        )
         .options(selectinload(TrainingWeek.workouts).selectinload(PlannedWorkout.steps))
         .options(selectinload(TrainingWeek.goals))
     ).first()
@@ -108,11 +122,13 @@ def load_week(db: Session, week_start: date) -> TrainingWeek:
     return week
 
 
-def list_weeks(db: Session) -> list[TrainingWeek]:
-    ensure_default_athlete(db)
+def list_weeks(db: Session, athlete_account_id: str | None = None) -> list[TrainingWeek]:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
     weeks = list(
         db.scalars(
             select(TrainingWeek)
+            .where(TrainingWeek.athlete_account_id == active_athlete_id)
             .options(selectinload(TrainingWeek.workouts).selectinload(PlannedWorkout.steps))
             .options(selectinload(TrainingWeek.goals))
             .order_by(TrainingWeek.week_start_date.desc())
@@ -123,13 +139,14 @@ def list_weeks(db: Session) -> list[TrainingWeek]:
     return weeks
 
 
-def training_timeline(db: Session) -> dict:
-    athlete = ensure_default_athlete(db)
+def training_timeline(db: Session, athlete_account_id: str | None = None) -> dict:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
     month_summaries: dict[tuple[int, int], dict] = defaultdict(new_timeline_month_summary)
     data_week_starts: set[date] = set()
 
     workouts = db.scalars(
-        select(PlannedWorkout).where(PlannedWorkout.athlete_account_id == athlete.id)
+        select(PlannedWorkout).where(PlannedWorkout.athlete_account_id == active_athlete_id)
     ).all()
     for workout in workouts:
         week_start = week_start_for(workout.planned_date)
@@ -141,7 +158,7 @@ def training_timeline(db: Session) -> dict:
 
     activities = db.scalars(
         select(StravaActivity).where(
-            StravaActivity.athlete_account_id == athlete.id,
+            StravaActivity.athlete_account_id == active_athlete_id,
             StravaActivity.deleted_at.is_(None),
         )
     ).all()
@@ -156,7 +173,7 @@ def training_timeline(db: Session) -> dict:
 
     metadata_weeks = db.scalars(
         select(TrainingWeek).where(
-            TrainingWeek.athlete_account_id == athlete.id,
+            TrainingWeek.athlete_account_id == active_athlete_id,
             (TrainingWeek.notes != "") | TrainingWeek.target_long_run_distance.is_not(None),
         )
     ).all()
@@ -167,7 +184,7 @@ def training_timeline(db: Session) -> dict:
 
     goal_weeks = db.scalars(
         select(WeekGoal.week_start_date).where(
-            WeekGoal.athlete_account_id == athlete.id,
+            WeekGoal.athlete_account_id == active_athlete_id,
             WeekGoal.is_enabled == 1,
         )
     ).all()
@@ -208,17 +225,27 @@ def round_optional_miles(value: float) -> float | None:
     return round(value, 1) if value > 0 else None
 
 
-def update_week(db: Session, week_id: str, payload: TrainingWeekPatch) -> TrainingWeek:
-    week = get_week_by_id(db, week_id)
+def update_week(
+    db: Session,
+    week_id: str,
+    payload: TrainingWeekPatch,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    week = get_week_by_id(db, week_id, athlete_account_id)
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(week, field, value)
     db.commit()
-    return load_week(db, week.week_start_date)
+    return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
-def create_week_goal(db: Session, week_id: str, payload: WeekGoalCreate) -> WeekGoal:
-    week = get_week_by_id(db, week_id)
+def create_week_goal(
+    db: Session,
+    week_id: str,
+    payload: WeekGoalCreate,
+    athlete_account_id: str | None = None,
+) -> WeekGoal:
+    week = get_week_by_id(db, week_id, athlete_account_id)
     goal = WeekGoal(
         training_week_id=week.id,
         athlete_account_id=week.athlete_account_id,
@@ -231,8 +258,13 @@ def create_week_goal(db: Session, week_id: str, payload: WeekGoalCreate) -> Week
     return goal
 
 
-def update_week_goal(db: Session, goal_id: str, payload: WeekGoalUpdate) -> WeekGoal:
-    goal = get_week_goal(db, goal_id)
+def update_week_goal(
+    db: Session,
+    goal_id: str,
+    payload: WeekGoalUpdate,
+    athlete_account_id: str | None = None,
+) -> WeekGoal:
+    goal = get_week_goal(db, goal_id, athlete_account_id)
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(goal, field, value)
@@ -243,14 +275,21 @@ def update_week_goal(db: Session, goal_id: str, payload: WeekGoalUpdate) -> Week
     return goal
 
 
-def delete_week_goal(db: Session, goal_id: str) -> None:
-    goal = get_week_goal(db, goal_id)
+def delete_week_goal(db: Session, goal_id: str, athlete_account_id: str | None = None) -> None:
+    goal = get_week_goal(db, goal_id, athlete_account_id)
     db.delete(goal)
     db.commit()
 
 
-def get_week_goal(db: Session, goal_id: str) -> WeekGoal:
-    goal = db.scalars(select(WeekGoal).where(WeekGoal.id == goal_id)).first()
+def get_week_goal(
+    db: Session,
+    goal_id: str,
+    athlete_account_id: str | None = None,
+) -> WeekGoal:
+    conditions = [WeekGoal.id == goal_id]
+    if athlete_account_id is not None:
+        conditions.append(WeekGoal.athlete_account_id == athlete_account_id)
+    goal = db.scalars(select(WeekGoal).where(*conditions)).first()
     if not goal:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -259,8 +298,13 @@ def get_week_goal(db: Session, goal_id: str) -> WeekGoal:
     return goal
 
 
-def derive_week_goals(db: Session, week_id: str, replace_derived: bool = True) -> TrainingWeek:
-    week = get_week_by_id(db, week_id)
+def derive_week_goals(
+    db: Session,
+    week_id: str,
+    replace_derived: bool = True,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    week = get_week_by_id(db, week_id, athlete_account_id)
     if replace_derived:
         for goal in list(week.goals):
             if goal.source == "derived_from_plan":
@@ -287,13 +331,20 @@ def derive_week_goals(db: Session, week_id: str, replace_derived: bool = True) -
         )
 
     db.commit()
-    return load_week(db, week.week_start_date)
+    return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
-def get_week_by_id(db: Session, week_id: str) -> TrainingWeek:
+def get_week_by_id(
+    db: Session,
+    week_id: str,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    conditions = [TrainingWeek.id == week_id]
+    if athlete_account_id is not None:
+        conditions.append(TrainingWeek.athlete_account_id == athlete_account_id)
     week = db.scalars(
         select(TrainingWeek)
-        .where(TrainingWeek.id == week_id)
+        .where(*conditions)
         .options(selectinload(TrainingWeek.workouts).selectinload(PlannedWorkout.steps))
         .options(selectinload(TrainingWeek.goals))
     ).first()
@@ -320,11 +371,16 @@ def recalculate_week(db: Session, week: TrainingWeek) -> TrainingWeek:
     return week
 
 
-def create_workout(db: Session, payload: PlannedWorkoutCreate) -> PlannedWorkout:
-    athlete = ensure_default_athlete(db)
-    week = get_or_create_week(db, week_start_for(payload.planned_date))
+def create_workout(
+    db: Session,
+    payload: PlannedWorkoutCreate,
+    athlete_account_id: str | None = None,
+) -> PlannedWorkout:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
+    week = get_or_create_week(db, week_start_for(payload.planned_date), active_athlete_id)
     workout = PlannedWorkout(
-        athlete_account_id=athlete.id,
+        athlete_account_id=active_athlete_id,
         training_week_id=week.id,
         **payload.model_dump(),
     )
@@ -332,24 +388,33 @@ def create_workout(db: Session, payload: PlannedWorkoutCreate) -> PlannedWorkout
     db.commit()
     db.refresh(workout)
     recalculate_week(db, week)
-    return get_workout(db, workout.id)
+    return get_workout(db, workout.id, active_athlete_id)
 
 
-def list_workouts(db: Session) -> list[PlannedWorkout]:
-    ensure_default_athlete(db)
+def list_workouts(db: Session, athlete_account_id: str | None = None) -> list[PlannedWorkout]:
+    athlete = ensure_default_athlete(db) if athlete_account_id is None else None
+    active_athlete_id = athlete_account_id or athlete.id
     return list(
         db.scalars(
             select(PlannedWorkout)
+            .where(PlannedWorkout.athlete_account_id == active_athlete_id)
             .options(selectinload(PlannedWorkout.steps))
             .order_by(PlannedWorkout.planned_date, PlannedWorkout.created_at)
         )
     )
 
 
-def get_workout(db: Session, workout_id: str) -> PlannedWorkout:
+def get_workout(
+    db: Session,
+    workout_id: str,
+    athlete_account_id: str | None = None,
+) -> PlannedWorkout:
+    conditions = [PlannedWorkout.id == workout_id]
+    if athlete_account_id is not None:
+        conditions.append(PlannedWorkout.athlete_account_id == athlete_account_id)
     workout = db.scalars(
         select(PlannedWorkout)
-        .where(PlannedWorkout.id == workout_id)
+        .where(*conditions)
         .options(selectinload(PlannedWorkout.steps))
     ).first()
     if not workout:
@@ -364,8 +429,9 @@ def update_workout(
     db: Session,
     workout_id: str,
     payload: PlannedWorkoutUpdate,
+    athlete_account_id: str | None = None,
 ) -> PlannedWorkout:
-    workout = get_workout(db, workout_id)
+    workout = get_workout(db, workout_id, athlete_account_id)
     original_week_id = workout.training_week_id
     updates = payload.model_dump(exclude_unset=True)
 
@@ -373,25 +439,43 @@ def update_workout(
         setattr(workout, field, value)
 
     if payload.planned_date is not None:
-        new_week = get_or_create_week(db, week_start_for(payload.planned_date))
+        new_week = get_or_create_week(
+            db,
+            week_start_for(payload.planned_date),
+            workout.athlete_account_id,
+        )
         workout.training_week_id = new_week.id
 
     db.commit()
     db.refresh(workout)
-    recalculate_impacted_weeks(db, {original_week_id, workout.training_week_id})
-    return get_workout(db, workout.id)
+    recalculate_impacted_weeks(
+        db,
+        {original_week_id, workout.training_week_id},
+        workout.athlete_account_id,
+    )
+    return get_workout(db, workout.id, workout.athlete_account_id)
 
 
-def move_workout(db: Session, workout_id: str, planned_date: date) -> PlannedWorkout:
+def move_workout(
+    db: Session,
+    workout_id: str,
+    planned_date: date,
+    athlete_account_id: str | None = None,
+) -> PlannedWorkout:
     return update_workout(
         db,
         workout_id,
         PlannedWorkoutUpdate(planned_date=planned_date, status="moved"),
+        athlete_account_id,
     )
 
 
-def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
-    source = get_workout(db, workout_id)
+def duplicate_workout(
+    db: Session,
+    workout_id: str,
+    athlete_account_id: str | None = None,
+) -> PlannedWorkout:
+    source = get_workout(db, workout_id, athlete_account_id)
     clone = clone_workout(
         source,
         source.training_week_id,
@@ -401,14 +485,18 @@ def duplicate_workout(db: Session, workout_id: str) -> PlannedWorkout:
     db.add(clone)
     db.commit()
     db.refresh(clone)
-    recalculate_week(db, get_week_by_id(db, source.training_week_id))
-    return get_workout(db, clone.id)
+    recalculate_week(db, get_week_by_id(db, source.training_week_id, source.athlete_account_id))
+    return get_workout(db, clone.id, source.athlete_account_id)
 
 
-def copy_prior_week(db: Session, week_id: str) -> TrainingWeek:
-    target = get_week_by_id(db, week_id)
+def copy_prior_week(
+    db: Session,
+    week_id: str,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    target = get_week_by_id(db, week_id, athlete_account_id)
     source_start = target.week_start_date - timedelta(days=7)
-    source = get_or_create_week(db, source_start)
+    source = get_or_create_week(db, source_start, target.athlete_account_id)
 
     if not source.workouts:
         raise HTTPException(
@@ -437,11 +525,16 @@ def copy_prior_week(db: Session, week_id: str) -> TrainingWeek:
 
     db.add(target)
     db.commit()
-    return load_week(db, target.week_start_date)
+    return load_week(db, target.week_start_date, target.athlete_account_id)
 
 
-def save_week_plan(db: Session, week_id: str, payload: PlanWeekSave) -> TrainingWeek:
-    week = get_week_by_id(db, week_id)
+def save_week_plan(
+    db: Session,
+    week_id: str,
+    payload: PlanWeekSave,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    week = get_week_by_id(db, week_id, athlete_account_id)
     week.notes = payload.purpose
     week.target_long_run_distance = payload.target_long_run_distance
 
@@ -470,7 +563,7 @@ def save_week_plan(db: Session, week_id: str, payload: PlanWeekSave) -> Training
 
     db.add(week)
     db.commit()
-    return load_week(db, week.week_start_date)
+    return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
 def clone_workout(
@@ -537,17 +630,22 @@ def clone_week_goal(source: WeekGoal, target: TrainingWeek) -> WeekGoal:
     )
 
 
-def delete_workout(db: Session, workout_id: str) -> None:
-    workout = get_workout(db, workout_id)
+def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None = None) -> None:
+    workout = get_workout(db, workout_id, athlete_account_id)
     week_id = workout.training_week_id
+    active_athlete_id = workout.athlete_account_id
     db.delete(workout)
     db.commit()
-    recalculate_week(db, get_week_by_id(db, week_id))
+    recalculate_week(db, get_week_by_id(db, week_id, active_athlete_id))
 
 
-def recalculate_impacted_weeks(db: Session, week_ids: set[str]) -> None:
+def recalculate_impacted_weeks(
+    db: Session,
+    week_ids: set[str],
+    athlete_account_id: str | None = None,
+) -> None:
     for week_id in week_ids:
-        recalculate_week(db, get_week_by_id(db, week_id))
+        recalculate_week(db, get_week_by_id(db, week_id, athlete_account_id))
 
 
 def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]:
@@ -557,6 +655,7 @@ def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]
         db.scalars(
             select(StravaActivity)
             .where(
+                StravaActivity.athlete_account_id == week.athlete_account_id,
                 StravaActivity.deleted_at.is_(None),
                 StravaActivity.start_date_local >= start,
                 StravaActivity.start_date_local < end,
