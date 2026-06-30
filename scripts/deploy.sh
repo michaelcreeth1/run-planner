@@ -146,11 +146,12 @@ require_env_var APP_BASE_URL
 require_env_var API_BASE_URL
 require_env_var DATABASE_URL
 require_env_var SESSION_SECRET
+require_env_var APP_USERNAME
+require_env_var APP_PASSWORD
 require_env_var TOKEN_ENCRYPTION_KEY
 require_env_var CORS_ORIGINS
 
 if [[ "$APP_ENV" == "production" ]]; then
-  require_env_var APP_PASSWORD
   require_non_placeholder SESSION_SECRET
   require_non_placeholder TOKEN_ENCRYPTION_KEY
 

@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from cryptography.fernet import InvalidToken
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,12 +12,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.models.planning import AthleteAccount
-from app.models.strava import StravaActivity, StravaOAuthToken, SyncJob
-from app.services.planning import ensure_default_athlete
+from app.models.strava import StravaActivity, StravaOAuthToken, StravaWebhookEvent, SyncJob
 
 AUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/oauth/token"
 ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+ACTIVITY_URL = "https://www.strava.com/api/v3/activities/{activity_id}"
 REQUIRED_SCOPES = ["read", "activity:read", "activity:read_all"]
 
 
@@ -24,7 +25,7 @@ def strava_configured() -> bool:
     return bool(settings.strava_client_id and settings.strava_client_secret)
 
 
-def authorization_url() -> str:
+def authorization_url(state: str) -> str:
     if not strava_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -36,27 +37,34 @@ def authorization_url() -> str:
             "client_id": settings.strava_client_id,
             "redirect_uri": settings.strava_redirect_uri,
             "response_type": "code",
-            "approval_prompt": "auto",
+            "approval_prompt": "force",
             "scope": ",".join(REQUIRED_SCOPES),
+            "state": state,
         }
     )
     return f"{AUTH_URL}?{query}"
 
 
-def get_token(db: Session) -> StravaOAuthToken | None:
-    athlete = ensure_default_athlete(db)
+def get_token(db: Session, athlete_account_id: str) -> StravaOAuthToken | None:
     return db.scalars(
         select(StravaOAuthToken)
         .where(
-            StravaOAuthToken.athlete_account_id == athlete.id,
+            StravaOAuthToken.athlete_account_id == athlete_account_id,
             StravaOAuthToken.revoked_at.is_(None),
         )
         .order_by(StravaOAuthToken.created_at.desc())
     ).first()
 
 
-def exchange_code(db: Session, code: str, scope: str) -> StravaOAuthToken:
-    athlete = ensure_default_athlete(db)
+def exchange_code(
+    db: Session,
+    athlete_account_id: str,
+    code: str,
+    scope: str,
+) -> StravaOAuthToken:
+    athlete = db.get(AthleteAccount, athlete_account_id)
+    if not athlete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     with httpx.Client(timeout=20) as client:
         response = client.post(
             TOKEN_URL,
@@ -75,7 +83,7 @@ def exchange_code(db: Session, code: str, scope: str) -> StravaOAuthToken:
 
     payload = response.json()
     update_athlete_from_payload(athlete, payload)
-    existing = get_token(db)
+    existing = get_token(db, athlete.id)
     if existing:
         existing.revoked_at = datetime.now(timezone.utc)
 
@@ -102,20 +110,27 @@ def update_athlete_from_payload(athlete: AthleteAccount, payload: dict[str, Any]
         athlete.strava_athlete_id = str(athlete_payload.get("id") or athlete.strava_athlete_id)
 
 
-def get_valid_access_token(db: Session) -> tuple[str, StravaOAuthToken]:
-    token = get_token(db)
+def get_valid_access_token(db: Session, athlete_account_id: str) -> tuple[str, StravaOAuthToken]:
+    token = get_token(db, athlete_account_id)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Strava is not connected.",
         )
 
-    expires_at = token.expires_at.replace(tzinfo=timezone.utc)
-    refresh_threshold = datetime.now(timezone.utc) + timedelta(minutes=5)
-    if expires_at <= refresh_threshold:
-        token = refresh_token(db, token)
+    try:
+        expires_at = token.expires_at.replace(tzinfo=timezone.utc)
+        refresh_threshold = datetime.now(timezone.utc) + timedelta(minutes=5)
+        if expires_at <= refresh_threshold:
+            token = refresh_token(db, token)
 
-    return decrypt_secret(token.access_token_encrypted), token
+        return decrypt_secret(token.access_token_encrypted), token
+    except InvalidToken as exc:
+        revoke_unreadable_token(db, token)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Stored Strava tokens could not be decrypted. Reconnect Strava.",
+        ) from exc
 
 
 def refresh_token(db: Session, token: StravaOAuthToken) -> StravaOAuthToken:
@@ -147,16 +162,23 @@ def refresh_token(db: Session, token: StravaOAuthToken) -> StravaOAuthToken:
     return token
 
 
-def disconnect(db: Session) -> None:
-    token = get_token(db)
+def revoke_unreadable_token(db: Session, token: StravaOAuthToken) -> None:
+    token.revoked_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def disconnect(db: Session, athlete_account_id: str) -> None:
+    token = get_token(db, athlete_account_id)
     if token:
         token.revoked_at = datetime.now(timezone.utc)
         db.commit()
 
 
-def connection_status(db: Session) -> dict[str, Any]:
-    athlete = ensure_default_athlete(db)
-    token = get_token(db)
+def connection_status(db: Session, athlete_account_id: str) -> dict[str, Any]:
+    athlete = db.get(AthleteAccount, athlete_account_id)
+    if not athlete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
+    token = get_token(db, athlete_account_id)
     configured = strava_configured()
     if not token:
         if configured:
@@ -172,6 +194,20 @@ def connection_status(db: Session) -> dict[str, Any]:
             "message": message,
         }
 
+    try:
+        decrypt_secret(token.access_token_encrypted)
+        decrypt_secret(token.refresh_token_encrypted)
+    except InvalidToken:
+        revoke_unreadable_token(db, token)
+        return {
+            "connected": False,
+            "configured": configured,
+            "athlete_name": athlete.display_name if athlete.strava_athlete_id else None,
+            "granted_scopes": [],
+            "expires_at": None,
+            "message": "Stored Strava tokens could not be decrypted. Reconnect Strava.",
+        }
+
     return {
         "connected": True,
         "configured": configured,
@@ -184,17 +220,17 @@ def connection_status(db: Session) -> dict[str, Any]:
 
 def backfill_activities(
     db: Session,
+    athlete_account_id: str,
     days: int = 180,
     job_type: str = "initial_backfill",
 ) -> SyncJob:
-    athlete = ensure_default_athlete(db)
-    job = SyncJob(athlete_account_id=athlete.id, job_type=job_type, status="running")
+    job = SyncJob(athlete_account_id=athlete_account_id, job_type=job_type, status="running")
     db.add(job)
     db.commit()
     db.refresh(job)
 
     try:
-        access_token, _ = get_valid_access_token(db)
+        access_token, _ = get_valid_access_token(db, athlete_account_id)
         after = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
         fetched = 0
         created = 0
@@ -222,7 +258,7 @@ def backfill_activities(
 
                 fetched += len(activities)
                 for activity in activities:
-                    result = upsert_activity(db, athlete.id, activity)
+                    result = upsert_activity(db, athlete_account_id, activity)
                     if result == "created":
                         created += 1
                     elif result == "updated":
@@ -251,10 +287,202 @@ def backfill_activities(
         raise
 
 
+def valid_webhook_subscription(subscription_id: int | str | None) -> bool:
+    expected = settings.strava_webhook_subscription_id.strip()
+    if not expected:
+        return True
+    return str(subscription_id or "") == expected
+
+
+def enqueue_webhook_event(db: Session, payload: dict[str, Any]) -> StravaWebhookEvent:
+    event = db.scalars(
+        select(StravaWebhookEvent).where(
+            StravaWebhookEvent.owner_id == str(payload["owner_id"]),
+            StravaWebhookEvent.object_type == payload["object_type"],
+            StravaWebhookEvent.object_id == str(payload["object_id"]),
+            StravaWebhookEvent.aspect_type == payload["aspect_type"],
+            StravaWebhookEvent.subscription_id == str(payload.get("subscription_id") or ""),
+            StravaWebhookEvent.event_time == payload.get("event_time"),
+        )
+    ).first()
+    if event:
+        return event
+
+    event = StravaWebhookEvent(
+        owner_id=str(payload["owner_id"]),
+        object_type=payload["object_type"],
+        object_id=str(payload["object_id"]),
+        aspect_type=payload["aspect_type"],
+        subscription_id=str(payload.get("subscription_id") or ""),
+        event_time=payload.get("event_time"),
+        updates_json=payload.get("updates") or {},
+        raw_payload_json=payload,
+        status="queued",
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def process_pending_webhook_events(db: Session, limit: int = 25) -> list[StravaWebhookEvent]:
+    events = list(
+        db.scalars(
+            select(StravaWebhookEvent)
+            .where(
+                StravaWebhookEvent.status.in_(["queued", "failed"]),
+                StravaWebhookEvent.attempts < settings.strava_webhook_max_attempts,
+            )
+            .order_by(StravaWebhookEvent.received_at.asc())
+            .limit(limit)
+        )
+    )
+    for event in events:
+        process_webhook_event(db, event.id)
+    return events
+
+
+def process_webhook_event(db: Session, event_id: str) -> StravaWebhookEvent | None:
+    event = db.get(StravaWebhookEvent, event_id)
+    if not event:
+        return None
+    if event.status in {"succeeded", "ignored"}:
+        return event
+
+    event.status = "processing"
+    event.attempts += 1
+    event.error_message = None
+    db.commit()
+    db.refresh(event)
+
+    job: SyncJob | None = None
+    try:
+        athlete = connected_athlete_for_strava_owner(db, event.owner_id)
+        if not athlete:
+            finish_webhook_event(
+                db,
+                event,
+                "ignored",
+                "No connected profile found for Strava owner.",
+            )
+            return event
+
+        event.athlete_account_id = athlete.id
+        if event.object_type != "activity":
+            finish_webhook_event(db, event, "ignored", "Unsupported Strava object type.")
+            return event
+        if event.aspect_type not in {"create", "update", "delete"}:
+            finish_webhook_event(db, event, "ignored", "Unsupported Strava event aspect.")
+            return event
+
+        job = SyncJob(
+            athlete_account_id=athlete.id,
+            job_type=f"strava_webhook_{event.aspect_type}",
+            status="running",
+            metadata_json={
+                "webhook_event_id": event.id,
+                "strava_activity_id": event.object_id,
+                "event_time": event.event_time,
+            },
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if event.aspect_type == "delete":
+            deleted = mark_activity_deleted(db, athlete.id, event.object_id)
+            job.activities_deleted = 1 if deleted else 0
+        else:
+            activity_payload, rate_limit_remaining = fetch_activity(db, athlete.id, event.object_id)
+            result = upsert_activity(db, athlete.id, activity_payload)
+            job.activities_fetched = 1
+            job.activities_created = 1 if result == "created" else 0
+            job.activities_updated = 1 if result == "updated" else 0
+            job.activities_unchanged = 1 if result == "unchanged" else 0
+            job.rate_limit_remaining = rate_limit_remaining
+
+        job.status = "succeeded"
+        job.finished_at = datetime.now(timezone.utc)
+        finish_webhook_event(db, event, "succeeded")
+        return event
+    except Exception as exc:
+        if job:
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.finished_at = datetime.now(timezone.utc)
+        event.status = "failed"
+        event.error_message = str(exc)
+        event.processed_at = datetime.now(timezone.utc)
+        db.commit()
+        return event
+
+
+def finish_webhook_event(
+    db: Session,
+    event: StravaWebhookEvent,
+    status_value: str,
+    error_message: str | None = None,
+) -> None:
+    event.status = status_value
+    event.error_message = error_message
+    event.processed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def connected_athlete_for_strava_owner(db: Session, owner_id: str) -> AthleteAccount | None:
+    return db.scalars(
+        select(AthleteAccount)
+        .join(StravaOAuthToken, StravaOAuthToken.athlete_account_id == AthleteAccount.id)
+        .where(
+            AthleteAccount.strava_athlete_id == owner_id,
+            StravaOAuthToken.revoked_at.is_(None),
+        )
+        .order_by(StravaOAuthToken.created_at.desc())
+    ).first()
+
+
+def fetch_activity(
+    db: Session,
+    athlete_account_id: str,
+    strava_activity_id: str,
+) -> tuple[dict[str, Any], int | None]:
+    access_token, _ = get_valid_access_token(db, athlete_account_id)
+    with httpx.Client(timeout=20) as client:
+        response = client.get(
+            ACTIVITY_URL.format(activity_id=strava_activity_id),
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError("Strava activity fetch failed.")
+
+    return response.json(), parse_rate_limit_remaining(
+        response.headers.get("x-ratelimit-usage"),
+        response.headers.get("x-ratelimit-limit"),
+    )
+
+
+def mark_activity_deleted(db: Session, athlete_account_id: str, strava_activity_id: str) -> bool:
+    activity = db.scalars(
+        select(StravaActivity).where(
+            StravaActivity.strava_activity_id == strava_activity_id,
+            StravaActivity.athlete_account_id == athlete_account_id,
+            StravaActivity.deleted_at.is_(None),
+        )
+    ).first()
+    if not activity:
+        return False
+    activity.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
 def upsert_activity(db: Session, athlete_account_id: str, payload: dict[str, Any]) -> str:
     strava_id = str(payload["id"])
     activity = db.scalars(
-        select(StravaActivity).where(StravaActivity.strava_activity_id == strava_id)
+        select(StravaActivity).where(
+            StravaActivity.strava_activity_id == strava_id,
+            StravaActivity.athlete_account_id == athlete_account_id,
+        )
     ).first()
     created = activity is None
     if activity is None:
@@ -304,19 +532,39 @@ def raw_payload_matches(
         return False
 
 
-def list_activities(db: Session, limit: int = 100) -> list[StravaActivity]:
+def list_activities(db: Session, athlete_account_id: str, limit: int = 100) -> list[StravaActivity]:
     return list(
         db.scalars(
             select(StravaActivity)
-            .where(StravaActivity.deleted_at.is_(None))
+            .where(
+                StravaActivity.athlete_account_id == athlete_account_id,
+                StravaActivity.deleted_at.is_(None),
+            )
             .order_by(StravaActivity.start_date_local.desc())
             .limit(limit)
         )
     )
 
 
-def list_jobs(db: Session, limit: int = 25) -> list[SyncJob]:
-    return list(db.scalars(select(SyncJob).order_by(SyncJob.started_at.desc()).limit(limit)))
+def list_jobs(db: Session, athlete_account_id: str, limit: int = 25) -> list[SyncJob]:
+    return list(
+        db.scalars(
+            select(SyncJob)
+            .where(SyncJob.athlete_account_id == athlete_account_id)
+            .order_by(SyncJob.started_at.desc())
+            .limit(limit)
+        )
+    )
+
+
+def connected_athlete_ids(db: Session) -> list[str]:
+    return list(
+        db.scalars(
+            select(StravaOAuthToken.athlete_account_id)
+            .where(StravaOAuthToken.revoked_at.is_(None))
+            .distinct()
+        )
+    )
 
 
 def parse_strava_datetime(value: str) -> datetime:

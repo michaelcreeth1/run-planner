@@ -3,10 +3,11 @@ from app.models.planning import (
     PlannedWorkout,
     PlannedWorkoutStep,
     TrainingWeek,
+    UserAccount,
     WeekGoal,
     WorkoutTemplate,
 )
-from app.models.strava import StravaActivity, StravaOAuthToken, SyncJob
+from app.models.strava import StravaActivity, StravaOAuthToken, StravaWebhookEvent, SyncJob
 
 __all__ = [
     "AthleteAccount",
@@ -14,8 +15,10 @@ __all__ = [
     "PlannedWorkoutStep",
     "StravaActivity",
     "StravaOAuthToken",
+    "StravaWebhookEvent",
     "SyncJob",
     "TrainingWeek",
+    "UserAccount",
     "WeekGoal",
     "WorkoutTemplate",
 ]

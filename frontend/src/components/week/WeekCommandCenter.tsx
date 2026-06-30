@@ -6,7 +6,6 @@ import {
   Edit3,
   Flag,
   Plus,
-  RefreshCw,
   ShieldAlert,
   Target,
   Trash2
@@ -227,9 +226,6 @@ function GoalStatusPill({
 function iconForAction(icon?: string) {
   if (icon === "copy") {
     return Copy;
-  }
-  if (icon === "refresh") {
-    return RefreshCw;
   }
   if (icon === "calendar") {
     return CalendarDays;

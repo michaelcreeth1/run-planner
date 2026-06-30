@@ -35,34 +35,48 @@ def run_strava_poll() -> None:
         return
 
     with SessionLocal() as db:
-        if not strava.get_token(db):
+        athlete_ids = strava.connected_athlete_ids(db)
+        if not athlete_ids:
             logger.info("Strava sync skipped; account is not connected")
             return
 
-        try:
-            job = strava.backfill_activities(
-                db,
-                days=settings.strava_sync_lookback_days,
-                job_type="worker_incremental_poll",
-            )
-        except HTTPException as exc:
-            logger.warning("Strava sync failed: %s", exc.detail)
-            return
-        except Exception:
-            logger.exception("Strava sync failed unexpectedly")
-            return
+        for athlete_id in athlete_ids:
+            try:
+                job = strava.backfill_activities(
+                    db,
+                    athlete_id,
+                    days=settings.strava_sync_lookback_days,
+                    job_type="worker_incremental_poll",
+                )
+            except HTTPException as exc:
+                logger.warning("Strava sync failed for athlete %s: %s", athlete_id, exc.detail)
+                continue
+            except Exception:
+                logger.exception("Strava sync failed unexpectedly for athlete %s", athlete_id)
+                continue
 
-    logger.info(
-        (
-            "Strava sync succeeded; fetched=%s created=%s updated=%s unchanged=%s "
-            "rate_limit_remaining=%s"
-        ),
-        job.activities_fetched,
-        job.activities_created,
-        job.activities_updated,
-        job.activities_unchanged,
-        job.rate_limit_remaining,
-    )
+            logger.info(
+                (
+                    "Strava sync succeeded for athlete %s; fetched=%s created=%s "
+                    "updated=%s unchanged=%s rate_limit_remaining=%s"
+                ),
+                athlete_id,
+                job.activities_fetched,
+                job.activities_created,
+                job.activities_updated,
+                job.activities_unchanged,
+                job.rate_limit_remaining,
+            )
+
+
+def run_strava_webhook_queue() -> None:
+    if not settings.strava_webhook_enabled:
+        return
+
+    with SessionLocal() as db:
+        events = strava.process_pending_webhook_events(db)
+        if events:
+            logger.info("Processed %s pending Strava webhook events", len(events))
 
 
 def run_worker() -> None:
@@ -76,6 +90,7 @@ def run_worker() -> None:
         settings.strava_sync_lookback_days,
     )
     while True:
+        run_strava_webhook_queue()
         run_strava_poll()
         time.sleep(interval_seconds)
 

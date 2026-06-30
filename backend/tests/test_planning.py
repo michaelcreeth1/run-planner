@@ -18,6 +18,14 @@ from app.schemas.planning import (
 from app.services import planning
 
 
+def login(client: TestClient, username: str = "michael", password: str = "test-password") -> None:
+    response = client.post(
+        "/api/auth/session/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+
+
 def make_session() -> Session:
     engine = create_engine(
         "sqlite://",
@@ -31,6 +39,7 @@ def make_session() -> Session:
 
 def test_current_week_and_workout_crud() -> None:
     with TestClient(app) as client:
+        login(client)
         week_response = client.get("/api/weeks/current")
         assert week_response.status_code == 200
         week = week_response.json()
@@ -77,6 +86,45 @@ def test_current_week_and_workout_crud() -> None:
         assert delete_response.status_code == 204
         clone_delete_response = client.delete(f"/api/planned-workouts/{duplicate['id']}")
         assert clone_delete_response.status_code == 204
+
+
+def test_authenticated_users_are_isolated() -> None:
+    with TestClient(app) as client:
+        login(client)
+        admin_week = client.get("/api/weeks/current").json()
+        create_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": admin_week["weekStartDate"],
+                "title": "Admin easy 4",
+                "plannedDistance": 4,
+            },
+        )
+        assert create_response.status_code == 201
+        admin_workout = create_response.json()
+
+        user_response = client.post(
+            "/api/auth/users",
+            json={
+                "username": "bob",
+                "displayName": "Bob Runner",
+                "password": "bob-password",
+                "initialProfileName": "Bob",
+                "timezone": "America/Denver",
+            },
+        )
+        assert user_response.status_code == 201
+
+        login(client, "bob", "bob-password")
+        bob_week_response = client.get("/api/weeks/current")
+        assert bob_week_response.status_code == 200
+        bob_week = bob_week_response.json()
+        assert bob_week["id"] != admin_week["id"]
+        assert bob_week["plannedMileage"] == 0
+
+        assert client.get(f"/api/planned-workouts/{admin_workout['id']}").status_code == 404
+        update_response = client.patch(f"/api/weeks/{admin_week['id']}", json={"notes": "nope"})
+        assert update_response.status_code == 404
 
 
 def test_training_timeline_has_no_bounds_without_real_data() -> None:
@@ -265,7 +313,7 @@ def test_past_week_goal_evaluation_uses_actual_activities() -> None:
     try:
         athlete = planning.ensure_default_athlete(db)
         week = planning.get_or_create_week(db, date(2024, 4, 1))
-        mileage_goal = planning.create_week_goal(
+        planning.create_week_goal(
             db,
             week.id,
             WeekGoalCreate(

@@ -629,9 +629,7 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
 
   if (mode === "execution") {
     return [
-      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" },
-      { id: "sync", label: "Sync", variant: "secondary", icon: "refresh" },
-      { id: "edit_goals", label: "Edit goals", variant: "ghost", icon: "target" }
+      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }
     ];
   }
 

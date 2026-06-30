@@ -38,13 +38,20 @@ class Settings(BaseSettings):
     strava_sync_enabled: bool = Field(default=True, alias="STRAVA_SYNC_ENABLED")
     strava_sync_interval_seconds: int = Field(default=30 * 60, alias="STRAVA_SYNC_INTERVAL_SECONDS")
     strava_sync_lookback_days: int = Field(default=14, alias="STRAVA_SYNC_LOOKBACK_DAYS")
+    strava_webhook_enabled: bool = Field(default=False, alias="STRAVA_WEBHOOK_ENABLED")
+    strava_webhook_verify_token: str = Field(default="", alias="STRAVA_WEBHOOK_VERIFY_TOKEN")
+    strava_webhook_subscription_id: str = Field(
+        default="",
+        alias="STRAVA_WEBHOOK_SUBSCRIPTION_ID",
+    )
+    strava_webhook_max_attempts: int = Field(default=5, alias="STRAVA_WEBHOOK_MAX_ATTEMPTS")
 
     ai_provider: str = Field(default="stub", alias="AI_PROVIDER")
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
 
     frontend_min_version: str = Field(default="0.1.0", alias="FRONTEND_MIN_VERSION")
     backend_version: str = Field(default="0.1.0", alias="BACKEND_VERSION")
-    schema_version: str = Field(default="2026_06_22_004", alias="SCHEMA_VERSION")
+    schema_version: str = Field(default="2026_06_29_006", alias="SCHEMA_VERSION")
     force_reload: bool = Field(default=False, alias="FORCE_RELOAD")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

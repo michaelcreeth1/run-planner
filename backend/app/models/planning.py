@@ -15,6 +15,7 @@ class AthleteAccount(Base):
     __tablename__ = "athlete_accounts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("user_accounts.id"))
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     timezone: Mapped[str] = mapped_column(String, nullable=False, default="America/Denver")
     strava_athlete_id: Mapped[str | None] = mapped_column(String)
@@ -26,6 +27,25 @@ class AthleteAccount(Base):
     )
 
     weeks: Mapped[list["TrainingWeek"]] = relationship(back_populates="athlete")
+
+
+class UserAccount(Base):
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    is_admin: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_disabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    athlete_accounts: Mapped[list[AthleteAccount]] = relationship()
 
 
 class TrainingWeek(Base):

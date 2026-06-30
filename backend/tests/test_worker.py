@@ -32,7 +32,7 @@ def test_run_strava_poll_skips_without_connected_token(monkeypatch) -> None:
     monkeypatch.setattr(worker.settings, "strava_sync_enabled", True)
     monkeypatch.setattr(worker.strava, "strava_configured", lambda: True)
     monkeypatch.setattr(worker, "SessionLocal", FakeSession)
-    monkeypatch.setattr(worker.strava, "get_token", lambda _db: None)
+    monkeypatch.setattr(worker.strava, "connected_athlete_ids", lambda _db: [])
     monkeypatch.setattr(
         worker.strava,
         "backfill_activities",
@@ -54,17 +54,19 @@ def test_run_strava_poll_runs_incremental_backfill(monkeypatch) -> None:
         rate_limit_remaining=99,
     )
 
-    def fake_backfill(_db, days: int, job_type: str):
-        calls.append({"days": days, "job_type": job_type})
+    def fake_backfill(_db, athlete_id: str, days: int, job_type: str):
+        calls.append({"athlete_id": athlete_id, "days": days, "job_type": job_type})
         return job
 
     monkeypatch.setattr(worker.settings, "strava_sync_enabled", True)
     monkeypatch.setattr(worker.settings, "strava_sync_lookback_days", 14)
     monkeypatch.setattr(worker.strava, "strava_configured", lambda: True)
     monkeypatch.setattr(worker, "SessionLocal", FakeSession)
-    monkeypatch.setattr(worker.strava, "get_token", lambda _db: object())
+    monkeypatch.setattr(worker.strava, "connected_athlete_ids", lambda _db: ["athlete-1"])
     monkeypatch.setattr(worker.strava, "backfill_activities", fake_backfill)
 
     worker.run_strava_poll()
 
-    assert calls == [{"days": 14, "job_type": "worker_incremental_poll"}]
+    assert calls == [
+        {"athlete_id": "athlete-1", "days": 14, "job_type": "worker_incremental_poll"}
+    ]

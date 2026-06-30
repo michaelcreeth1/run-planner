@@ -18,7 +18,11 @@ scripts/deploy-remote.sh
 ```
 
 That syncs the local checkout to `/home/mike/compose/run-planner` on the Docker
-host, preserves the host-local `.env`, then runs `scripts/deploy.sh` there.
+host, including the local `.env` as the deploy configuration, then runs
+`scripts/deploy.sh` there.
+
+The local `.env` is the deploy source of truth. For remote deploys, use a
+Docker-network or remote-reachable database host rather than `localhost`.
 
 The checked-in copy of this route lives at
 [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile). Keep the shared live
@@ -35,7 +39,9 @@ run.home.arpa, run.creeth.net {
 }
 ```
 
-Keep the hostname private behind Tailscale for MVP. Public Strava webhooks are deferred.
+If Strava webhooks are enabled, `https://run.creeth.net/api/webhooks/strava`
+must be reachable from Strava. Keep any non-webhook admin traffic private where
+possible.
 
 Set these environment values when serving through Caddy:
 
@@ -43,6 +49,9 @@ Set these environment values when serving through Caddy:
 APP_BASE_URL=https://run.creeth.net
 API_BASE_URL=https://run.creeth.net
 STRAVA_REDIRECT_URI=https://run.creeth.net/api/auth/strava/callback
+STRAVA_WEBHOOK_ENABLED=true
+STRAVA_WEBHOOK_VERIFY_TOKEN=<long random string>
+STRAVA_WEBHOOK_SUBSCRIPTION_ID=<subscription id from Strava>
 SESSION_COOKIE_SECURE=true
 CORS_ORIGINS=https://run.home.arpa,https://run.creeth.net
 VITE_API_BASE_URL=

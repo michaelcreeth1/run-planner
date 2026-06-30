@@ -34,15 +34,22 @@ The worker and API share the same codebase and database URL. The database lives 
 
 ## Access
 
-Phase 0 assumes private access through local network or Tailscale. The API includes signed-cookie session endpoints:
+Phase 0 assumes private access through local network or Tailscale. The API uses DB-backed
+user accounts, signed session cookies, and an active athlete profile for data isolation.
+`APP_USERNAME` and `APP_PASSWORD` bootstrap the first admin user when no users exist.
 
 ```http
 GET  /api/auth/session/status
 POST /api/auth/session/login
 POST /api/auth/session/logout
+POST /api/auth/session/profile
+POST /api/auth/users
+POST /api/auth/profiles
 ```
 
-Set `APP_PASSWORD` before relying on local app login outside development.
+Set `APP_PASSWORD` before first startup. Existing single-user athlete data is assigned to
+the bootstrap admin, and all planning, activity, sync, and Strava routes require an
+authenticated owned profile.
 
 ## Homelab Shape
 
@@ -88,9 +95,13 @@ POST /api/sync/strava/backfill
 POST /api/sync/strava/incremental
 GET  /api/sync/jobs
 GET  /api/activities
+GET  /api/webhooks/strava
+POST /api/webhooks/strava
 ```
 
-Tokens are encrypted before storage. The current sync implementation supports manual backfill and worker-driven incremental polling. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. Webhooks remain deferred.
+Tokens are encrypted before storage. The sync implementation supports manual backfill, worker-driven reconciliation polling, and Strava webhooks. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. In webhook-enabled deployments, use Strava's app-level push subscription for normal activity freshness and stretch the worker poll interval to a slower reconciliation cadence.
+
+The public webhook callback validates Strava's `hub.challenge` request with `STRAVA_WEBHOOK_VERIFY_TOKEN`. Pushed activity events are stored in `strava_webhook_events`, routed by Strava `owner_id` to `athlete_accounts.strava_athlete_id`, and processed after the API response. The worker retries queued or failed webhook events.
 
 ## Migrations
 
@@ -103,6 +114,7 @@ SQL migrations live in `backend/migrations` and are applied at API startup throu
 - `workout_templates`
 - `strava_oauth_tokens`
 - `strava_activities`
+- `strava_webhook_events`
 - `sync_jobs`
 
 The runner records applied files in `schema_migrations`.
