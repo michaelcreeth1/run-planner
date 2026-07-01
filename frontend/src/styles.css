@@ -3308,6 +3308,753 @@ dt {
   margin: 0;
 }
 
+.analytics-view {
+  display: grid;
+  gap: 14px;
+}
+
+.analytics-top-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
+}
+
+.analytics-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planning-brief,
+.load-corridor,
+.analytics-panel,
+.analytics-empty-state {
+  background: var(--bg-surface);
+  border: 1px solid rgba(203, 213, 225, 0.78);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+  min-width: 0;
+  padding: 16px;
+}
+
+.planning-brief {
+  display: grid;
+  gap: 12px;
+  position: relative;
+}
+
+.planning-brief::before {
+  background: var(--success);
+  border-radius: 999px;
+  content: "";
+  height: 3px;
+  left: 16px;
+  position: absolute;
+  right: 16px;
+  top: 0;
+}
+
+.planning-brief--watch::before {
+  background: var(--warning);
+}
+
+.planning-brief--revise::before {
+  background: var(--danger);
+}
+
+.planning-brief header,
+.load-corridor header,
+.analytics-panel-header {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.planning-brief h1 {
+  font-size: 1.45rem;
+  line-height: 1.12;
+  max-width: 760px;
+}
+
+.planning-brief header span:not(.risk-badge) {
+  color: var(--text-secondary);
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 750;
+  margin-top: 5px;
+}
+
+.planning-brief p {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.planning-brief > strong {
+  color: var(--text-primary);
+  display: block;
+  font-size: 0.98rem;
+  line-height: 1.4;
+}
+
+.risk-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.risk-badge--clear {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.risk-badge--watch {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.risk-badge--revise {
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.planning-signal-list {
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  display: grid;
+  gap: 0;
+}
+
+.planning-signal {
+  display: grid;
+  gap: 3px;
+  padding: 10px 0 0;
+}
+
+.planning-signal + .planning-signal {
+  border-top: 1px solid rgba(226, 232, 240, 0.72);
+}
+
+.planning-signal span {
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.planning-signal small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.load-corridor {
+  display: grid;
+  gap: 14px;
+}
+
+.load-corridor h2,
+.analytics-panel-header h2 {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.load-corridor header svg,
+.analytics-panel-header svg {
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.load-corridor-chart {
+  background: #f8fafc;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.82);
+  min-height: 216px;
+  overflow: hidden;
+  padding: 16px 12px 28px;
+  position: relative;
+}
+
+.load-corridor-bars {
+  align-items: end;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(auto-fit, minmax(24px, 1fr));
+  height: 170px;
+  position: relative;
+  z-index: 1;
+}
+
+.load-week {
+  align-items: stretch;
+  display: grid;
+  gap: 6px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.load-week-bars {
+  align-items: end;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.load-week-actual,
+.load-week-planned {
+  border-radius: 999px 999px 2px 2px;
+  display: block;
+  min-height: 0;
+}
+
+.load-week-actual {
+  background: var(--success);
+  opacity: 0.78;
+}
+
+.load-week-planned {
+  background: var(--primary);
+  opacity: 0.78;
+}
+
+.load-week-planned--watch {
+  background: var(--warning);
+}
+
+.load-week-planned--revise {
+  background: var(--danger);
+}
+
+.load-week small {
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.load-week--future .load-week-actual {
+  background: rgba(148, 163, 184, 0.34);
+}
+
+.load-corridor-line {
+  border-top: 1px dashed;
+  left: 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+}
+
+.load-corridor-line--watch {
+  border-color: rgba(245, 158, 11, 0.84);
+}
+
+.load-corridor-line--revise {
+  border-color: rgba(239, 68, 68, 0.78);
+}
+
+.load-band-summary {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.load-band-summary span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.load-band-summary strong {
+  font-size: 0.92rem;
+}
+
+.analytics-panel {
+  align-content: start;
+  display: grid;
+  gap: 14px;
+}
+
+.future-fit-list,
+.long-run-strips,
+.intensity-matrix,
+.goal-reliability-list {
+  display: grid;
+  gap: 8px;
+}
+
+.future-fit-row {
+  align-items: center;
+  border-top: 1px solid rgba(226, 232, 240, 0.86);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  min-height: 48px;
+  padding-top: 8px;
+}
+
+.future-fit-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.future-fit-row strong,
+.future-fit-row span,
+.goal-reliability-row strong,
+.goal-reliability-row span {
+  display: block;
+}
+
+.future-fit-row span,
+.goal-reliability-row span {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  margin-top: 2px;
+}
+
+.risk-dot {
+  align-items: center;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.risk-dot i {
+  border-radius: 999px;
+  display: block;
+  height: 9px;
+  width: 9px;
+}
+
+.risk-dot small {
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.risk-dot--clear i,
+.metric-cell--clear {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.risk-dot--watch i,
+.metric-cell--watch {
+  background: #f59e0b;
+  color: #92400e;
+}
+
+.risk-dot--revise i,
+.metric-cell--revise {
+  background: #ef4444;
+  color: #be123c;
+}
+
+.risk-dot--clear i {
+  background: var(--success);
+}
+
+.long-run-strip {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 52px minmax(0, 1fr) 54px 42px;
+}
+
+.long-run-strip span,
+.long-run-strip small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.long-run-strip > div {
+  background: #f1f5f9;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.long-run-strip i {
+  background: var(--success);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.long-run-strip--watch i {
+  background: var(--warning);
+}
+
+.long-run-strip--revise i {
+  background: var(--danger);
+}
+
+.long-run-strip strong {
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.intensity-week {
+  border-top: 1px solid rgba(226, 232, 240, 0.86);
+  display: grid;
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.intensity-week:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.intensity-week > span {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.intensity-cells {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-cell {
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.48);
+  display: grid;
+  gap: 1px;
+  min-height: 42px;
+  padding: 6px;
+  text-align: center;
+}
+
+.metric-cell strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.metric-cell small,
+.intensity-week small {
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+
+.goal-reliability-row {
+  align-items: center;
+  border-top: 1px solid rgba(226, 232, 240, 0.86);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 118px minmax(0, 1fr) 76px;
+  min-height: 42px;
+  padding-top: 8px;
+}
+
+.goal-reliability-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.goal-reliability-row > span {
+  font-weight: 800;
+  text-align: right;
+}
+
+.goal-reliability-bar {
+  background: #f1f5f9;
+  border-radius: 999px;
+  display: flex;
+  height: 9px;
+  overflow: hidden;
+}
+
+.goal-reliability-bar i {
+  display: block;
+}
+
+.goal-reliability-bar-success {
+  background: var(--success);
+}
+
+.goal-reliability-bar-warning {
+  background: var(--warning);
+}
+
+.goal-reliability-bar-muted {
+  background: var(--accent-slate);
+}
+
+.analytics-empty-copy {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.analytics-empty-state {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  max-width: 760px;
+}
+
+.analytics-empty-state svg {
+  color: var(--primary);
+}
+
+.analytics-empty-state h2 {
+  font-size: 1.1rem;
+}
+
+.analytics-empty-state span {
+  color: var(--text-secondary);
+  display: block;
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.mileage-chart-panel {
+  background: var(--bg-surface);
+  border: 1px solid rgba(203, 213, 225, 0.78);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.mileage-chart-header {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.mileage-chart-header h1 {
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.mileage-chart-header span {
+  color: var(--text-secondary);
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.mileage-chart-header > svg {
+  color: var(--primary);
+  margin-top: 3px;
+}
+
+.mileage-chart-controls {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.analytics-segmented-control {
+  display: grid;
+  gap: 5px;
+}
+
+.analytics-segmented-control > span {
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.analytics-segmented-control > div {
+  background: #f8fafc;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: inline-flex;
+  padding: 3px;
+}
+
+.analytics-segmented-control button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 850;
+  min-height: 28px;
+  min-width: 38px;
+  padding: 0 8px;
+}
+
+.analytics-segmented-control button.active {
+  background: var(--text-primary);
+  color: var(--bg-surface);
+}
+
+.analytics-segmented-control button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  outline: 0;
+}
+
+.mileage-line-chart {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mileage-line-chart-summary {
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 10px;
+}
+
+.mileage-line-chart-summary > div {
+  min-width: 0;
+  padding-right: 14px;
+}
+
+.mileage-line-chart-summary > div + div {
+  box-shadow: inset 1px 0 0 rgba(226, 232, 240, 0.86);
+  padding-left: 14px;
+}
+
+.mileage-line-chart-summary span {
+  color: var(--text-secondary);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mileage-line-chart-summary strong {
+  display: block;
+  font-size: 1rem;
+  margin-top: 4px;
+}
+
+.mileage-line-chart svg {
+  background: #f8fafc;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.86);
+  display: block;
+  height: auto;
+  min-height: 300px;
+  width: 100%;
+}
+
+.mileage-chart-plot {
+  fill: #ffffff;
+}
+
+.mileage-chart-grid {
+  stroke: #e2e8f0;
+  stroke-width: 1;
+}
+
+.mileage-chart-baseline {
+  stroke: #64748b;
+  stroke-dasharray: 6 6;
+  stroke-width: 1.5;
+}
+
+.mileage-chart-anchor {
+  stroke: #94a3b8;
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+}
+
+.mileage-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.mileage-line--actual {
+  stroke: var(--success);
+}
+
+.mileage-line--planned {
+  stroke: var(--primary);
+  stroke-dasharray: 8 7;
+}
+
+.mileage-point {
+  fill: var(--bg-surface);
+  stroke-width: 3;
+}
+
+.mileage-point--actual {
+  stroke: var(--success);
+}
+
+.mileage-point--planned {
+  stroke: var(--primary);
+}
+
+.mileage-chart-y-label,
+.mileage-chart-x-label {
+  fill: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.mileage-chart-y-label {
+  text-anchor: end;
+}
+
+.mileage-chart-x-label {
+  text-anchor: middle;
+}
+
+.mileage-chart-legend {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.mileage-chart-legend span {
+  align-items: center;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.mileage-chart-legend i {
+  border-radius: 999px;
+  display: block;
+  height: 4px;
+  width: 22px;
+}
+
+.mileage-chart-legend .actual {
+  background: var(--success);
+}
+
+.mileage-chart-legend .planned {
+  background: var(--primary);
+}
+
+.mileage-chart-legend .baseline {
+  background: var(--accent-slate);
+}
+
 .settings-row {
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
@@ -3579,6 +4326,53 @@ dt {
     grid-template-columns: 1fr;
   }
 
+  .analytics-top-grid,
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mileage-chart-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mileage-chart-header > svg {
+    justify-self: end;
+  }
+
+  .mileage-chart-controls {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .planning-brief,
+  .load-corridor,
+  .analytics-panel,
+  .mileage-chart-panel {
+    padding: 14px;
+  }
+
+  .planning-brief header,
+  .load-corridor header,
+  .analytics-panel-header {
+    align-items: start;
+  }
+
+  .load-corridor-bars {
+    gap: 5px;
+  }
+
+  .future-fit-row {
+    grid-template-columns: minmax(0, 1fr) repeat(4, 34px);
+  }
+
+  .risk-dot small {
+    font-size: 0.58rem;
+  }
+
+  .goal-reliability-row {
+    grid-template-columns: minmax(88px, 0.55fr) minmax(0, 1fr) 64px;
+  }
+
   .editor-panel {
     max-width: none;
     width: 100%;
@@ -3646,6 +4440,58 @@ dt {
   .week-action-button {
     flex: 1 1 140px;
     justify-content: center;
+  }
+
+  .planning-brief h1 {
+    font-size: 1.22rem;
+  }
+
+  .mileage-chart-header h1 {
+    font-size: 1.24rem;
+  }
+
+  .load-corridor-chart {
+    padding-inline: 8px;
+  }
+
+  .mileage-line-chart-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .mileage-line-chart-summary > div,
+  .mileage-line-chart-summary > div + div {
+    box-shadow: none;
+    padding: 8px 0 0;
+  }
+
+  .mileage-line-chart-summary > div + div {
+    border-top: 1px solid rgba(226, 232, 240, 0.86);
+  }
+
+  .mileage-line-chart svg {
+    min-height: 240px;
+  }
+
+  .load-week small {
+    font-size: 0.56rem;
+  }
+
+  .future-fit-row {
+    gap: 7px;
+    grid-template-columns: minmax(0, 1fr) repeat(4, 28px);
+  }
+
+  .long-run-strip {
+    grid-template-columns: 44px minmax(0, 1fr) 46px 34px;
+  }
+
+  .goal-reliability-row {
+    align-items: start;
+    grid-template-columns: 1fr;
+  }
+
+  .goal-reliability-row > span {
+    text-align: left;
   }
 }
 

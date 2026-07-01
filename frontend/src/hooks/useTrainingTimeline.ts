@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { parseDate, startOfWeek, toDateInputValue } from "../lib/dates";
 
 export type TrainingTimelineIndex = {
   years: TimelineYear[];
@@ -73,23 +74,6 @@ type UseTrainingTimelineOptions = {
   weekStack: Record<string, TimelineWeekSummary>;
 };
 
-const MOCK_RACES: Array<Omit<TimelineRaceMarker, "weekStartDate">> = [
-  {
-    id: "rockin-river-5k-2026",
-    name: "Rockin' on the River 5k",
-    date: "2026-04-19",
-    distance: "5k",
-    priority: "B"
-  },
-  {
-    id: "super-sunday-5k-2026",
-    name: "Super Sunday 5k",
-    date: "2026-02-08",
-    distance: "5k",
-    priority: "C"
-  }
-];
-
 export function useTrainingTimeline({
   currentWeekStartDate,
   selectedWeekStartDate,
@@ -113,10 +97,7 @@ export function useTrainingTimeline({
     const selectedYear = parseDate(selectedWeekStartDate).getFullYear();
     const startYear = parseDate(startDate).getFullYear();
     const endYear = parseDate(endDate).getFullYear();
-    const races = MOCK_RACES.map((race) => ({
-      ...race,
-      weekStartDate: startOfWeek(parseDate(race.date))
-    }));
+    const races: TimelineRaceMarker[] = [];
     const monthSummaryMap = new Map(
       timelineSummary?.months.map((month) => [`${month.year}-${month.month}`, month]) ?? []
     );
@@ -258,24 +239,4 @@ function isDateValue(value: string | null | undefined): value is string {
 function isSameYearMonth(dateValue: string, year: number, month: number) {
   const date = parseDate(dateValue);
   return date.getFullYear() === year && date.getMonth() + 1 === month;
-}
-
-function startOfWeek(date: Date) {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  copy.setDate(copy.getDate() + offset);
-  return toDateInputValue(copy);
-}
-
-function parseDate(dateValue: string) {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }

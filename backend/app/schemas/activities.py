@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def to_camel(value: str) -> str:
@@ -23,7 +23,7 @@ class StravaStatus(ApiModel):
 
 
 class StravaBackfillRequest(ApiModel):
-    days: int = 180
+    days: int = Field(default=180, ge=1, le=365)
 
 
 class StravaActivityRead(ApiModel):

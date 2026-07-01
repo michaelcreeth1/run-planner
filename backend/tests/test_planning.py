@@ -1,13 +1,14 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base
+from app.db.session import Base, SessionLocal
 from app.main import app
-from app.models import PlannedWorkoutStep, StravaActivity
+from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek
 from app.schemas.planning import (
     PlannedWorkoutCreate,
     PlanWeekGoal,
@@ -127,6 +128,58 @@ def test_authenticated_users_are_isolated() -> None:
         assert update_response.status_code == 404
 
 
+def test_get_week_does_not_create_empty_week() -> None:
+    with TestClient(app) as client:
+        login(client)
+        response = client.get("/api/weeks/2098-01-06")
+        assert response.status_code == 200
+        week = response.json()
+        assert week["id"].startswith("virtual-week:")
+
+        with SessionLocal() as db:
+            persisted_week = db.scalars(
+                select(TrainingWeek).where(
+                    TrainingWeek.week_start_date == date.fromisoformat(week["weekStartDate"])
+                )
+            ).first()
+            assert persisted_week is None
+
+
+def test_save_week_plan_with_virtual_week_id_creates_real_week() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/2098-02-03").json()
+        assert week["id"].startswith("virtual-week:")
+
+        response = client.put(
+            f"/api/weeks/{week['id']}/plan",
+            json={
+                "purpose": "Aerobic build",
+                "workouts": [
+                    {
+                        "plannedDate": week["weekStartDate"],
+                        "title": "Easy 5",
+                        "plannedDistance": 5,
+                    }
+                ],
+                "goals": [],
+            },
+        )
+
+        assert response.status_code == 200
+        saved_week = response.json()
+        assert not saved_week["id"].startswith("virtual-week:")
+        assert saved_week["plannedMileage"] == 5
+
+        with SessionLocal() as db:
+            persisted_week = db.scalars(
+                select(TrainingWeek).where(
+                    TrainingWeek.week_start_date == date.fromisoformat(week["weekStartDate"])
+                )
+            ).first()
+            assert persisted_week is not None
+
+
 def test_training_timeline_has_no_bounds_without_real_data() -> None:
     db = make_session()
     try:
@@ -222,6 +275,45 @@ def test_training_timeline_counts_planned_workouts() -> None:
         db.close()
 
 
+def test_planned_mileage_excludes_non_run_workout_distance() -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2024, 2, 14),
+                title="Easy 5",
+                sport="run",
+                planned_distance=5,
+            ),
+            athlete.id,
+        )
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2024, 2, 15),
+                title="Bike 20",
+                sport="cross_training",
+                workout_type="other",
+                intensity_category="moderate",
+                planned_distance=20,
+            ),
+            athlete.id,
+        )
+
+        week = planning.get_or_create_week(db, date(2024, 2, 12), athlete.id)
+        serialized = planning.serialize_week(week, db)
+        timeline = planning.training_timeline(db, athlete.id)
+
+        assert week.planned_mileage == 5
+        assert serialized["planned_mileage"] == 5
+        assert serialized["long_run_distance"] == 5
+        assert timeline["months"][0]["planned_miles"] == 5
+    finally:
+        db.close()
+
+
 def test_training_timeline_counts_strava_activities() -> None:
     db = make_session()
     try:
@@ -254,6 +346,38 @@ def test_training_timeline_counts_strava_activities() -> None:
                 "actual_miles": 4.2,
             }
         ]
+    finally:
+        db.close()
+
+
+def test_today_for_timezone_uses_athlete_local_date() -> None:
+    instant = datetime(2026, 7, 1, 5, 30, tzinfo=timezone.utc)
+
+    assert planning.today_for_timezone("America/Denver", instant) == date(2026, 6, 30)
+    assert planning.today_for_timezone("Pacific/Kiritimati", instant) == date(2026, 7, 1)
+
+
+def test_week_state_uses_athlete_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        athlete.timezone = "Pacific/Kiritimati"
+        db.commit()
+        week = planning.get_or_create_week(db, date(2026, 7, 1), athlete.id)
+
+        def fake_today_for_timezone(
+            timezone_name: str | None,
+            now: datetime | None = None,
+        ) -> date:
+            assert now is None
+            assert timezone_name == "Pacific/Kiritimati"
+            return date(2026, 7, 1)
+
+        monkeypatch.setattr(planning, "today_for_timezone", fake_today_for_timezone)
+
+        assert planning.get_week_state(week) == "current"
+        serialized = planning.serialize_virtual_week(db, date(2026, 7, 1), athlete.id)
+        assert serialized["week_state"] == "current"
     finally:
         db.close()
 

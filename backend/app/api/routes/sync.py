@@ -20,12 +20,24 @@ def strava_backfill(
     db: DbSession,
     profile: CurrentProfile,
 ):
-    return strava.backfill_activities(db, profile.id, payload.days, job_type="initial_backfill")
+    return strava.backfill_activities(
+        db,
+        profile.id,
+        payload.days,
+        job_type="initial_backfill",
+        enforce_manual_guard=True,
+    )
 
 
 @router.post("/strava/incremental", response_model=SyncJobRead)
 def strava_incremental(db: DbSession, profile: CurrentProfile):
-    return strava.backfill_activities(db, profile.id, 14, job_type="incremental_poll")
+    return strava.backfill_activities(
+        db,
+        profile.id,
+        14,
+        job_type="incremental_poll",
+        enforce_manual_guard=True,
+    )
 
 
 @router.get("/jobs", response_model=list[SyncJobRead])

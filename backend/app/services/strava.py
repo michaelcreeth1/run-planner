@@ -19,6 +19,10 @@ TOKEN_URL = "https://www.strava.com/oauth/token"
 ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 ACTIVITY_URL = "https://www.strava.com/api/v3/activities/{activity_id}"
 REQUIRED_SCOPES = ["read", "activity:read", "activity:read_all"]
+MAX_BACKFILL_DAYS = 365
+MANUAL_SYNC_COOLDOWN_SECONDS = 5 * 60
+RUNNING_SYNC_STALE_SECONDS = 60 * 60
+MANUAL_SYNC_JOB_TYPES = {"initial_backfill", "incremental_poll"}
 
 
 def strava_configured() -> bool:
@@ -223,7 +227,12 @@ def backfill_activities(
     athlete_account_id: str,
     days: int = 180,
     job_type: str = "initial_backfill",
+    enforce_manual_guard: bool = False,
 ) -> SyncJob:
+    days = validate_backfill_days(days)
+    if enforce_manual_guard:
+        ensure_manual_sync_allowed(db, athlete_account_id)
+
     job = SyncJob(athlete_account_id=athlete_account_id, job_type=job_type, status="running")
     db.add(job)
     db.commit()
@@ -285,6 +294,55 @@ def backfill_activities(
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
         raise
+
+
+def validate_backfill_days(days: int) -> int:
+    if days < 1 or days > MAX_BACKFILL_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Strava backfill days must be between 1 and {MAX_BACKFILL_DAYS}.",
+        )
+    return days
+
+
+def ensure_manual_sync_allowed(db: Session, athlete_account_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    manual_jobs = list(
+        db.scalars(
+            select(SyncJob)
+            .where(
+                SyncJob.athlete_account_id == athlete_account_id,
+                SyncJob.job_type.in_(MANUAL_SYNC_JOB_TYPES),
+            )
+            .order_by(SyncJob.started_at.desc())
+            .limit(10)
+        )
+    )
+
+    for job in manual_jobs:
+        started_at = ensure_utc(job.started_at)
+        if (
+            job.status == "running"
+            and started_at >= now - timedelta(seconds=RUNNING_SYNC_STALE_SECONDS)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A Strava sync is already running for this profile.",
+            )
+
+    for job in manual_jobs:
+        started_at = ensure_utc(job.started_at)
+        if started_at >= now - timedelta(seconds=MANUAL_SYNC_COOLDOWN_SECONDS):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Manual Strava sync is throttled. Try again in a few minutes.",
+            )
+
+
+def ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def valid_webhook_subscription(subscription_id: int | str | None) -> bool:
