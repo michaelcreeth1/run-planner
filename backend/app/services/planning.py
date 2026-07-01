@@ -1,5 +1,6 @@
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -44,6 +45,8 @@ QUALITY_KEYWORDS = (
     "repeat",
     "fartlek",
 )
+VIRTUAL_WEEK_ID_PREFIX = "virtual-week:"
+VIRTUAL_GOAL_ID_PREFIX = "virtual-goal:"
 
 
 def week_start_for(day: date) -> date:
@@ -52,6 +55,46 @@ def week_start_for(day: date) -> date:
 
 def week_end_for(week_start: date) -> date:
     return week_start + timedelta(days=6)
+
+
+def today_for_timezone(timezone_name: str | None, now: datetime | None = None) -> date:
+    if timezone_name:
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        try:
+            return instant.astimezone(ZoneInfo(timezone_name)).date()
+        except ZoneInfoNotFoundError:
+            pass
+    if now is not None:
+        return now.date()
+    return date.today()
+
+
+def virtual_week_id(athlete_account_id: str, week_start: date) -> str:
+    return f"{VIRTUAL_WEEK_ID_PREFIX}{athlete_account_id}:{week_start.isoformat()}"
+
+
+def virtual_goal_id(week_id: str, index: int) -> str:
+    return f"{VIRTUAL_GOAL_ID_PREFIX}{week_id}:{index}"
+
+
+def week_start_from_virtual_id(
+    week_id: str,
+    athlete_account_id: str | None = None,
+) -> date | None:
+    if not week_id.startswith(VIRTUAL_WEEK_ID_PREFIX):
+        return None
+
+    try:
+        encoded_athlete_id, week_start_raw = week_id.removeprefix(
+            VIRTUAL_WEEK_ID_PREFIX
+        ).rsplit(":", 1)
+        if athlete_account_id is not None and encoded_athlete_id != athlete_account_id:
+            return None
+        return week_start_for(date.fromisoformat(week_start_raw))
+    except ValueError:
+        return None
 
 
 def ensure_default_athlete(db: Session) -> AthleteAccount:
@@ -97,6 +140,34 @@ def get_or_create_week(
     return load_week(db, week.week_start_date, active_athlete_id)
 
 
+def find_week(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str,
+) -> TrainingWeek | None:
+    return db.scalars(
+        select(TrainingWeek)
+        .where(
+            TrainingWeek.athlete_account_id == athlete_account_id,
+            TrainingWeek.week_start_date == week_start,
+        )
+        .options(selectinload(TrainingWeek.workouts).selectinload(PlannedWorkout.steps))
+        .options(selectinload(TrainingWeek.goals))
+    ).first()
+
+
+def week_read(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str,
+) -> dict:
+    normalized_start = week_start_for(week_start)
+    week = find_week(db, normalized_start, athlete_account_id)
+    if week:
+        return serialize_week(week, db)
+    return serialize_virtual_week(db, normalized_start, athlete_account_id)
+
+
 def load_week(
     db: Session,
     week_start: date,
@@ -125,7 +196,7 @@ def load_week(
 def list_weeks(db: Session, athlete_account_id: str | None = None) -> list[TrainingWeek]:
     athlete = ensure_default_athlete(db) if athlete_account_id is None else None
     active_athlete_id = athlete_account_id or athlete.id
-    weeks = list(
+    return list(
         db.scalars(
             select(TrainingWeek)
             .where(TrainingWeek.athlete_account_id == active_athlete_id)
@@ -134,9 +205,6 @@ def list_weeks(db: Session, athlete_account_id: str | None = None) -> list[Train
             .order_by(TrainingWeek.week_start_date.desc())
         )
     )
-    for week in weeks:
-        recalculate_week(db, week)
-    return weeks
 
 
 def training_timeline(db: Session, athlete_account_id: str | None = None) -> dict:
@@ -153,7 +221,8 @@ def training_timeline(db: Session, athlete_account_id: str | None = None) -> dic
         month_key = (workout.planned_date.year, workout.planned_date.month)
         summary = month_summaries[month_key]
         summary["has_plan"] = True
-        summary["planned_miles"] += workout.planned_distance or 0
+        if workout.sport == "run":
+            summary["planned_miles"] += workout.planned_distance or 0
         data_week_starts.add(week_start)
 
     activities = db.scalars(
@@ -231,7 +300,7 @@ def update_week(
     payload: TrainingWeekPatch,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    week = get_week_by_id(db, week_id, athlete_account_id)
+    week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(week, field, value)
@@ -245,7 +314,7 @@ def create_week_goal(
     payload: WeekGoalCreate,
     athlete_account_id: str | None = None,
 ) -> WeekGoal:
-    week = get_week_by_id(db, week_id, athlete_account_id)
+    week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     goal = WeekGoal(
         training_week_id=week.id,
         athlete_account_id=week.athlete_account_id,
@@ -304,7 +373,7 @@ def derive_week_goals(
     replace_derived: bool = True,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    week = get_week_by_id(db, week_id, athlete_account_id)
+    week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     if replace_derived:
         for goal in list(week.goals):
             if goal.source == "derived_from_plan":
@@ -356,15 +425,23 @@ def get_week_by_id(
     return week
 
 
+def get_or_create_week_for_mutation(
+    db: Session,
+    week_id: str,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    if virtual_week_start is not None:
+        return get_or_create_week(db, virtual_week_start, athlete_account_id)
+    return get_week_by_id(db, week_id, athlete_account_id)
+
+
 def recalculate_week(db: Session, week: TrainingWeek) -> TrainingWeek:
-    planned_mileage = sum(workout.planned_distance or 0 for workout in week.workouts)
-    planned_time = sum(workout.planned_duration or 0 for workout in week.workouts)
-    actual_mileage = sum(activity.distance / 1609.344 for activity in activities_for_week(db, week))
-    actual_time = sum(activity.moving_time or 0 for activity in activities_for_week(db, week))
-    week.planned_mileage = round(planned_mileage, 2)
-    week.planned_time = planned_time or None
-    week.actual_mileage = round(actual_mileage, 2)
-    week.actual_time = actual_time or None
+    totals = week_totals(list(week.workouts), activities_for_week(db, week))
+    week.planned_mileage = totals["planned_mileage"]
+    week.planned_time = totals["planned_time"]
+    week.actual_mileage = totals["actual_mileage"]
+    week.actual_time = totals["actual_time"]
     db.add(week)
     db.commit()
     db.refresh(week)
@@ -494,7 +571,7 @@ def copy_prior_week(
     week_id: str,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    target = get_week_by_id(db, week_id, athlete_account_id)
+    target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     source_start = target.week_start_date - timedelta(days=7)
     source = get_or_create_week(db, source_start, target.athlete_account_id)
 
@@ -534,7 +611,7 @@ def save_week_plan(
     payload: PlanWeekSave,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    week = get_week_by_id(db, week_id, athlete_account_id)
+    week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     week.notes = payload.purpose
     week.target_long_run_distance = payload.target_long_run_distance
 
@@ -649,13 +726,27 @@ def recalculate_impacted_weeks(
 
 
 def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]:
-    start = datetime.combine(week.week_start_date, time.min)
-    end = datetime.combine(week.week_end_date + timedelta(days=1), time.min)
+    return activities_for_date_range(
+        db,
+        week.athlete_account_id,
+        week.week_start_date,
+        week.week_end_date,
+    )
+
+
+def activities_for_date_range(
+    db: Session,
+    athlete_account_id: str,
+    start_date: date,
+    end_date: date,
+) -> list[StravaActivity]:
+    start = datetime.combine(start_date, time.min)
+    end = datetime.combine(end_date + timedelta(days=1), time.min)
     return list(
         db.scalars(
             select(StravaActivity)
             .where(
-                StravaActivity.athlete_account_id == week.athlete_account_id,
+                StravaActivity.athlete_account_id == athlete_account_id,
                 StravaActivity.deleted_at.is_(None),
                 StravaActivity.start_date_local >= start,
                 StravaActivity.start_date_local < end,
@@ -684,32 +775,24 @@ def serialize_activity(activity: StravaActivity) -> dict:
 def serialize_week(week: TrainingWeek, db: Session) -> dict:
     workouts = list(week.workouts)
     actual_activities = activities_for_week(db, week)
-    planned_mileage = sum(workout.planned_distance or 0 for workout in workouts)
+    totals = week_totals(workouts, actual_activities)
     hard_days = {
         workout.planned_date
         for workout in workouts
         if workout.intensity_category in {"workout", "race"}
     }
-    long_run_distance = max((workout.planned_distance or 0 for workout in workouts), default=0)
+    planned_mileage = totals["planned_mileage"]
+    run_workouts = [workout for workout in workouts if workout.sport == "run"]
+    long_run_distance = max(
+        (workout.planned_distance or 0 for workout in run_workouts),
+        default=0,
+    )
     long_run_percentage = (
         round((long_run_distance / planned_mileage) * 100, 1) if planned_mileage else 0
     )
-    if not week.goals and workouts:
-        for goal in default_goals_for_week(week):
-            db.add(
-                WeekGoal(
-                    training_week_id=week.id,
-                    athlete_account_id=week.athlete_account_id,
-                    week_start_date=week.week_start_date,
-                    **goal,
-                )
-            )
-        db.commit()
-        db.refresh(week)
-        db.expire(week, ["goals"])
 
     week_state = get_week_state(week)
-    goals = [goal for goal in week.goals if goal.is_enabled]
+    goals = enabled_goals_for_week(week)
     goal_evaluations = [
         evaluate_goal(goal, week, workouts, actual_activities, week_state) for goal in goals
     ]
@@ -717,10 +800,10 @@ def serialize_week(week: TrainingWeek, db: Session) -> dict:
         "id": week.id,
         "week_start_date": week.week_start_date,
         "week_end_date": week.week_end_date,
-        "planned_mileage": week.planned_mileage,
-        "actual_mileage": week.actual_mileage,
-        "planned_time": week.planned_time,
-        "actual_time": week.actual_time,
+        "planned_mileage": totals["planned_mileage"],
+        "actual_mileage": totals["actual_mileage"],
+        "planned_time": totals["planned_time"],
+        "actual_time": totals["actual_time"],
         "target_long_run_distance": week.target_long_run_distance,
         "notes": week.notes,
         "workouts": workouts,
@@ -733,6 +816,69 @@ def serialize_week(week: TrainingWeek, db: Session) -> dict:
         "long_run_distance": long_run_distance,
         "long_run_percentage": long_run_percentage,
     }
+
+
+def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: str) -> dict:
+    week_end = week_end_for(week_start)
+    actual_activities = activities_for_date_range(db, athlete_account_id, week_start, week_end)
+    totals = week_totals([], actual_activities)
+    athlete = db.get(AthleteAccount, athlete_account_id)
+    return {
+        "id": virtual_week_id(athlete_account_id, week_start),
+        "week_start_date": week_start,
+        "week_end_date": week_end,
+        "planned_mileage": 0,
+        "actual_mileage": totals["actual_mileage"],
+        "planned_time": None,
+        "actual_time": totals["actual_time"],
+        "target_long_run_distance": None,
+        "notes": "",
+        "workouts": [],
+        "actual_activities": [serialize_activity(activity) for activity in actual_activities],
+        "goals": [],
+        "goal_evaluations": [],
+        "week_state": get_week_state_from_dates(
+            week_start,
+            week_end,
+            timezone_name=athlete.timezone if athlete else None,
+        ),
+        "goal_review_summary": "No weekly goals set yet.",
+        "hard_days": 0,
+        "long_run_distance": 0,
+        "long_run_percentage": 0,
+    }
+
+
+def week_totals(workouts: list[PlannedWorkout], activities: list[StravaActivity]) -> dict:
+    planned_mileage = sum(
+        workout.planned_distance or 0 for workout in workouts if workout.sport == "run"
+    )
+    planned_time = sum(workout.planned_duration or 0 for workout in workouts)
+    actual_mileage = sum(activity.distance / 1609.344 for activity in activities)
+    actual_time = sum(activity.moving_time or 0 for activity in activities)
+    return {
+        "planned_mileage": round(planned_mileage, 2),
+        "planned_time": planned_time or None,
+        "actual_mileage": round(actual_mileage, 2),
+        "actual_time": actual_time or None,
+    }
+
+
+def enabled_goals_for_week(week: TrainingWeek) -> list[WeekGoal]:
+    goals = [goal for goal in week.goals if goal.is_enabled]
+    if goals or not week.workouts:
+        return goals
+
+    return [
+        WeekGoal(
+            id=virtual_goal_id(week.id, index),
+            training_week_id=week.id,
+            athlete_account_id=week.athlete_account_id,
+            week_start_date=week.week_start_date,
+            **goal,
+        )
+        for index, goal in enumerate(default_goals_for_week(week), start=1)
+    ]
 
 
 def serialize_goal(goal: WeekGoal) -> dict:
@@ -954,10 +1100,24 @@ def new_default_goal(
 
 
 def get_week_state(week: TrainingWeek) -> str:
-    today = date.today()
-    if today < week.week_start_date:
+    return get_week_state_from_dates(
+        week.week_start_date,
+        week.week_end_date,
+        timezone_name=week.athlete.timezone if week.athlete else None,
+    )
+
+
+def get_week_state_from_dates(
+    week_start: date,
+    week_end: date,
+    *,
+    timezone_name: str | None = None,
+    today: date | None = None,
+) -> str:
+    current_day = today or today_for_timezone(timezone_name)
+    if current_day < week_start:
         return "future"
-    if today > week.week_end_date:
+    if current_day > week_end:
         return "past"
     return "current"
 
@@ -977,18 +1137,19 @@ def evaluate_goal(
     if goal.goal_type == "guardrail":
         return evaluate_guardrail(goal, week, workouts, activities, week_state)
 
+    current_day = today_for_timezone(week.athlete.timezone if week.athlete else None)
     if goal.category == "mileage":
-        return evaluate_mileage_goal(goal, week, workouts, activities, week_state)
+        return evaluate_mileage_goal(goal, week, workouts, activities, week_state, current_day)
     if goal.category == "sessions":
-        return evaluate_sessions_goal(goal, workouts, activities, week_state)
+        return evaluate_sessions_goal(goal, workouts, activities, week_state, current_day)
     if goal.category == "long_run":
-        return evaluate_long_run_goal(goal, workouts, activities, week_state)
+        return evaluate_long_run_goal(goal, workouts, activities, week_state, current_day)
     if goal.category == "quality":
-        return evaluate_quality_goal(goal, workouts, activities, week_state)
+        return evaluate_quality_goal(goal, workouts, activities, week_state, current_day)
     if goal.category == "recovery":
         return evaluate_recovery_goal(goal, workouts, activities, week_state)
     if goal.category == "strength":
-        return evaluate_strength_goal(goal, workouts, activities, week_state)
+        return evaluate_strength_goal(goal, workouts, activities, week_state, current_day)
 
     return goal_evaluation(
         goal,
@@ -1005,8 +1166,9 @@ def evaluate_mileage_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    today: date,
 ) -> dict:
-    remaining = remaining_planned_mileage(workouts, activities)
+    remaining = remaining_planned_mileage(workouts, activities, today)
     actual = round(
         sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity)), 1
     )
@@ -1046,6 +1208,7 @@ def evaluate_sessions_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    today: date,
 ) -> dict:
     actual = count_training_activities(activities)
     planned = len([workout for workout in workouts if workout.sport != "rest"])
@@ -1053,7 +1216,7 @@ def evaluate_sessions_goal(
         [
             workout
             for workout in workouts
-            if workout.sport != "rest" and workout.planned_date >= date.today()
+            if workout.sport != "rest" and workout.planned_date >= today
         ]
     )
     value = (
@@ -1085,6 +1248,7 @@ def evaluate_long_run_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    today: date,
 ) -> dict:
     actual_runs = [activity for activity in activities if is_run_activity(activity)]
     planned_runs = [workout for workout in workouts if workout.sport == "run"]
@@ -1095,7 +1259,7 @@ def evaluate_long_run_goal(
             (
                 workout.planned_distance or 0
                 for workout in planned_runs
-                if workout.planned_date >= date.today()
+                if workout.planned_date >= today
             ),
             default=0,
         ),
@@ -1129,13 +1293,14 @@ def evaluate_quality_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    today: date,
 ) -> dict:
     hard_workouts = [workout for workout in workouts if is_quality_workout(workout)]
     hard_activities = [activity for activity in activities if is_quality_activity(activity)]
     actual = len({activity.start_date_local.date() for activity in hard_activities})
     planned = len({workout.planned_date for workout in hard_workouts})
     remaining = len(
-        {workout.planned_date for workout in hard_workouts if workout.planned_date >= date.today()}
+        {workout.planned_date for workout in hard_workouts if workout.planned_date >= today}
     )
     value = (
         actual
@@ -1199,6 +1364,7 @@ def evaluate_strength_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    today: date,
 ) -> dict:
     strength_workouts = [
         workout
@@ -1210,7 +1376,7 @@ def evaluate_strength_goal(
     actual = len(strength_activities)
     planned = len(strength_workouts)
     remaining = len(
-        [workout for workout in strength_workouts if workout.planned_date >= date.today()]
+        [workout for workout in strength_workouts if workout.planned_date >= today]
     )
     value = (
         actual
@@ -1384,9 +1550,11 @@ def goal_evaluation(
 
 
 def remaining_planned_mileage(
-    workouts: list[PlannedWorkout], activities: list[StravaActivity] | None = None
+    workouts: list[PlannedWorkout],
+    activities: list[StravaActivity] | None = None,
+    today: date | None = None,
 ) -> float:
-    today = date.today()
+    current_day = today or date.today()
     completed_run_dates = {
         activity.start_date_local.date()
         for activity in activities or []
@@ -1397,7 +1565,7 @@ def remaining_planned_mileage(
             workout.planned_distance or 0
             for workout in workouts
             if workout.sport == "run"
-            and workout.planned_date >= today
+            and workout.planned_date >= current_day
             and workout.planned_date not in completed_run_dates
         ),
         1,

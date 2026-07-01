@@ -4,7 +4,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import activities, ai, auth, health, planning, sync, version, webhooks
+from app.api.routes import (
+    activities,
+    ai,
+    analytics,
+    auth,
+    health,
+    planning,
+    sync,
+    version,
+    webhooks,
+)
 from app.core.config import settings
 from app.db.migrations import run_migrations
 from app.db.session import SessionLocal
@@ -42,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(sync.router, prefix="/api/sync")
     app.include_router(webhooks.router, prefix="/api/webhooks")
     app.include_router(ai.router, prefix="/api/ai")
+    app.include_router(analytics.router, prefix="/api")
     app.include_router(activities.router, prefix="/api")
     app.include_router(planning.router, prefix="/api")
     return app

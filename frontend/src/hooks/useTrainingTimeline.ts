@@ -73,23 +73,6 @@ type UseTrainingTimelineOptions = {
   weekStack: Record<string, TimelineWeekSummary>;
 };
 
-const MOCK_RACES: Array<Omit<TimelineRaceMarker, "weekStartDate">> = [
-  {
-    id: "rockin-river-5k-2026",
-    name: "Rockin' on the River 5k",
-    date: "2026-04-19",
-    distance: "5k",
-    priority: "B"
-  },
-  {
-    id: "super-sunday-5k-2026",
-    name: "Super Sunday 5k",
-    date: "2026-02-08",
-    distance: "5k",
-    priority: "C"
-  }
-];
-
 export function useTrainingTimeline({
   currentWeekStartDate,
   selectedWeekStartDate,
@@ -113,10 +96,7 @@ export function useTrainingTimeline({
     const selectedYear = parseDate(selectedWeekStartDate).getFullYear();
     const startYear = parseDate(startDate).getFullYear();
     const endYear = parseDate(endDate).getFullYear();
-    const races = MOCK_RACES.map((race) => ({
-      ...race,
-      weekStartDate: startOfWeek(parseDate(race.date))
-    }));
+    const races: TimelineRaceMarker[] = [];
     const monthSummaryMap = new Map(
       timelineSummary?.months.map((month) => [`${month.year}-${month.month}`, month]) ?? []
     );

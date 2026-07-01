@@ -23,6 +23,7 @@ import {
   Settings,
   ShieldAlert,
   Sparkles,
+  TrendingUp,
   Trash2,
   UserCircle,
   Users,
@@ -203,6 +204,72 @@ type StravaActivity = {
   totalElevationGain: number | null;
   averageHeartrate: number | null;
   private: boolean;
+};
+
+type AnalyticsRiskLevel = "clear" | "watch" | "revise";
+
+type AnalyticsInsight = {
+  id: string;
+  title: string;
+  detail: string;
+  recommendation: string;
+  riskLevel: AnalyticsRiskLevel;
+  weekStartDate: string | null;
+  metric: string;
+};
+
+type AnalyticsLoadBand = {
+  baselineMileage: number | null;
+  floorMileage: number | null;
+  ceilingMileage: number | null;
+  watchCeilingMileage: number | null;
+  reviseCeilingMileage: number | null;
+  sourceWeeks: number;
+};
+
+type AnalyticsWeekSummary = {
+  weekStartDate: string;
+  weekEndDate: string;
+  weekState: WeekState;
+  plannedMileage: number;
+  actualMileage: number;
+  comparisonMileage: number;
+  hardDays: number;
+  actualHardDays: number;
+  restDays: number;
+  actualRestDays: number;
+  hasBackToBackHardDays: boolean;
+  longRunDistance: number;
+  longRunPercentage: number;
+  loadRisk: AnalyticsRiskLevel;
+  longRunRisk: AnalyticsRiskLevel;
+  intensityRisk: AnalyticsRiskLevel;
+  recoveryRisk: AnalyticsRiskLevel;
+  hasPlan: boolean;
+  hasActuals: boolean;
+};
+
+type AnalyticsGoalReliability = {
+  category: WeekGoalCategory;
+  achieved: number;
+  onTrack: number;
+  atRisk: number;
+  missed: number;
+  exceeded: number;
+  waived: number;
+  total: number;
+};
+
+type AnalyticsPlanning = {
+  anchorWeekStartDate: string;
+  generatedAt: string;
+  lookbackWeeks: number;
+  futureWeeks: number;
+  primaryRecommendation: AnalyticsInsight;
+  insights: AnalyticsInsight[];
+  loadBand: AnalyticsLoadBand;
+  weeks: AnalyticsWeekSummary[];
+  goalReliability: AnalyticsGoalReliability[];
 };
 
 type SyncJob = {
@@ -495,6 +562,10 @@ function App() {
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
+  const [analyticsPlanning, setAnalyticsPlanning] = useState<AnalyticsPlanning | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
+  const [analyticsFutureWeeks, setAnalyticsFutureWeeks] = useState(4);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
   const [goalEditor, setGoalEditor] = useState<WeekGoalForm | null>(null);
   const [planWeekDraft, setPlanWeekDraft] = useState<PlanWeekDraft | null>(null);
@@ -577,6 +648,18 @@ function App() {
   }, [session?.activeAthleteAccountId, session?.authenticated]);
 
   useEffect(() => {
+    if (!session?.authenticated || !session.activeAthleteAccountId) {
+      return;
+    }
+    loadAnalyticsPlanning();
+  }, [
+    analyticsFutureWeeks,
+    analyticsLookbackWeeks,
+    session?.activeAthleteAccountId,
+    session?.authenticated
+  ]);
+
+  useEffect(() => {
     if (!timelineSummary || didApplyInitialTimelineRange.current) {
       return;
     }
@@ -601,6 +684,7 @@ function App() {
   function clearAppData() {
     setWeekStack({});
     setTimelineSummary(null);
+    setAnalyticsPlanning(null);
     setActivities([]);
     setStravaStatus(null);
     setLastSyncJob(null);
@@ -816,7 +900,18 @@ function App() {
     setPlanWeekDraft(buildPlanWeekDraft(targetWeek, weekStack));
   }
 
+  function blockStaleWrite(action: string) {
+    if (!staleFrontend) {
+      return false;
+    }
+    setApiError(`Reload required before ${action}.`);
+    return true;
+  }
+
   async function savePlanWeek(draft: PlanWeekDraft) {
+    if (blockStaleWrite("saving the week plan")) {
+      return;
+    }
     setIsSavingPlanWeek(true);
     try {
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${draft.weekId}/plan`, {
@@ -829,6 +924,7 @@ function App() {
       }));
       setPlanWeekDraft(null);
       loadTrainingTimeline();
+      loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Could not save the week plan.");
@@ -840,6 +936,9 @@ function App() {
   async function saveWorkout(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor) {
+      return;
+    }
+    if (blockStaleWrite("saving a workout")) {
       return;
     }
 
@@ -858,11 +957,15 @@ function App() {
     setEditor(null);
     refreshVisibleWeeks();
     loadTrainingTimeline();
+    loadAnalyticsPlanning();
   }
 
   async function saveGoal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!goalEditor) {
+      return;
+    }
+    if (blockStaleWrite("saving a goal")) {
       return;
     }
 
@@ -881,21 +984,31 @@ function App() {
     setGoalEditor(null);
     refreshVisibleWeeks();
     loadTrainingTimeline();
+    loadAnalyticsPlanning();
   }
 
   async function deleteWorkout(workout: Workout) {
+    if (blockStaleWrite("deleting a workout")) {
+      return;
+    }
     await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
     refreshVisibleWeeks();
     loadTrainingTimeline();
   }
 
   async function duplicateWorkout(workout: Workout) {
+    if (blockStaleWrite("duplicating a workout")) {
+      return;
+    }
     await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
     refreshVisibleWeeks();
     loadTrainingTimeline();
   }
 
   async function copyPriorWeek(targetWeek: TrainingWeek) {
+    if (blockStaleWrite("copying the prior week")) {
+      return;
+    }
     if (
       targetWeek.workouts.length > 0 &&
       !window.confirm("Copy prior week into this week? Existing planned workouts will stay in place.")
@@ -911,6 +1024,7 @@ function App() {
         [copiedWeek.weekStartDate]: copiedWeek
       }));
       loadTrainingTimeline();
+      loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Could not copy the prior week.");
@@ -920,6 +1034,9 @@ function App() {
   }
 
   async function deriveWeekGoals(targetWeek: TrainingWeek) {
+    if (blockStaleWrite("refreshing weekly goals")) {
+      return;
+    }
     try {
       const derivedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/goals/derive`, {
         method: "POST"
@@ -929,6 +1046,7 @@ function App() {
         [derivedWeek.weekStartDate]: derivedWeek
       }));
       loadTrainingTimeline();
+      loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Could not refresh weekly goals.");
@@ -944,6 +1062,21 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
+  function loadAnalyticsPlanning() {
+    setAnalyticsLoading(true);
+    const params = new URLSearchParams({
+      lookbackWeeks: String(analyticsLookbackWeeks),
+      futureWeeks: String(analyticsFutureWeeks)
+    });
+    fetchJson<AnalyticsPlanning>(`/api/analytics/planning?${params.toString()}`)
+      .then((body) => {
+        setAnalyticsPlanning(body);
+        setApiError(null);
+      })
+      .catch((error: Error) => setApiError(error.message))
+      .finally(() => setAnalyticsLoading(false));
+  }
+
   function loadStravaStatus() {
     fetchJson<StravaStatus>("/api/auth/strava/status")
       .then(setStravaStatus)
@@ -957,6 +1090,9 @@ function App() {
   }
 
   async function runBackfill() {
+    if (blockStaleWrite("syncing Strava")) {
+      return;
+    }
     setIsSyncing(true);
     try {
       const job = await fetchJson<SyncJob>("/api/sync/strava/backfill", {
@@ -1085,7 +1221,16 @@ function App() {
         ) : null}
         {activeTab === "plan" ? <Placeholder title="Plan" icon={<Sparkles size={22} />} /> : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
-        {activeTab === "analytics" ? <Placeholder title="Analytics" icon={<BarChart3 size={22} />} /> : null}
+        {activeTab === "analytics" ? (
+          <AnalyticsView
+            analytics={analyticsPlanning}
+            futureWeeks={analyticsFutureWeeks}
+            isLoading={analyticsLoading}
+            lookbackWeeks={analyticsLookbackWeeks}
+            setFutureWeeks={setAnalyticsFutureWeeks}
+            setLookbackWeeks={setAnalyticsLookbackWeeks}
+          />
+        ) : null}
         {activeTab === "settings" ? (
           <SettingsView
             apiVersion={apiVersion}
@@ -1097,6 +1242,7 @@ function App() {
             onRefreshSession={refreshSession}
             stravaStatus={stravaStatus}
             session={session}
+            writesBlocked={staleFrontend}
           />
         ) : null}
       </main>
@@ -2880,6 +3026,242 @@ function ActivitiesView({ activities }: { activities: StravaActivity[] }) {
   );
 }
 
+function AnalyticsView({
+  analytics,
+  futureWeeks,
+  isLoading,
+  lookbackWeeks,
+  setFutureWeeks,
+  setLookbackWeeks
+}: {
+  analytics: AnalyticsPlanning | null;
+  futureWeeks: number;
+  isLoading: boolean;
+  lookbackWeeks: number;
+  setFutureWeeks: Dispatch<SetStateAction<number>>;
+  setLookbackWeeks: Dispatch<SetStateAction<number>>;
+}) {
+  if (isLoading && !analytics) {
+    return <Placeholder title="Analytics" icon={<RefreshCw size={22} />} />;
+  }
+
+  if (!analytics) {
+    return (
+      <section className="analytics-view analytics-view--empty">
+        <div className="analytics-empty-state">
+          <BarChart3 size={24} />
+          <div>
+            <p className="eyebrow">Planning analytics</p>
+            <h2>Mileage history needs a backend response.</h2>
+            <span>Connect Strava or start the API to draw the weekly mileage chart.</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const plannedWindowWeeks = analytics.weeks.filter((week) => week.weekStartDate >= analytics.anchorWeekStartDate);
+  const recentWeeks = analytics.weeks.filter((week) => week.weekStartDate < analytics.anchorWeekStartDate);
+  const visibleWeeks = [...recentWeeks, ...plannedWindowWeeks];
+
+  return (
+    <section className="analytics-view" aria-label="Mileage analytics">
+      <section className="mileage-chart-panel" aria-label="Weekly mileage chart">
+        <header className="mileage-chart-header">
+        <div>
+          <p className="eyebrow">Mileage</p>
+          <h1>Weekly mileage trend</h1>
+            <span>
+              Last {analytics.lookbackWeeks} weeks plus next {analytics.futureWeeks} planned weeks
+            </span>
+        </div>
+        <TrendingUp size={20} />
+        <div className="mileage-chart-controls" aria-label="Mileage chart timeframe">
+          <SegmentedNumberControl
+            label="History"
+            options={[8, 12, 16, 24]}
+            suffix="w"
+            value={lookbackWeeks}
+            onChange={setLookbackWeeks}
+          />
+          <SegmentedNumberControl
+            label="Planned"
+            options={[4, 8, 12]}
+            suffix="w"
+            value={futureWeeks}
+            onChange={setFutureWeeks}
+          />
+      </div>
+        </header>
+
+        <MileageLineChart
+          anchorWeekStartDate={analytics.anchorWeekStartDate}
+          baselineMileage={analytics.loadBand.baselineMileage}
+          weeks={visibleWeeks}
+        />
+      </section>
+    </section>
+  );
+}
+
+function SegmentedNumberControl({
+  label,
+  onChange,
+  options,
+  suffix,
+  value
+}: {
+  label: string;
+  onChange: Dispatch<SetStateAction<number>>;
+  options: number[];
+  suffix: string;
+  value: number;
+}) {
+  return (
+    <div className="analytics-segmented-control">
+      <span>{label}</span>
+      <div>
+        {options.map((option) => (
+          <button
+            className={option === value ? "active" : ""}
+            key={option}
+            type="button"
+            onClick={() => onChange(option)}
+          >
+            {option}
+            {suffix}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MileageLineChart({
+  anchorWeekStartDate,
+  baselineMileage,
+  weeks
+}: {
+  anchorWeekStartDate: string;
+  baselineMileage: number | null;
+  weeks: AnalyticsWeekSummary[];
+}) {
+  const width = 960;
+  const height = 360;
+  const padding = { bottom: 42, left: 54, right: 28, top: 26 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxMileage = Math.max(
+    10,
+    baselineMileage ?? 0,
+    ...weeks.map((week) => Math.max(week.actualMileage, week.plannedMileage))
+  );
+  const yMax = Math.ceil(maxMileage / 10) * 10;
+  const actualPoints = weeks
+    .filter((week) => week.weekStartDate <= anchorWeekStartDate && week.actualMileage > 0)
+    .map((week) => chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding));
+  const plannedPoints = weeks
+    .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0)
+    .map((week) => chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding));
+  const anchorIndex = Math.max(0, weeks.findIndex((week) => week.weekStartDate === anchorWeekStartDate));
+  const anchorX = padding.left + (weeks.length <= 1 ? 0 : (anchorIndex / (weeks.length - 1)) * chartWidth);
+  const yTicks = [0, yMax / 2, yMax];
+  const xTicks = weeks.filter((_, index) => index === 0 || index === weeks.length - 1 || weeks[index].weekStartDate === anchorWeekStartDate);
+  const latestActual = [...weeks].reverse().find((week) => week.actualMileage > 0);
+  const nextPlanned = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0);
+
+  return (
+    <div className="mileage-line-chart">
+      <div className="mileage-line-chart-summary">
+        <div>
+          <span>Latest actual</span>
+          <strong>{latestActual ? `${formatNumber(latestActual.actualMileage)} mi` : "-"}</strong>
+        </div>
+        <div>
+          <span>Next planned</span>
+          <strong>{nextPlanned ? `${formatNumber(nextPlanned.plannedMileage)} mi` : "-"}</strong>
+        </div>
+        <div>
+          <span>4-week baseline</span>
+          <strong>{baselineMileage !== null ? `${formatNumber(baselineMileage)} mi` : "-"}</strong>
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Line chart of weekly actual and planned mileage">
+        <rect className="mileage-chart-plot" x={padding.left} y={padding.top} width={chartWidth} height={chartHeight} rx="8" />
+        {yTicks.map((tick) => {
+          const y = mileageY(tick, yMax, chartHeight, padding);
+          return (
+            <g key={tick}>
+              <line className="mileage-chart-grid" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+              <text className="mileage-chart-y-label" x={padding.left - 12} y={y + 4}>{formatNumber(tick)}</text>
+            </g>
+          );
+        })}
+        {baselineMileage !== null ? (
+          <line
+            className="mileage-chart-baseline"
+            x1={padding.left}
+            x2={width - padding.right}
+            y1={mileageY(baselineMileage, yMax, chartHeight, padding)}
+            y2={mileageY(baselineMileage, yMax, chartHeight, padding)}
+          />
+        ) : null}
+        <line className="mileage-chart-anchor" x1={anchorX} x2={anchorX} y1={padding.top} y2={height - padding.bottom} />
+        <polyline className="mileage-line mileage-line--actual" points={pointsAttribute(actualPoints)} />
+        <polyline className="mileage-line mileage-line--planned" points={pointsAttribute(plannedPoints)} />
+        {actualPoints.map((point) => <circle className="mileage-point mileage-point--actual" cx={point.x} cy={point.y} key={`actual-${point.weekStartDate}`} r="4" />)}
+        {plannedPoints.map((point) => <circle className="mileage-point mileage-point--planned" cx={point.x} cy={point.y} key={`planned-${point.weekStartDate}`} r="4" />)}
+        {xTicks.map((week) => {
+          const point = chartPoint(week.weekStartDate, 0, weeks, yMax, chartWidth, chartHeight, padding);
+          return (
+            <text className="mileage-chart-x-label" key={week.weekStartDate} x={point.x} y={height - 14}>
+              {week.weekStartDate === anchorWeekStartDate ? "Now" : formatShortDate(week.weekStartDate)}
+            </text>
+          );
+        })}
+      </svg>
+
+      <div className="mileage-chart-legend" aria-label="Mileage chart legend">
+        <span><i className="actual" /> Actual</span>
+        <span><i className="planned" /> Planned</span>
+        <span><i className="baseline" /> Baseline</span>
+      </div>
+    </div>
+  );
+}
+
+function chartPoint(
+  weekStartDate: string,
+  mileage: number,
+  weeks: AnalyticsWeekSummary[],
+  yMax: number,
+  chartWidth: number,
+  chartHeight: number,
+  padding: { bottom: number; left: number; right: number; top: number }
+) {
+  const index = Math.max(0, weeks.findIndex((week) => week.weekStartDate === weekStartDate));
+  const x = padding.left + (weeks.length <= 1 ? 0 : (index / (weeks.length - 1)) * chartWidth);
+  return {
+    weekStartDate,
+    x,
+    y: mileageY(mileage, yMax, chartHeight, padding)
+  };
+}
+
+function mileageY(
+  mileage: number,
+  yMax: number,
+  chartHeight: number,
+  padding: { top: number }
+) {
+  return padding.top + chartHeight - (mileage / yMax) * chartHeight;
+}
+
+function pointsAttribute(points: Array<{ x: number; y: number }>) {
+  return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
 function SettingsView({
   apiVersion,
   stravaStatus,
@@ -2889,7 +3271,8 @@ function SettingsView({
   onBackfill,
   onRefreshActivities,
   onRefreshStatus,
-  onRefreshSession
+  onRefreshSession,
+  writesBlocked
 }: {
   apiVersion: ApiVersion | null;
   stravaStatus: StravaStatus | null;
@@ -2900,6 +3283,7 @@ function SettingsView({
   onRefreshActivities: () => void;
   onRefreshStatus: () => void;
   onRefreshSession: () => void;
+  writesBlocked: boolean;
 }) {
   const [profileForm, setProfileForm] = useState<ProfileForm>({
     displayName: "",
@@ -2917,9 +3301,28 @@ function SettingsView({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [isDisconnectingStrava, setIsDisconnectingStrava] = useState(false);
 
+  function blockSettingsWrite(action: string) {
+    if (!writesBlocked) {
+      return false;
+    }
+    setSettingsMessage(null);
+    setSettingsError(`Reload required before ${action}.`);
+    return true;
+  }
+
+  function connectStrava() {
+    if (blockSettingsWrite("connecting Strava")) {
+      return;
+    }
+    window.location.href = `${API_BASE_URL}/api/auth/strava/start`;
+  }
+
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSettingsError(null);
+    if (blockSettingsWrite("creating a profile")) {
+      return;
+    }
     try {
       await fetchJson<AthleteProfile>("/api/auth/profiles", {
         method: "POST",
@@ -2936,6 +3339,9 @@ function SettingsView({
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSettingsError(null);
+    if (blockSettingsWrite("creating a user")) {
+      return;
+    }
     try {
       await fetchJson<SessionUser>("/api/auth/users", {
         method: "POST",
@@ -2957,6 +3363,9 @@ function SettingsView({
 
   async function disconnectStrava() {
     setSettingsError(null);
+    if (blockSettingsWrite("disconnecting Strava")) {
+      return;
+    }
     setIsDisconnectingStrava(true);
     try {
       await fetchJson<{ status: string }>("/api/auth/strava/disconnect", {
@@ -2988,13 +3397,13 @@ function SettingsView({
         <div className="settings-note">{stravaStatus.message}</div>
       ) : null}
       <div className="settings-actions">
-        <button type="button" onClick={() => (window.location.href = `${API_BASE_URL}/api/auth/strava/start`)}>
+        <button type="button" disabled={writesBlocked} onClick={connectStrava}>
           <Link size={17} />
           <span>{stravaStatus?.connected ? "Reconnect Strava" : "Connect Strava"}</span>
         </button>
         <button
           className="danger"
-          disabled={!stravaStatus?.connected || isDisconnectingStrava}
+          disabled={!stravaStatus?.connected || isDisconnectingStrava || writesBlocked}
           type="button"
           onClick={disconnectStrava}
         >
@@ -3003,7 +3412,7 @@ function SettingsView({
         </button>
         <button
           className="primary"
-          disabled={!stravaStatus?.connected || isSyncing}
+          disabled={!stravaStatus?.connected || isSyncing || writesBlocked}
           type="button"
           onClick={onBackfill}
         >
@@ -3068,7 +3477,7 @@ function SettingsView({
             />
           </label>
         </div>
-        <button className="primary" type="submit">
+        <button className="primary" type="submit" disabled={writesBlocked}>
           <Plus size={17} />
           <span>Add profile</span>
         </button>
@@ -3129,7 +3538,7 @@ function SettingsView({
             />
             <span>Admin</span>
           </label>
-          <button className="primary" type="submit">
+          <button className="primary" type="submit" disabled={writesBlocked}>
             <Plus size={17} />
             <span>Create user</span>
           </button>
@@ -4120,7 +4529,10 @@ function formatMileageTrendAriaLabel(trend: MileageTrend) {
 }
 
 function sumDistance(workouts: Workout[]) {
-  return workouts.reduce((sum, workout) => sum + (workout.plannedDistance ?? 0), 0);
+  return workouts.reduce(
+    (sum, workout) => (workout.sport === "run" ? sum + (workout.plannedDistance ?? 0) : sum),
+    0
+  );
 }
 
 function sumActualDistance(activities: ActualActivity[]) {

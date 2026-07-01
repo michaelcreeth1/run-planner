@@ -44,15 +44,13 @@ def training_timeline(db: DbSession, profile: CurrentProfile) -> dict:
 
 @router.get("/weeks/current", response_model=TrainingWeekRead)
 def current_week(db: DbSession, profile: CurrentProfile) -> dict:
-    today = date.today()
-    week = planning.get_or_create_week(db, planning.week_start_for(today), profile.id)
-    return planning.serialize_week(week, db)
+    today = planning.today_for_timezone(profile.timezone)
+    return planning.week_read(db, planning.week_start_for(today), profile.id)
 
 
 @router.get("/weeks/{week_start_date}", response_model=TrainingWeekRead)
 def get_week(week_start_date: date, db: DbSession, profile: CurrentProfile) -> dict:
-    week = planning.get_or_create_week(db, planning.week_start_for(week_start_date), profile.id)
-    return planning.serialize_week(week, db)
+    return planning.week_read(db, planning.week_start_for(week_start_date), profile.id)
 
 
 @router.patch("/weeks/{week_id}", response_model=TrainingWeekRead)
@@ -68,7 +66,7 @@ def update_week(
 
 @router.post("/weeks/{week_id}/recalculate", response_model=TrainingWeekRead)
 def recalculate_week(week_id: str, db: DbSession, profile: CurrentProfile) -> dict:
-    week = planning.get_week_by_id(db, week_id, profile.id)
+    week = planning.get_or_create_week_for_mutation(db, week_id, profile.id)
     planning.recalculate_week(db, week)
     return planning.serialize_week(week, db)
 
