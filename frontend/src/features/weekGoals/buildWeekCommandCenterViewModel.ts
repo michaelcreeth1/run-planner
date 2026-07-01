@@ -1,3 +1,7 @@
+import { parseDate, toDateInputValue } from "../../lib/dates";
+import { formatNumber, formatShortDate } from "../../lib/formatters";
+import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
+
 export type WeekMode = "planning" | "execution" | "review";
 
 export type GoalDisplayStatus =
@@ -73,76 +77,6 @@ export type WeekCommandCenterViewModel = {
   notesDetail?: string;
   detailSummary: string;
   compactStats?: CompactWeekStatViewModel[];
-};
-
-type WeekGoalStatus =
-  | "not_started"
-  | "on_track"
-  | "at_risk"
-  | "achieved"
-  | "partially_achieved"
-  | "missed"
-  | "exceeded"
-  | "waived";
-
-type WeekGoal = {
-  id: string;
-  category: "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";
-  goalType: "achievement" | "guardrail";
-  label: string;
-  description: string;
-  targetValue: number | null;
-  minAcceptable: number | null;
-  maxAcceptable: number | null;
-  unit: "mi" | "sessions" | "days" | "percent" | "boolean" | "custom";
-  priority: "primary" | "secondary" | "guardrail";
-  status: WeekGoalStatus;
-  isEditable: boolean;
-  isEnabled: boolean;
-};
-
-type WeekGoalEvaluation = {
-  goalId: string;
-  status: WeekGoalStatus;
-  guardrailStatus: "ok" | "warning" | "danger" | "waived" | "not_applicable" | null;
-  actualValue: number | null;
-  plannedValue: number | null;
-  remainingPlannedValue: number | null;
-  summary: string;
-  detail: string | null;
-  severity: "info" | "success" | "warning" | "danger";
-  contributingWorkoutIds: string[];
-  contributingActivityIds: string[];
-};
-
-type Workout = {
-  id: string;
-  plannedDate: string;
-  title: string;
-  sport: "run" | "strength" | "cross_training" | "rest" | "mobility" | "other";
-  workoutType: string;
-  intensityCategory: "rest" | "easy" | "moderate" | "workout" | "race" | "strength";
-  plannedDistance: number | null;
-};
-
-type ActualActivity = {
-  id: string;
-  name: string;
-  sportType: string;
-  activityDate: string;
-  distanceMiles: number;
-};
-
-type TrainingWeek = {
-  weekStartDate: string;
-  weekEndDate: string;
-  plannedMileage: number;
-  actualMileage: number;
-  notes: string;
-  workouts: Workout[];
-  actualActivities: ActualActivity[];
-  goals: WeekGoal[];
-  goalEvaluations: WeekGoalEvaluation[];
 };
 
 type BuildWeekCommandCenterOptions = {
@@ -1027,7 +961,7 @@ function plannedRestDayDates(week: TrainingWeek) {
   const end = parseDate(week.weekEndDate);
 
   while (cursor <= end) {
-    const dateValue = formatIsoDate(cursor);
+    const dateValue = toDateInputValue(cursor);
     if (!activeDates.has(dateValue)) {
       dates.push(dateValue);
     }
@@ -1091,26 +1025,6 @@ function formatWeekRange(start: string, end: string) {
   return `${formatShortDate(start)}-${formatShortDate(end)}`;
 }
 
-function formatShortDate(dateValue: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(parseDate(dateValue));
-}
-
 function formatWeekday(dateValue: string) {
   return new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(parseDate(dateValue));
-}
-
-function parseDate(dateValue: string) {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function formatIsoDate(dateValue: Date) {
-  const year = dateValue.getFullYear();
-  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
-  const day = String(dateValue.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatNumber(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
