@@ -1,4 +1,4 @@
-import { Link, Plus, RefreshCw, ShieldAlert, Trash2, UserCircle, Users } from "lucide-react";
+import { Link, Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { StatusBanner } from "../../components/shared/StatusBanner";
@@ -134,77 +134,105 @@ export function SettingsView({
       {settingsMessage ? (
         <div className="settings-note">{settingsMessage}</div>
       ) : null}
-      <div className="settings-row">
-        <span>Strava</span>
-        <strong>{stravaStatus?.connected ? stravaStatus.athleteName ?? "Connected" : "Not connected"}</strong>
-      </div>
-      {stravaStatus?.message ? (
-        <div className="settings-note">{stravaStatus.message}</div>
-      ) : null}
-      <div className="settings-actions">
-        <button type="button" disabled={writesBlocked} onClick={connectStrava}>
-          <Link size={17} />
-          <span>{stravaStatus?.connected ? "Reconnect Strava" : "Connect Strava"}</span>
-        </button>
-        <button
-          className="danger"
-          disabled={!stravaStatus?.connected || isDisconnectingStrava || writesBlocked}
-          type="button"
-          onClick={disconnectStrava}
-        >
-          <Trash2 size={17} />
-          <span>{isDisconnectingStrava ? "Disconnecting" : "Disconnect"}</span>
-        </button>
-        <button
-          className="primary"
-          disabled={!stravaStatus?.connected || isSyncing || writesBlocked}
-          type="button"
-          onClick={onBackfill}
-        >
-          <RefreshCw size={17} />
-          <span>{isSyncing ? "Syncing" : "Backfill 180 days"}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onRefreshStatus();
-            onRefreshActivities();
-          }}
-        >
-          <RefreshCw size={17} />
-          <span>Refresh</span>
-        </button>
-      </div>
-      {lastSyncJob ? (
-        <div className="settings-note">
-          Last sync {lastSyncJob.status}: {lastSyncJob.activitiesFetched} fetched,{" "}
-          {lastSyncJob.activitiesCreated} created, {lastSyncJob.activitiesUpdated} updated
+
+      <section className="settings-card">
+        <header className="settings-card-header">
+          <div>
+            <h2>Strava</h2>
+            <p>Connection and activity sync</p>
+          </div>
+          <span className={`settings-pill ${stravaStatus?.connected ? "settings-pill--success" : "settings-pill--neutral"}`}>
+            {stravaStatus?.connected ? "Connected" : "Not connected"}
+          </span>
+        </header>
+        <div className="settings-kv">
+          <div className="settings-kv-row">
+            <span>Athlete</span>
+            <strong>{stravaStatus?.connected ? stravaStatus.athleteName ?? "Connected" : "—"}</strong>
+          </div>
+          <div className="settings-kv-row">
+            <span>Granted scopes</span>
+            <strong>{stravaStatus?.grantedScopes.length ? stravaStatus.grantedScopes.join(", ") : "none"}</strong>
+          </div>
         </div>
-      ) : null}
-      <div className="settings-row">
-        <span>Strava scopes</span>
-        <strong>{stravaStatus?.grantedScopes.length ? stravaStatus.grantedScopes.join(", ") : "none"}</strong>
-      </div>
-      <div className="settings-row">
-        <span>Frontend</span>
-        <strong>{frontendVersion}</strong>
-      </div>
-      <div className="settings-row">
-        <span>Backend</span>
-        <strong>{apiVersion?.backendVersion ?? "unknown"}</strong>
-      </div>
-      <div className="settings-row">
-        <span>Schema</span>
-        <strong>{apiVersion?.schemaVersion ?? "unknown"}</strong>
-      </div>
-      <div className="settings-row">
-        <span>AI</span>
-        <strong>Stub</strong>
-      </div>
-      <form className="settings-form" onSubmit={createProfile}>
-        <header>
-          <Users size={18} />
-          <strong>Add profile</strong>
+        {stravaStatus?.message ? (
+          <div className="settings-note">{stravaStatus.message}</div>
+        ) : null}
+        <div className="settings-actions">
+          <button
+            className="primary"
+            disabled={!stravaStatus?.connected || isSyncing || writesBlocked}
+            type="button"
+            onClick={onBackfill}
+          >
+            <RefreshCw size={16} />
+            <span>{isSyncing ? "Syncing" : "Backfill 180 days"}</span>
+          </button>
+          <button type="button" disabled={writesBlocked} onClick={connectStrava}>
+            <Link size={16} />
+            <span>{stravaStatus?.connected ? "Reconnect Strava" : "Connect Strava"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onRefreshStatus();
+              onRefreshActivities();
+            }}
+          >
+            <RefreshCw size={16} />
+            <span>Refresh</span>
+          </button>
+          <button
+            className="danger"
+            disabled={!stravaStatus?.connected || isDisconnectingStrava || writesBlocked}
+            type="button"
+            onClick={disconnectStrava}
+          >
+            <Trash2 size={16} />
+            <span>{isDisconnectingStrava ? "Disconnecting" : "Disconnect"}</span>
+          </button>
+        </div>
+        {lastSyncJob ? (
+          <div className="settings-note">
+            Last sync {lastSyncJob.status}: {lastSyncJob.activitiesFetched} fetched,{" "}
+            {lastSyncJob.activitiesCreated} created, {lastSyncJob.activitiesUpdated} updated
+          </div>
+        ) : null}
+      </section>
+
+      <section className="settings-card">
+        <header className="settings-card-header">
+          <div>
+            <h2>About</h2>
+            <p>Component versions</p>
+          </div>
+        </header>
+        <div className="settings-kv">
+          <div className="settings-kv-row">
+            <span>Frontend</span>
+            <strong>{frontendVersion}</strong>
+          </div>
+          <div className="settings-kv-row">
+            <span>Backend</span>
+            <strong>{apiVersion?.backendVersion ?? "unknown"}</strong>
+          </div>
+          <div className="settings-kv-row">
+            <span>Schema</span>
+            <strong>{apiVersion?.schemaVersion ?? "unknown"}</strong>
+          </div>
+          <div className="settings-kv-row">
+            <span>AI</span>
+            <strong>Stub</strong>
+          </div>
+        </div>
+      </section>
+
+      <form className="settings-card settings-form" onSubmit={createProfile}>
+        <header className="settings-card-header">
+          <div>
+            <h2>Add profile</h2>
+            <p>Create another athlete profile under this account</p>
+          </div>
         </header>
         <div className="form-grid">
           <label>
@@ -228,10 +256,12 @@ export function SettingsView({
         </button>
       </form>
       {session.user?.isAdmin ? (
-        <form className="settings-form" onSubmit={createUser}>
-          <header>
-            <UserCircle size={18} />
-            <strong>Create user</strong>
+        <form className="settings-card settings-form" onSubmit={createUser}>
+          <header className="settings-card-header">
+            <div>
+              <h2>Create user</h2>
+              <p>Add a new account with its own login</p>
+            </div>
           </header>
           <div className="form-grid form-grid--three">
             <label>

@@ -1,5 +1,5 @@
 import type { StravaActivity } from "../../types/domain";
-import { formatDateTime, formatNumber, formatPace } from "../../lib/formatters";
+import { formatDateTime, formatPace } from "../../lib/formatters";
 
 export function ActivitiesView({ activities }: { activities: StravaActivity[] }) {
   return (
@@ -10,29 +10,26 @@ export function ActivitiesView({ activities }: { activities: StravaActivity[] })
           <h2>{activities.length} activities</h2>
         </div>
       </header>
-      <div className="activity-list">
+      <div className="activity-table">
+        <div className="activity-table-head" aria-hidden="true">
+          <span>Activity</span>
+          <span>Date</span>
+          <span className="activity-col-num">Miles</span>
+          <span className="activity-col-num">Pace</span>
+          <span className="activity-col-num">Avg HR</span>
+        </div>
         {activities.map((activity) => (
-          <article className="activity-row" key={activity.id}>
-            <div>
+          <article className="activity-table-row" key={activity.id}>
+            <div className="activity-name">
               <strong>{activity.name}</strong>
-              <span>
-                {activity.sportType} · {formatDateTime(activity.startDateLocal)}
-              </span>
+              <span>{activity.sportType}</span>
             </div>
-            <dl>
-              <div>
-                <dt>Miles</dt>
-                <dd>{formatNumber(activity.distanceMiles)}</dd>
-              </div>
-              <div>
-                <dt>Pace</dt>
-                <dd>{formatPace(activity.movingTime, activity.distanceMiles)}</dd>
-              </div>
-              <div>
-                <dt>HR</dt>
-                <dd>{activity.averageHeartrate ? Math.round(activity.averageHeartrate) : "-"}</dd>
-              </div>
-            </dl>
+            <span className="activity-date">{formatDateTime(activity.startDateLocal)}</span>
+            <span className="activity-col-num">{activity.distanceMiles.toFixed(1)}</span>
+            <span className="activity-col-num">{formatPace(activity.movingTime, activity.distanceMiles)}</span>
+            <span className="activity-col-num">
+              {activity.averageHeartrate ? Math.round(activity.averageHeartrate) : "–"}
+            </span>
           </article>
         ))}
       </div>

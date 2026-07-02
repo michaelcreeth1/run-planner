@@ -9,11 +9,20 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       allowedHosts: ["run.home.arpa", "run.creeth.net"],
-      port: 5173,
+      port: Number(env.PORT) || 5173,
       proxy: {
-        "/api": apiTarget,
-        "/healthz": apiTarget,
-        "/readyz": apiTarget
+        "/api": {
+          target: apiTarget,
+          changeOrigin: true
+        },
+        "/healthz": {
+          target: apiTarget,
+          changeOrigin: true
+        },
+        "/readyz": {
+          target: apiTarget,
+          changeOrigin: true
+        }
       }
     }
   };
