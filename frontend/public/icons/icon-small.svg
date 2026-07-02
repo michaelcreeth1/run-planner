@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Running Planner icon">
+  <defs>
+    <linearGradient id="route" x1="20%" y1="4%" x2="72%" y2="96%">
+      <stop offset="0%" stop-color="#15EDC3"/>
+      <stop offset="58%" stop-color="#52CF7F"/>
+      <stop offset="100%" stop-color="#B5F741"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="115" fill="#07101C"/>
+  <path d="M 380.4 326.9 A 168.0 168.0 0 1 0 131.6 326.9 L 256.0 464.0 Z M 368.0 214.0 A 112.0 112.0 0 1 0 144.0 214.0 A 112.0 112.0 0 1 0 368.0 214.0 Z" fill="url(#route)" fill-rule="evenodd"/>
+  <g fill="none" stroke="#FDF8E7" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 288 172 L 244 262"/>
+    <path d="M 288 174 L 352 196"/>
+    <path d="M 244 262 L 322 300 L 306 368"/>
+    <path d="M 244 262 L 182 316 L 128 296"/>
+  </g>
+  <circle cx="314" cy="116" r="38" fill="#FDF8E7"/>
+</svg>

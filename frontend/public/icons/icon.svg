@@ -1,7 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Running Planner icon">
-  <rect width="512" height="512" rx="104" fill="#126466"/>
-  <path d="M136 332c54-84 105-126 154-126 37 0 63 19 86 57" fill="none" stroke="#f6f4ef" stroke-width="34" stroke-linecap="round"/>
-  <path d="M140 355h232" stroke="#f6f4ef" stroke-width="34" stroke-linecap="round"/>
-  <circle cx="309" cy="139" r="35" fill="#e9b44c"/>
-  <path d="M225 206l-35-44M284 235l-27 72M346 291l41 61" fill="none" stroke="#e9b44c" stroke-width="28" stroke-linecap="round"/>
+  <defs>
+    <radialGradient id="depth" cx="50%" cy="0%" r="115%">
+      <stop offset="0%" stop-color="#101C2C"/>
+      <stop offset="55%" stop-color="#07101C"/>
+      <stop offset="100%" stop-color="#040B16"/>
+    </radialGradient>
+    <linearGradient id="route" x1="20%" y1="4%" x2="72%" y2="96%">
+      <stop offset="0%" stop-color="#15EDC3"/>
+      <stop offset="58%" stop-color="#52CF7F"/>
+      <stop offset="100%" stop-color="#B5F741"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="115" fill="url(#depth)"/>
+  <rect x="6" y="6" width="500" height="500" rx="110" fill="none" stroke="#FDF8E7" stroke-opacity="0.05" stroke-width="4"/>
+  <g transform="translate(256 256) scale(0.95) translate(-256 -256)">
+    <path d="M 380.4 326.9 A 168.0 168.0 0 1 0 131.6 326.9 L 256.0 464.0 Z M 380.0 214.0 A 124.0 124.0 0 1 0 132.0 214.0 A 124.0 124.0 0 1 0 380.0 214.0 Z" fill="url(#route)" fill-rule="evenodd"/>
+    <g fill="none" stroke="#FDF8E7" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 286 168 L 246 258"/>
+      <path d="M 286 170 L 338 208 L 366 172"/>
+      <path d="M 284 174 L 226 200 L 206 244"/>
+      <path d="M 246 258 L 318 296 L 302 366"/>
+      <path d="M 246 258 L 188 314 L 134 292"/>
+    </g>
+    <circle cx="312" cy="120" r="30" fill="#FDF8E7"/>
+  </g>
 </svg>

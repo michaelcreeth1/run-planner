@@ -4,8 +4,8 @@
   "description": "A self-hosted training planner that matches planned intent to Strava activity data.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f6f4ef",
-  "theme_color": "#126466",
+  "background_color": "#07101C",
+  "theme_color": "#07101C",
   "icons": [
     {
       "src": "/icons/icon.svg",

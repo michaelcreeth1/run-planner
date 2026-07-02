@@ -3,7 +3,7 @@
   --bg-surface: #ffffff;
   --bg-muted: #f4f5f7;
   --bg-subtle: #f9fafb;
-  --bg-sidebar: #101322;
+  --bg-sidebar: #0a1420;
 
   --text-primary: #16181d;
   --text-secondary: #6b7280;
@@ -12,15 +12,17 @@
   --border-subtle: #e7e8ec;
   --border-strong: #d5d7dd;
 
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
+  --primary: #0f766e;
+  --primary-hover: #115e59;
+  --text-on-primary: #ffffff;
+  --gradient-brand: linear-gradient(90deg, #0d9488 0%, #16a34a 100%);
 
   --tint-success-bg: #e7f8f1;
   --tint-success-border: #bbf7d0;
   --tint-success-text: #047857;
-  --tint-info-bg: #edf3fe;
-  --tint-info-border: #bfdbfe;
-  --tint-info-text: #1d4ed8;
+  --tint-info-bg: #e2f7f1;
+  --tint-info-border: #a7e7d6;
+  --tint-info-text: #0f766e;
   --tint-warning-bg: #fffbeb;
   --tint-warning-border: #fde68a;
   --tint-warning-text: #92400e;
@@ -55,7 +57,7 @@
     0 24px 48px -12px rgba(16, 24, 40, 0.16);
 
   --tracking-caps: 0.055em;
-  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.18);
 
   --app-header-height: 64px;
   --app-header-gap: 16px;
@@ -356,7 +358,7 @@ main {
   background: var(--primary);
   border: 1px solid var(--primary);
   border-radius: var(--radius-md);
-  color: #ffffff;
+  color: var(--text-on-primary);
   cursor: pointer;
   display: inline-flex;
   gap: 8px;
@@ -579,7 +581,7 @@ h1 {
 .editor-actions .primary {
   background: var(--primary);
   border-color: var(--primary);
-  color: #ffffff;
+  color: var(--text-on-primary);
 }
 
 .editor-actions .primary:hover {
@@ -740,7 +742,7 @@ h1 {
 .time-rail-handle:hover,
 .time-rail-handle:focus-visible {
   background: var(--primary);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--focus-ring);
   outline: 0;
 }
 
@@ -843,7 +845,7 @@ h1 {
 .time-rail-tick:hover,
 .time-rail-tick:focus-visible {
   border-color: var(--tint-info-border);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--focus-ring);
   outline: 0;
 }
 
@@ -1563,7 +1565,7 @@ h1 {
 .goal-card--info {
   box-shadow:
     inset 0 0 0 1px rgba(191, 219, 254, 0.9),
-    0 12px 26px rgba(37, 99, 235, 0.06);
+    0 12px 26px rgba(15, 118, 110, 0.06);
 }
 
 .goal-card--success {
@@ -1711,7 +1713,7 @@ h1 {
 .goal-card-edit:hover,
 .goal-card-edit:focus-visible {
   border-color: var(--tint-info-border);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--focus-ring);
   outline: 0;
 }
 
@@ -2183,7 +2185,7 @@ dt {
 .workout-item:focus-visible {
   box-shadow:
     inset 0 0 0 1px var(--border-subtle),
-    0 0 0 3px rgba(37, 99, 235, 0.16);
+    var(--focus-ring);
   outline: 0;
 }
 
@@ -2228,7 +2230,7 @@ dt {
 
 .workout-item.easy,
 .easy {
-  --workout-color: #2563eb;
+  --workout-color: var(--primary);
 }
 
 .workout-item.recovery,
@@ -2519,7 +2521,7 @@ dt {
 
 .week-action-button:hover,
 .week-action-button:focus-visible {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--focus-ring);
 }
 
 .week-slate-context {
@@ -4004,7 +4006,7 @@ dt {
 }
 
 .long-run-strip i {
-  background: var(--success);
+  background: var(--gradient-brand);
   border-radius: inherit;
   display: block;
   height: 100%;
@@ -4102,7 +4104,7 @@ dt {
 }
 
 .goal-reliability-bar-success {
-  background: var(--success);
+  background: var(--gradient-brand);
 }
 
 .goal-reliability-bar-warning {
@@ -4226,7 +4228,7 @@ dt {
 }
 
 .analytics-segmented-control button:focus-visible {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  box-shadow: var(--focus-ring);
   outline: 0;
 }
 
@@ -4410,7 +4412,7 @@ dt {
 .settings-actions .primary {
   background: var(--primary);
   border-color: var(--primary);
-  color: #ffffff;
+  color: var(--text-on-primary);
 }
 
 .settings-actions .primary:hover:not(:disabled) {
@@ -4843,34 +4845,41 @@ dt {
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-app: #0e1014;
-  --bg-surface: #16181d;
-  --bg-muted: #1e2128;
-  --bg-subtle: #1a1d23;
-  --bg-sidebar: #0a0c10;
+  --bg-app: #07101c;
+  --bg-surface: #0b1523;
+  --bg-muted: #101c2c;
+  --bg-subtle: #0e1927;
+  --bg-sidebar: #050d18;
 
-  --text-primary: #e9eaec;
-  --text-secondary: #9ba1aa;
-  --text-muted: #6a707b;
+  --text-primary: #fdf8e7;
+  --text-secondary: #7f90a6;
+  --text-muted: #5c6b80;
 
-  --border-subtle: #262931;
-  --border-strong: #373b45;
+  --border-subtle: #1b2a3d;
+  --border-strong: #26364b;
 
-  --primary: #3b82f6;
-  --primary-hover: #60a5fa;
+  --primary: #15edc3;
+  --primary-hover: #4bf2d2;
+  --text-on-primary: #06101a;
+  --gradient-brand: linear-gradient(90deg, #15edc3 0%, #52cf7f 100%);
 
-  --tint-success-bg: rgba(16, 185, 129, 0.14);
-  --tint-success-border: rgba(16, 185, 129, 0.34);
-  --tint-success-text: #34d399;
-  --tint-info-bg: rgba(59, 130, 246, 0.16);
-  --tint-info-border: rgba(96, 165, 250, 0.36);
-  --tint-info-text: #93c5fd;
-  --tint-warning-bg: rgba(245, 158, 11, 0.14);
-  --tint-warning-border: rgba(245, 158, 11, 0.34);
-  --tint-warning-text: #fbbf24;
-  --tint-danger-bg: rgba(244, 63, 94, 0.14);
-  --tint-danger-border: rgba(244, 63, 94, 0.34);
-  --tint-danger-text: #fb7185;
+  --accent-cyan: #15edc3;
+  --success: #52cf7f;
+  --warning: #ffc857;
+  --danger: #ff6b5c;
+
+  --tint-success-bg: rgba(82, 207, 127, 0.14);
+  --tint-success-border: rgba(82, 207, 127, 0.35);
+  --tint-success-text: #52cf7f;
+  --tint-info-bg: rgba(21, 237, 195, 0.12);
+  --tint-info-border: rgba(21, 237, 195, 0.32);
+  --tint-info-text: #15edc3;
+  --tint-warning-bg: rgba(255, 200, 87, 0.13);
+  --tint-warning-border: rgba(255, 200, 87, 0.34);
+  --tint-warning-text: #ffc857;
+  --tint-danger-bg: rgba(255, 107, 92, 0.13);
+  --tint-danger-border: rgba(255, 107, 92, 0.34);
+  --tint-danger-text: #ff6b5c;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.32);
   --shadow-sm:
@@ -4885,12 +4894,12 @@ dt {
 }
 
 [data-theme="dark"] .app-header {
-  background: rgba(14, 16, 20, 0.82);
+  background: rgba(7, 16, 28, 0.85);
 }
 
 [data-theme="dark"] .workout-item::after,
 [data-theme="dark"] .actual-item::after {
-  background: rgba(22, 24, 29, 0.76);
+  background: rgba(11, 21, 35, 0.78);
 }
 
 [data-theme="dark"] .editor-backdrop,
