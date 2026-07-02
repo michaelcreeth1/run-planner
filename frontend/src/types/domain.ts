@@ -65,6 +65,19 @@ export type WeekGoalStatus =
 export type WeekGoalSource = "manual" | "derived_from_plan" | "template" | "ai_suggested";
 export type GoalSeverity = "info" | "success" | "warning" | "danger";
 export type WeekState = "past" | "current" | "future";
+export type FieldSource = "manual" | "plan";
+export type RaceDistance = "5k" | "10k" | "half_marathon" | "marathon" | "other";
+export type RacePriority = "A" | "B" | "C";
+export type PlanStatus = "active" | "completed" | "archived";
+export type MesocyclePhase = "base" | "build" | "specific" | "taper" | "race" | "recovery" | "maintenance";
+export type PlanGoalCategory =
+  | "race_time"
+  | "peak_weekly_mileage"
+  | "weekly_mileage_progression"
+  | "long_run_progression"
+  | "consistency"
+  | "custom";
+export type PlanPreviewAction = "create" | "annotate" | "update" | "skip_overridden" | "unlink";
 
 export type WeekGoal = {
   id: string;
@@ -113,7 +126,14 @@ export type TrainingWeek = {
   actualMileage: number;
   plannedTime: number | null;
   actualTime: number | null;
+  mesocycleId: string | null;
+  purpose: WeekPurposeId | string;
+  purposeSource: FieldSource;
+  targetMileage: number | null;
+  targetMileageSource: FieldSource;
   targetLongRunDistance: number | null;
+  targetLongRunSource: FieldSource;
+  isDownWeek: boolean;
   notes: string;
   workouts: Workout[];
   actualActivities: ActualActivity[];
@@ -353,6 +373,120 @@ export type PlanWeekDraft = {
   goals: PlanWeekGoalDraft[];
   hasExistingPlan: boolean;
   mismatchAcknowledged: boolean;
+};
+
+export type GoalRace = {
+  id: string;
+  athleteAccountId: string;
+  name: string;
+  raceDate: string;
+  distance: RaceDistance;
+  distanceMiles: number | null;
+  targetTime: number | null;
+  priority: RacePriority;
+  location: string;
+  altitudeContext: string;
+  notes: string;
+  targetPaceSecondsPerMile: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Mesocycle = {
+  id: string;
+  trainingPlanId: string;
+  athleteAccountId: string;
+  orderIndex: number;
+  name: string;
+  phase: MesocyclePhase;
+  startDate: string;
+  endDate: string;
+  targetMileageStart: number | null;
+  targetMileageEnd: number | null;
+  longRunStart: number | null;
+  longRunEnd: number | null;
+  downWeekCadence: number | null;
+  downWeekReductionPct: number;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlanGoal = {
+  id: string;
+  trainingPlanId: string;
+  athleteAccountId: string;
+  category: PlanGoalCategory;
+  label: string;
+  targetValue: number | null;
+  unit: WeekGoalUnit | "time";
+  flowsDown: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlanWeekSummary = {
+  weekStartDate: string;
+  weekEndDate: string;
+  mesocycleId: string | null;
+  mesocycleName: string | null;
+  mesocyclePhase: MesocyclePhase | null;
+  weekIndexInMesocycle: number | null;
+  mesocycleWeekCount: number | null;
+  plannedMileage: number;
+  actualMileage: number;
+  targetMileage: number | null;
+  targetLongRunDistance: number | null;
+  purpose: WeekPurposeId | string;
+  purposeSource: FieldSource;
+  targetMileageSource: FieldSource;
+  targetLongRunSource: FieldSource;
+  isDownWeek: boolean;
+  hasManualOverride: boolean;
+  warning: string | null;
+};
+
+export type TrainingPlanSummary = {
+  id: string;
+  athleteAccountId: string;
+  name: string;
+  description: string;
+  goalRaceId: string | null;
+  goalRaceName: string | null;
+  startDate: string;
+  endDate: string;
+  status: PlanStatus;
+  notes: string;
+  isCurrent: boolean;
+  isUpcoming: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingPlan = TrainingPlanSummary & {
+  goalRace: GoalRace | null;
+  mesocycles: Mesocycle[];
+  planGoals: PlanGoal[];
+  weekSummaries: PlanWeekSummary[];
+};
+
+export type ScaffoldPreviewChange = {
+  field: string;
+  from: string | number | boolean | null;
+  to: string | number | boolean | null;
+};
+
+export type ScaffoldPreviewWeek = {
+  weekStartDate: string;
+  action: PlanPreviewAction;
+  changes: ScaffoldPreviewChange[];
+  warnings: string[];
+};
+
+export type ScaffoldPreview = {
+  weeks: ScaffoldPreviewWeek[];
+  warnings: string[];
 };
 
 export type ProposedLoad = {

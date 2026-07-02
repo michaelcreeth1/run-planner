@@ -27,6 +27,8 @@ class AthleteAccount(Base):
     )
 
     weeks: Mapped[list["TrainingWeek"]] = relationship(back_populates="athlete")
+    goal_races: Mapped[list["GoalRace"]] = relationship(back_populates="athlete")
+    training_plans: Mapped[list["TrainingPlan"]] = relationship(back_populates="athlete")
 
 
 class UserAccount(Base):
@@ -62,7 +64,16 @@ class TrainingWeek(Base):
     actual_mileage: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     planned_time: Mapped[int | None] = mapped_column(Integer)
     actual_time: Mapped[int | None] = mapped_column(Integer)
+    mesocycle_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mesocycles.id", ondelete="SET NULL")
+    )
+    purpose: Mapped[str] = mapped_column(String, nullable=False, default="")
+    purpose_source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    target_mileage: Mapped[float | None] = mapped_column(Float)
+    target_mileage_source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
     target_long_run_distance: Mapped[float | None] = mapped_column(Float)
+    target_long_run_source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    is_down_week: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -72,6 +83,7 @@ class TrainingWeek(Base):
     )
 
     athlete: Mapped[AthleteAccount] = relationship(back_populates="weeks")
+    mesocycle: Mapped["Mesocycle | None"] = relationship(back_populates="weeks")
     workouts: Mapped[list["PlannedWorkout"]] = relationship(
         back_populates="training_week",
         cascade="all, delete-orphan",
@@ -200,3 +212,132 @@ class WorkoutTemplate(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class GoalRace(Base):
+    __tablename__ = "goal_races"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    race_date: Mapped[date] = mapped_column(Date, nullable=False)
+    distance: Mapped[str] = mapped_column(String, nullable=False, default="half_marathon")
+    distance_miles: Mapped[float | None] = mapped_column(Float)
+    target_time: Mapped[int | None] = mapped_column(Integer)
+    priority: Mapped[str] = mapped_column(String, nullable=False, default="A")
+    location: Mapped[str] = mapped_column(String, nullable=False, default="")
+    altitude_context: Mapped[str] = mapped_column(String, nullable=False, default="")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    athlete: Mapped[AthleteAccount] = relationship(back_populates="goal_races")
+    training_plans: Mapped[list["TrainingPlan"]] = relationship(back_populates="goal_race")
+
+
+class TrainingPlan(Base):
+    __tablename__ = "training_plans"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    goal_race_id: Mapped[str | None] = mapped_column(
+        ForeignKey("goal_races.id", ondelete="SET NULL")
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    athlete: Mapped[AthleteAccount] = relationship(back_populates="training_plans")
+    goal_race: Mapped[GoalRace | None] = relationship(back_populates="training_plans")
+    mesocycles: Mapped[list["Mesocycle"]] = relationship(
+        back_populates="training_plan",
+        cascade="all, delete-orphan",
+        order_by="Mesocycle.order_index",
+    )
+    plan_goals: Mapped[list["PlanGoal"]] = relationship(
+        back_populates="training_plan",
+        cascade="all, delete-orphan",
+        order_by="PlanGoal.created_at",
+    )
+
+
+class Mesocycle(Base):
+    __tablename__ = "mesocycles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    training_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("training_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    phase: Mapped[str] = mapped_column(String, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    target_mileage_start: Mapped[float | None] = mapped_column(Float)
+    target_mileage_end: Mapped[float | None] = mapped_column(Float)
+    long_run_start: Mapped[float | None] = mapped_column(Float)
+    long_run_end: Mapped[float | None] = mapped_column(Float)
+    down_week_cadence: Mapped[int | None] = mapped_column(Integer)
+    down_week_reduction_pct: Mapped[float] = mapped_column(Float, nullable=False, default=20)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    training_plan: Mapped[TrainingPlan] = relationship(back_populates="mesocycles")
+    weeks: Mapped[list[TrainingWeek]] = relationship(back_populates="mesocycle")
+
+
+class PlanGoal(Base):
+    __tablename__ = "plan_goals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    training_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("training_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    target_value: Mapped[float | None] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String, nullable=False, default="custom")
+    flows_down: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    training_plan: Mapped[TrainingPlan] = relationship(back_populates="plan_goals")

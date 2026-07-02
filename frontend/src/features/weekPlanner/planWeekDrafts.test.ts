@@ -221,7 +221,7 @@ describe("plan week draft helpers", () => {
     const payload = planWeekDraftToPayload(draft);
 
     expect(payload).toMatchObject({
-      purpose: "Maintain",
+      purpose: "maintain",
       targetLongRunDistance: 8
     });
     expect(payload.workouts[0]).toMatchObject({
@@ -260,7 +260,14 @@ function makeWeek(
     actualMileage,
     plannedTime: null,
     actualTime: null,
+    mesocycleId: null,
+    purpose: "maintain",
+    purposeSource: "manual",
+    targetMileage: null,
+    targetMileageSource: "manual",
     targetLongRunDistance: null,
+    targetLongRunSource: "manual",
+    isDownWeek: false,
     notes: "",
     workouts,
     actualActivities,

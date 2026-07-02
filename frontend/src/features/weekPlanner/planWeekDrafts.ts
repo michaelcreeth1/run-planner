@@ -23,10 +23,23 @@ import { roundToTenth } from "../../lib/numbers";
 import { weekPurposes } from "../../lib/options";
 
 export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, TrainingWeek>): PlanWeekDraft {
-  const hasExistingPlan = week.workouts.length > 0 || week.goals.length > 0 || week.notes.trim().length > 0;
+  const hasExistingPlan =
+    week.workouts.length > 0 ||
+    week.goals.length > 0 ||
+    week.notes.trim().length > 0 ||
+    week.purposeSource === "plan" ||
+    week.targetMileage !== null ||
+    week.targetLongRunDistance !== null;
   const priorWeek = findPriorUsableWeek(week.weekStartDate, weekStack);
   const startingPoint: PlanStartingPoint = hasExistingPlan ? "existing" : priorWeek ? "copy_prior" : "blank";
-  const purpose = purposeFromText(week.notes) ?? "maintain";
+  const purpose =
+    typeof week.purpose === "string" && week.purpose.length > 0
+      ? normalizeWeekPurposeId(week.purpose)
+      : purposeFromText(week.notes) ?? "maintain";
+  const load =
+    week.targetMileage !== null
+      ? planTargetLoad(week.targetMileage, loadBaselineMileageOrNull(priorWeek))
+      : suggestLoad(loadBaselineMileageOrNull(priorWeek), purpose, week.workouts);
   const baseDraft: PlanWeekDraft = {
     weekId: week.id,
     weekStartDate: week.weekStartDate,
@@ -34,10 +47,10 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
     weekState: week.weekState,
     startingPoint,
     purpose,
-    customPurpose: purpose === "custom" ? week.notes : "",
+    customPurpose: purpose === "custom" ? week.notes.trim() : "",
     priorWeekStartDate: priorWeek?.weekStartDate ?? null,
     noPriorUsableWeek: !hasExistingPlan && !priorWeek,
-    load: suggestLoad(loadBaselineMileageOrNull(priorWeek), purpose, week.workouts),
+    load,
     workouts: [],
     goals: [],
     hasExistingPlan,
@@ -52,18 +65,27 @@ export function rebuildPlanWeekDraftForStartingPoint(
   weekStack: Record<string, TrainingWeek>,
   currentWeek?: TrainingWeek
 ): PlanWeekDraft {
+  const targetWeek = currentWeek ?? weekStack[draft.weekStartDate];
   const priorWeek = draft.priorWeekStartDate ? weekStack[draft.priorWeekStartDate] : findPriorUsableWeek(draft.weekStartDate, weekStack);
   const sourceWeek = startingPoint === "existing" ? currentWeek ?? weekStack[draft.weekStartDate] : priorWeek ?? null;
   const loadSourceWeek = priorWeek ?? null;
+  const planTargetMileage = targetWeek?.targetMileage ?? null;
   const sourceWorkouts =
     startingPoint === "blank" || !sourceWeek
       ? []
       : draftWorkoutsFromWeek(sourceWeek, draft.weekStartDate);
+  const loadSuggestion =
+    planTargetMileage !== null
+      ? planTargetLoad(planTargetMileage, loadBaselineMileageOrNull(loadSourceWeek))
+      : suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, sourceWorkouts);
   const adjustedWorkouts =
     startingPoint === "smart_adjustment"
-      ? scaleDraftWorkoutsToMileage(sourceWorkouts, suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, sourceWorkouts).suggestedMileage)
+      ? scaleDraftWorkoutsToMileage(sourceWorkouts, loadSuggestion.suggestedMileage)
       : sourceWorkouts;
-  const nextLoad = suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, adjustedWorkouts);
+  const nextLoad =
+    planTargetMileage !== null
+      ? planTargetLoad(planTargetMileage, loadBaselineMileageOrNull(loadSourceWeek))
+      : suggestLoad(loadBaselineMileageOrNull(loadSourceWeek), draft.purpose, adjustedWorkouts);
   const nextDraft = {
     ...draft,
     startingPoint,
@@ -454,7 +476,8 @@ export function numericAlignment(id: string, label: string, value: number, goal:
 
 export function planWeekDraftToPayload(draft: PlanWeekDraft) {
   return {
-    purpose: purposeText(draft),
+    purpose: draft.purpose,
+    customPurpose: draft.customPurpose,
     targetLongRunDistance: optionalNumber(draft.goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => formToPayload(workout)),
     goals: draft.goals.map((goal) => ({
@@ -484,6 +507,22 @@ export function purposeText(draft: PlanWeekDraft) {
 export function purposeFromText(value: string): WeekPurposeId | null {
   const normalized = value.trim().toLowerCase();
   return weekPurposes.find((option) => option.label.toLowerCase() === normalized)?.value ?? (normalized ? "custom" : null);
+}
+
+export function normalizeWeekPurposeId(value: string): WeekPurposeId {
+  const normalized = value.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (weekPurposes.some((option) => option.value === normalized)) {
+    return normalized as WeekPurposeId;
+  }
+  return purposeFromText(value) ?? "custom";
+}
+
+function planTargetLoad(targetMileage: number, priorMileage: number | null): ProposedLoad {
+  return {
+    priorMileage,
+    suggestedMileage: roundToTenth(targetMileage),
+    reason: "Using the week's plan target mileage."
+  };
 }
 
 export function draftGoalTitle(goal: PlanWeekGoalDraft) {

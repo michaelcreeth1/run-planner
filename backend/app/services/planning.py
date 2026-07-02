@@ -47,6 +47,18 @@ QUALITY_KEYWORDS = (
 )
 VIRTUAL_WEEK_ID_PREFIX = "virtual-week:"
 VIRTUAL_GOAL_ID_PREFIX = "virtual-goal:"
+WEEK_PURPOSE_IDS = frozenset(
+    {
+        "aerobic_build",
+        "maintain",
+        "down_week",
+        "workout_focus",
+        "long_run_focus",
+        "recovery",
+        "race_week",
+        "custom",
+    }
+)
 
 
 def week_start_for(day: date) -> date:
@@ -243,7 +255,11 @@ def training_timeline(db: Session, athlete_account_id: str | None = None) -> dic
     metadata_weeks = db.scalars(
         select(TrainingWeek).where(
             TrainingWeek.athlete_account_id == active_athlete_id,
-            (TrainingWeek.notes != "") | TrainingWeek.target_long_run_distance.is_not(None),
+            (TrainingWeek.notes != "")
+            | (TrainingWeek.purpose != "")
+            | TrainingWeek.target_mileage.is_not(None)
+            | TrainingWeek.target_long_run_distance.is_not(None)
+            | (TrainingWeek.is_down_week == 1),
         )
     ).all()
     for week in metadata_weeks:
@@ -302,6 +318,18 @@ def update_week(
 ) -> TrainingWeek:
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     updates = payload.model_dump(exclude_unset=True)
+    if "purpose" in updates:
+        updates["purpose"] = normalize_week_purpose(updates["purpose"])
+        week.purpose_source = "manual"
+        if "is_down_week" not in updates:
+            week.is_down_week = int(updates["purpose"] == "down_week")
+    if "is_down_week" in updates:
+        week.purpose_source = "manual"
+        updates["is_down_week"] = int(bool(updates["is_down_week"]))
+    if "target_mileage" in updates:
+        week.target_mileage_source = "manual"
+    if "target_long_run_distance" in updates:
+        week.target_long_run_source = "manual"
     for field, value in updates.items():
         setattr(week, field, value)
     db.commit()
@@ -581,8 +609,17 @@ def copy_prior_week(
             detail="Prior week has no planned workouts to copy.",
         )
 
+    if not target.purpose:
+        target.purpose = source.purpose
+        target.purpose_source = "manual"
+        target.is_down_week = source.is_down_week
+    if target.target_mileage is None and source.target_mileage is not None:
+        target.target_mileage = source.target_mileage
+        target.target_mileage_source = "manual"
     if target.target_long_run_distance is None:
         target.target_long_run_distance = source.target_long_run_distance
+        if source.target_long_run_distance is not None:
+            target.target_long_run_source = "manual"
     if not target.notes:
         target.notes = source.notes
 
@@ -612,8 +649,14 @@ def save_week_plan(
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
-    week.notes = payload.purpose
+    normalized_purpose = normalize_week_purpose(payload.purpose)
+    week.purpose = normalized_purpose
+    week.purpose_source = "manual"
+    week.is_down_week = int(normalized_purpose == "down_week")
+    if normalized_purpose == "custom":
+        week.notes = payload.custom_purpose.strip()
     week.target_long_run_distance = payload.target_long_run_distance
+    week.target_long_run_source = "manual"
 
     week.workouts.clear()
     week.goals.clear()
@@ -804,7 +847,14 @@ def serialize_week(week: TrainingWeek, db: Session) -> dict:
         "actual_mileage": totals["actual_mileage"],
         "planned_time": totals["planned_time"],
         "actual_time": totals["actual_time"],
+        "mesocycle_id": week.mesocycle_id,
+        "purpose": week.purpose,
+        "purpose_source": week.purpose_source,
+        "target_mileage": week.target_mileage,
+        "target_mileage_source": week.target_mileage_source,
         "target_long_run_distance": week.target_long_run_distance,
+        "target_long_run_source": week.target_long_run_source,
+        "is_down_week": bool(week.is_down_week),
         "notes": week.notes,
         "workouts": workouts,
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
@@ -831,7 +881,14 @@ def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: st
         "actual_mileage": totals["actual_mileage"],
         "planned_time": None,
         "actual_time": totals["actual_time"],
+        "mesocycle_id": None,
+        "purpose": "",
+        "purpose_source": "manual",
+        "target_mileage": None,
+        "target_mileage_source": "manual",
         "target_long_run_distance": None,
+        "target_long_run_source": "manual",
+        "is_down_week": False,
         "notes": "",
         "workouts": [],
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
@@ -910,6 +967,8 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
     workouts = list(week.workouts)
     run_workouts = [workout for workout in workouts if workout.sport == "run"]
     planned_mileage = round(sum(workout.planned_distance or 0 for workout in run_workouts), 1)
+    if planned_mileage <= 0 and week.target_mileage:
+        planned_mileage = round(week.target_mileage, 1)
     planned_sessions = len([workout for workout in workouts if workout.sport != "rest"])
     hard_dates = {
         workout.planned_date
@@ -1067,6 +1126,17 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
         )
     )
     return goals
+
+
+def normalize_week_purpose(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = normalized.replace("__", "_")
+    if normalized not in WEEK_PURPOSE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown week purpose.",
+        )
+    return normalized
 
 
 def new_default_goal(

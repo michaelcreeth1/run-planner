@@ -11,6 +11,7 @@ from app.api.routes import (
     auth,
     health,
     planning,
+    plans,
     sync,
     version,
     webhooks,
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router, prefix="/api")
     app.include_router(activities.router, prefix="/api")
     app.include_router(planning.router, prefix="/api")
+    app.include_router(plans.router, prefix="/api")
     return app
 
 

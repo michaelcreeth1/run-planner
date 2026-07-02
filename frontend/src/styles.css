@@ -4931,3 +4931,244 @@ dt {
   background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-subtle) 50%, var(--bg-muted) 75%);
   background-size: 200% 100%;
 }
+
+.plans-view {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.plans-toolbar,
+.plan-form-header,
+.plan-form-section-header,
+.plan-hero-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.plans-toolbar h1,
+.plan-hero h2 {
+  margin: 0.2rem 0 0;
+}
+
+.plans-toolbar-actions,
+.plan-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.primary-button,
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.primary-button {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--text-on-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.primary-button:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.primary-button--accent {
+  background: var(--accent-amber);
+  border-color: var(--accent-amber);
+}
+
+.ghost-button {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.ghost-button--danger {
+  color: var(--tint-danger-text);
+}
+
+.primary-button:hover,
+.ghost-button:hover {
+  transform: translateY(-1px);
+}
+
+.plan-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 1.5rem;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+  padding: 1.25rem;
+}
+
+.plan-form,
+.plan-preview,
+.plan-detail-grid,
+.mesocycle-editor-list,
+.mesocycle-overview-list,
+.plan-goal-race-list,
+.plan-preview-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.plan-form-grid,
+.mesocycle-editor-grid,
+.plan-hero-metrics {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.plan-form-grid-span {
+  grid-column: 1 / -1;
+}
+
+.plan-form label,
+.mesocycle-editor-card label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
+.plan-form input,
+.plan-form select,
+.plan-form textarea,
+.mesocycle-editor-card input,
+.mesocycle-editor-card select {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 1rem;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 0.8rem 0.95rem;
+}
+
+.plan-form-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1rem;
+}
+
+.mesocycle-editor-card,
+.mesocycle-overview-card,
+.goal-race-card,
+.plan-goal-chip,
+.plan-preview-row,
+.plan-week-bar {
+  border: 1px solid var(--border-subtle);
+  border-radius: 1.15rem;
+  background: var(--bg-subtle);
+}
+
+.mesocycle-editor-card,
+.mesocycle-overview-card,
+.goal-race-card,
+.plan-preview-row {
+  padding: 1rem;
+}
+
+.plan-goal-list,
+.plan-goal-race-list {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.plan-goal-chip {
+  padding: 0.9rem 1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.plan-detail-grid {
+  grid-template-columns: 1.6fr 1fr;
+}
+
+.plan-hero {
+  display: grid;
+  gap: 1rem;
+}
+
+.plan-hero-metrics > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.plan-hero-metrics span,
+.goal-race-card span,
+.plan-preview-row span,
+.mesocycle-overview-card span {
+  color: var(--text-secondary);
+}
+
+.plan-timeline {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.plan-week-bar {
+  text-align: left;
+  padding: 0.95rem 1rem;
+  display: grid;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.plan-week-bar--base {
+  border-color: var(--tint-info-border);
+}
+
+.plan-week-bar--build,
+.plan-week-bar--specific {
+  border-color: var(--tint-danger-border);
+}
+
+.plan-week-bar--taper,
+.plan-week-bar--race {
+  border-color: var(--tint-warning-border);
+}
+
+.plan-week-bar--manual {
+  box-shadow: inset 0 0 0 1px var(--accent-amber);
+}
+
+.plan-preview-warnings {
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--tint-warning-text);
+}
+
+.plan-preview-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.plan-preview-row--create {
+  border-color: var(--tint-info-border);
+}
+
+.plan-preview-row--update,
+.plan-preview-row--skip_overridden {
+  border-color: var(--tint-warning-border);
+}
+
+.plan-preview-row--unlink {
+  border-color: var(--tint-danger-border);
+}
+
+@media (max-width: 960px) {
+  .plan-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

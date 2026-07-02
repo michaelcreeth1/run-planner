@@ -1,5 +1,6 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
+import { weekPurposes } from "../../lib/options";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -181,7 +182,13 @@ function buildGoalCards({
 }
 
 function isUnplannedWeek(week: TrainingWeek, mode: WeekMode) {
-  return mode === "planning" && !hasWeekWork(week) && !week.notes.trim() && week.goals.length === 0;
+  return (
+    mode === "planning" &&
+    !hasWeekWork(week) &&
+    !week.notes.trim() &&
+    !hasStructuredPlanContext(week) &&
+    week.goals.length === 0
+  );
 }
 
 function hasWeekWork(week: TrainingWeek) {
@@ -426,6 +433,9 @@ function buildPurposeTag(week: TrainingWeek, mode: WeekMode, isUnplanned: boolea
   if (isUnplanned) {
     return "Unplanned week";
   }
+  if (typeof week.purpose === "string" && week.purpose.length > 0) {
+    return purposeLabel(week);
+  }
   if (week.notes.trim()) {
     return "Custom";
   }
@@ -457,6 +467,15 @@ function buildNarrative(
 ) {
   if (isUnplanned) {
     return "Start from the prior week, choose a purpose, review proposed goals, then save the plan.";
+  }
+
+  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
+    const targetMileage = week.targetMileage ? `${formatNumber(week.targetMileage)} miles.` : "Set the weekly load.";
+    const longRunSentence =
+      week.targetLongRunDistance !== null
+        ? `Long run near ${formatNumber(week.targetLongRunDistance)} miles.`
+        : "Long run is not set yet.";
+    return `${purposeLabel(week)} week. ${targetMileage} ${longRunSentence}`;
   }
 
   if (week.notes.trim()) {
@@ -494,6 +513,10 @@ function buildNarrative(
 }
 
 function buildPurpose(week: TrainingWeek, goalCards: GoalCardViewModel[]) {
+  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
+    return `${purposeLabel(week)} week${week.targetMileage ? ` around ${formatNumber(week.targetMileage)} planned miles` : ""}.`;
+  }
+
   if (week.notes.trim()) {
     return week.notes.trim();
   }
@@ -550,7 +573,11 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "planning") {
-    const hasSavedPlan = week.workouts.length > 0 || week.goals.length > 0 || week.notes.trim().length > 0;
+    const hasSavedPlan =
+      week.workouts.length > 0 ||
+      week.goals.length > 0 ||
+      week.notes.trim().length > 0 ||
+      hasStructuredPlanContext(week);
     return [
       {
         id: hasSavedPlan ? "edit_plan" : "plan_week",
@@ -579,6 +606,15 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
     },
     { id: "edit_goals", label: "Edit goals", variant: "ghost", icon: "target" }
   ];
+}
+
+function hasStructuredPlanContext(week: TrainingWeek) {
+  return week.purposeSource === "plan" || week.targetMileage !== null || week.targetLongRunDistance !== null;
+}
+
+function purposeLabel(week: TrainingWeek) {
+  const purpose = typeof week.purpose === "string" ? week.purpose : "maintain";
+  return weekPurposes.find((option) => option.value === purpose)?.label ?? "Custom";
 }
 
 function primaryValueForGoal(

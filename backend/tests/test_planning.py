@@ -645,10 +645,27 @@ def test_save_week_plan_replaces_purpose_workouts_and_goals() -> None:
             ),
         )
 
-        assert saved_week.notes == "Aerobic build"
+        assert saved_week.purpose == "aerobic_build"
+        assert saved_week.notes == ""
         assert saved_week.target_long_run_distance == 8
         assert saved_week.planned_mileage == 14
         assert [workout.title for workout in saved_week.workouts] == ["Easy 6", "Long 8"]
         assert [goal.label for goal in saved_week.goals] == ["Run 14 miles"]
+    finally:
+        db.close()
+
+
+def test_save_week_plan_persists_custom_purpose_text() -> None:
+    db = make_session()
+    try:
+        week = planning.get_or_create_week(db, date(2099, 8, 3))
+        saved_week = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(purpose="custom", custom_purpose="Altitude camp shakeout"),
+        )
+
+        assert saved_week.purpose == "custom"
+        assert saved_week.notes == "Altitude camp shakeout"
     finally:
         db.close()

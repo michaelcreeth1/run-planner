@@ -8,7 +8,6 @@ import {
   Route,
   Settings,
   ShieldAlert,
-  Sparkles,
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -19,6 +18,7 @@ import { Placeholder } from "./components/shared/Placeholder";
 import { StatusBanner } from "./components/shared/StatusBanner";
 import { ActivitiesView } from "./features/activities/ActivitiesView";
 import { AnalyticsView } from "./features/analytics/AnalyticsView";
+import { PlansView } from "./features/plans/PlansView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
@@ -753,10 +753,17 @@ function App() {
           />
         ) : null}
         {activeTab === "plan" ? (
-          <Placeholder
-            title="Plan"
-            detail="Long-range training plans are coming soon. For now, plan week by week from the Week view."
-            icon={<Sparkles size={22} />}
+          <PlansView
+            writesBlocked={staleFrontend}
+            onPlanApplied={() => {
+              refreshVisibleWeeks();
+              loadTrainingTimeline();
+              loadAnalyticsPlanning();
+            }}
+            onSelectWeek={(start) => {
+              setActiveTab("week");
+              selectWeek(start, "time-rail");
+            }}
           />
         ) : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
