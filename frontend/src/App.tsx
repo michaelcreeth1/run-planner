@@ -60,8 +60,25 @@ const tabs = [
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
+type Theme = "light" | "dark";
+
+function getInitialTheme(): Theme {
+  const stored = window.localStorage.getItem("theme");
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("week");
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("theme", theme);
+  }, [theme]);
+
   const [apiVersion, setApiVersion] = useState<ApiVersion | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -687,10 +704,13 @@ function App() {
           activeProfile={activeProfile}
           isSwitchingProfile={isSwitchingProfile}
           profiles={session.profiles}
+          theme={theme}
+          title={tabs.find((tab) => tab.id === activeTab)?.label}
           user={session.user}
           onLogout={logout}
           onOpenSettings={() => setActiveTab("settings")}
           onSwitchProfile={switchProfile}
+          onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
         />
         {apiError ? (
           <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
@@ -732,7 +752,13 @@ function App() {
             copyingPriorWeekId={copyingPriorWeekId}
           />
         ) : null}
-        {activeTab === "plan" ? <Placeholder title="Plan" icon={<Sparkles size={22} />} /> : null}
+        {activeTab === "plan" ? (
+          <Placeholder
+            title="Plan"
+            detail="Long-range training plans are coming soon. For now, plan week by week from the Week view."
+            icon={<Sparkles size={22} />}
+          />
+        ) : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
         {activeTab === "analytics" ? (
           <AnalyticsView

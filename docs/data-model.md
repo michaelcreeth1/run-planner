@@ -21,9 +21,13 @@ sync data are isolated per owned profile.
 
 Remaining implementation order:
 
-1. Training block.
+1. Training plan, mesocycle, goal race, and plan goal (designed — see
+   `requirements/training-plans-requirements.md` and `docs/training-plans-design.md`;
+   this supersedes the earlier "training block" roadmap item, and adds
+   `mesocycle_id`, structured `purpose`, `target_mileage`, per-field source
+   columns, and `is_down_week` to training weeks).
 2. Workout match.
 3. Daily check-in and weekly summary.
-4. Goal race and gear.
+4. Gear.
 
 Postgres is now the app database. Use a dedicated `running_planner` database on the shared Postgres instance rather than the default `postgres` database. Raw Strava payloads and webhook event payloads are stored as JSONB in Postgres, while SQLite remains only a legacy source format for migration and lightweight tests.

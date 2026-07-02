@@ -1,4 +1,4 @@
-import { LogOut, Settings } from "lucide-react";
+import { LogOut, Moon, Settings, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AthleteProfile, SessionUser } from "../types/domain";
 
@@ -6,18 +6,24 @@ export function AppHeader({
   activeProfile,
   isSwitchingProfile,
   profiles,
+  theme,
+  title,
   user,
   onLogout,
   onOpenSettings,
-  onSwitchProfile
+  onSwitchProfile,
+  onToggleTheme
 }: {
   activeProfile: AthleteProfile | null;
   isSwitchingProfile: boolean;
   profiles: AthleteProfile[];
+  theme: "light" | "dark";
+  title?: string;
   user: SessionUser | null;
   onLogout: () => void;
   onOpenSettings: () => void;
   onSwitchProfile: (athleteAccountId: string) => void;
+  onToggleTheme: () => void;
 }) {
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -51,7 +57,17 @@ export function AppHeader({
 
   return (
     <header className="app-header">
+      {title ? <span className="app-header-title">{title}</span> : null}
       <div className="app-header-actions">
+        <button
+          type="button"
+          className="theme-toggle"
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
         <div className="account-menu" ref={accountMenuRef}>
           <button
             type="button"
