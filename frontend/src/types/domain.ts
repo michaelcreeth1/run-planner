@@ -77,7 +77,6 @@ export type PlanGoalCategory =
   | "long_run_progression"
   | "consistency"
   | "custom";
-export type PlanPreviewAction = "create" | "annotate" | "update" | "skip_overridden" | "unlink";
 
 export type WeekGoal = {
   id: string;
@@ -469,24 +468,6 @@ export type TrainingPlan = TrainingPlanSummary & {
   mesocycles: Mesocycle[];
   planGoals: PlanGoal[];
   weekSummaries: PlanWeekSummary[];
-};
-
-export type ScaffoldPreviewChange = {
-  field: string;
-  from: string | number | boolean | null;
-  to: string | number | boolean | null;
-};
-
-export type ScaffoldPreviewWeek = {
-  weekStartDate: string;
-  action: PlanPreviewAction;
-  changes: ScaffoldPreviewChange[];
-  warnings: string[];
-};
-
-export type ScaffoldPreview = {
-  weeks: ScaffoldPreviewWeek[];
-  warnings: string[];
 };
 
 export type ProposedLoad = {

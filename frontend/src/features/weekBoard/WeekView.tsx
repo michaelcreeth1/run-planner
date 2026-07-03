@@ -1,4 +1,4 @@
-import { ChevronRight, Copy, Edit3, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
@@ -531,11 +531,16 @@ function WeekSchedule({
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
           const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
+          const isToday = dateValue === today;
+          const entries = buildDayEntries(dayWorkouts, dayActuals);
           return (
-            <article className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty)}`} key={dateValue}>
+            <article
+              className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}`}
+              key={dateValue}
+            >
               <header>
                 <div>
-                  <span>{formatWeekdayShort(dateValue)}</span>
+                  <span>{isToday ? "Today" : formatWeekdayShort(dateValue)}</span>
                   <strong>{formatDayNumber(dateValue)}</strong>
                 </div>
                 <button type="button" title="Add workout" onClick={() => onCreate(dateValue)}>
@@ -543,18 +548,21 @@ function WeekSchedule({
                 </button>
               </header>
               <div className="workout-stack">
-                {dayActuals.map((activity) => (
-                  <ActualActivityItem activity={activity} key={activity.id} />
-                ))}
-                {dayWorkouts.map((workout) => (
-                  <WorkoutItem
-                    key={workout.id}
-                    workout={workout}
-                    onDelete={onDelete}
-                    onDuplicate={onDuplicate}
-                    onEdit={onEdit}
-                  />
-                ))}
+                {entries.map((entry) =>
+                  entry.kind === "unplanned" ? (
+                    <ActualActivityItem activity={entry.actual} key={`actual-${entry.actual.id}`} />
+                  ) : (
+                    <WorkoutItem
+                      key={entry.workout.id}
+                      workout={entry.workout}
+                      actual={entry.actual}
+                      today={today}
+                      onDelete={onDelete}
+                      onDuplicate={onDuplicate}
+                      onEdit={onEdit}
+                    />
+                  )
+                )}
                 {isEmpty && dateValue < today ? (
                   <span className="empty-day-action empty-day-action--static">Rest</span>
                 ) : null}
@@ -652,15 +660,81 @@ function ExpandedWeekSkeleton({ days }: { days: string[] }) {
   );
 }
 
+type DayEntry =
+  | { kind: "planned"; workout: Workout; actual: ActualActivity | null }
+  | { kind: "unplanned"; actual: ActualActivity };
+
+function buildDayEntries(dayWorkouts: Workout[], dayActuals: ActualActivity[]): DayEntry[] {
+  const matches = new Map<string, ActualActivity>();
+  const unmatched: ActualActivity[] = [];
+  for (const activity of dayActuals) {
+    const isRun = activity.sportType.toLowerCase().includes("run");
+    const best = dayWorkouts
+      .filter((workout) => isRun && workout.sport === "run" && !matches.has(workout.id))
+      .map((workout) => ({
+        workout,
+        gap:
+          workout.plannedDistance === null
+            ? Number.MAX_SAFE_INTEGER
+            : Math.abs(workout.plannedDistance - activity.distanceMiles)
+      }))
+      .sort((left, right) => left.gap - right.gap)[0];
+    if (best) {
+      matches.set(best.workout.id, activity);
+    } else {
+      unmatched.push(activity);
+    }
+  }
+  return [
+    ...unmatched.map((actual) => ({ kind: "unplanned" as const, actual })),
+    ...dayWorkouts.map((workout) => ({
+      kind: "planned" as const,
+      workout,
+      actual: matches.get(workout.id) ?? null
+    }))
+  ];
+}
+
+type WorkoutState = "done" | "planned" | "missed";
+
+function workoutState(workout: Workout, actual: ActualActivity | null, today: string): WorkoutState {
+  if (actual || workout.status.startsWith("completed") || workout.status === "partial") {
+    return "done";
+  }
+  if (workout.sport === "rest" || workout.intensityCategory === "rest") {
+    return "planned";
+  }
+  if (workout.plannedDate < today || workout.status === "missed" || workout.status === "skipped_intentionally") {
+    return "missed";
+  }
+  return "planned";
+}
+
+function actualStatsLabel(activity: ActualActivity) {
+  const pace = formatPace(activity.movingTime, activity.distanceMiles);
+  const pieces = [`${formatNumber(activity.distanceMiles)} mi`];
+  if (pace !== "-") {
+    pieces.push(pace);
+  }
+  return pieces.join(" · ");
+}
+
 function ActualActivityItem({ activity }: { activity: ActualActivity }) {
+  const detail = [
+    "unplanned",
+    activity.averageHeartrate ? `${Math.round(activity.averageHeartrate)} bpm` : formatTime(activity.startDateLocal)
+  ].join(" · ");
   return (
     <div className="actual-item">
-      <span className="workout-kind">Actual</span>
-      <strong>{activity.name}</strong>
-      <p className="workout-meta">
-        {formatNumber(activity.distanceMiles)} mi · {formatPace(activity.movingTime, activity.distanceMiles)}
+      <div className="workout-title-row">
+        <span className="workout-type-dot" title="Strava activity" aria-hidden="true" />
+        <strong>{activity.name}</strong>
+      </div>
+      <p className="workout-status-line workout-status-line--done">
+        <Check size={12} strokeWidth={2.75} aria-hidden="true" />
+        <span>{actualStatsLabel(activity)}</span>
       </p>
-      <small>{activity.averageHeartrate ? `${Math.round(activity.averageHeartrate)} bpm` : formatTime(activity.startDateLocal)}</small>
+      <small>{detail}</small>
       <div className="activity-controls">
         <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activity)}>
           <ExternalLink size={15} />
@@ -672,18 +746,49 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
 
 function WorkoutItem({
   workout,
+  actual,
+  today,
   onEdit,
   onDelete,
   onDuplicate
 }: {
   workout: Workout;
+  actual: ActualActivity | null;
+  today: string;
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
 }) {
+  const state = workoutState(workout, actual, today);
+  const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
+  const plannedMeta = formatWorkoutMeta(workout);
+  const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
+
+  let statusLine: string;
+  if (actual) {
+    statusLine = actualStatsLabel(actual);
+  } else if (state === "done") {
+    statusLine = hasPlannedMetrics ? plannedMeta : "done";
+  } else if (state === "missed") {
+    statusLine = workout.status === "skipped_intentionally" ? "skipped" : "missed";
+  } else {
+    statusLine = plannedMeta;
+  }
+
+  const detailPieces: string[] = [];
+  if ((actual || state === "missed") && hasPlannedMetrics) {
+    detailPieces.push(`plan ${plannedMeta}`);
+  }
+  if (actual?.averageHeartrate) {
+    detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
+  }
+  const detail = detailPieces.join(" · ");
+
+  const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
+
   return (
     <div
-      className={`workout-item ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}
+      className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}
       onClick={() => onEdit(workout)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -695,16 +800,24 @@ function WorkoutItem({
       tabIndex={0}
     >
       <div className="workout-title-row">
-        <span className="workout-kind">{labelForWorkoutType(workout.workoutType)}</span>
+        <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
         <strong>{workout.title}</strong>
       </div>
-      <p className="workout-meta">{formatWorkoutMeta(workout)}</p>
-      <small>{workout.status.replaceAll("_", " ")}</small>
+      <p className={`workout-status-line workout-status-line--${state}`}>
+        {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+        <span>{statusLine}</span>
+      </p>
+      {detail ? <small>{detail}</small> : null}
       <div
         className="workout-controls"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >
+        {actual ? (
+          <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
+            <ExternalLink size={15} />
+          </button>
+        ) : null}
         <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
           <Edit3 size={15} />
         </button>
@@ -730,15 +843,20 @@ function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
 }
 
-function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmpty: boolean) {
-  if (activities.length > 0) {
-    return "day-column--actual";
+function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmpty: boolean, isToday: boolean) {
+  const classes: string[] = [];
+  if (isToday) {
+    classes.push("day-column--today");
   }
   const firstWorkout = workouts.find((workout) => workout.sport !== "rest") ?? workouts[0];
-  if (!firstWorkout) {
-    return isEmpty ? "day-column--empty day-column--rest" : "";
+  if (firstWorkout) {
+    classes.push(`day-column--${firstWorkout.intensityCategory}`, firstWorkout.workoutType.replaceAll("_", "-"));
+  } else if (activities.length > 0) {
+    classes.push("day-column--actual");
+  } else if (isEmpty) {
+    classes.push("day-column--empty", "day-column--rest");
   }
-  return `day-column--${firstWorkout.intensityCategory} ${firstWorkout.workoutType.replaceAll("_", "-")}`;
+  return classes.join(" ");
 }
 
 function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {
