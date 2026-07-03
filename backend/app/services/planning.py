@@ -1367,10 +1367,31 @@ def evaluate_quality_goal(
 ) -> dict:
     hard_workouts = [workout for workout in workouts if is_quality_workout(workout)]
     hard_activities = [activity for activity in activities if is_quality_activity(activity)]
-    actual = len({activity.start_date_local.date() for activity in hard_activities})
-    planned = len({workout.planned_date for workout in hard_workouts})
+    hard_workout_dates = {workout.planned_date for workout in hard_workouts}
+    run_activities_on_hard_days = [
+        activity
+        for activity in activities
+        if is_run_activity(activity) and activity.start_date_local.date() in hard_workout_dates
+    ]
+    completed_quality_activities: list[StravaActivity] = []
+    completed_quality_activity_ids: set[str] = set()
+    for activity in [*hard_activities, *run_activities_on_hard_days]:
+        if activity.id in completed_quality_activity_ids:
+            continue
+        completed_quality_activity_ids.add(activity.id)
+        completed_quality_activities.append(activity)
+
+    completed_quality_dates = {
+        activity.start_date_local.date() for activity in completed_quality_activities
+    }
+    actual = len(completed_quality_dates)
+    planned = len(hard_workout_dates)
     remaining = len(
-        {workout.planned_date for workout in hard_workouts if workout.planned_date >= today}
+        {
+            planned_date
+            for planned_date in hard_workout_dates
+            if planned_date >= today and planned_date not in completed_quality_dates
+        }
     )
     value = (
         actual
@@ -1390,7 +1411,7 @@ def evaluate_quality_goal(
         remaining_planned_value=remaining,
         severity=status_severity(status_value),
         contributing_workout_ids=[workout.id for workout in hard_workouts],
-        contributing_activity_ids=[activity.id for activity in hard_activities],
+        contributing_activity_ids=[activity.id for activity in completed_quality_activities],
     )
 
 

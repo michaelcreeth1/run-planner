@@ -549,6 +549,66 @@ def test_current_week_mileage_projection_does_not_double_count_completed_today()
         db.close()
 
 
+def test_current_week_quality_goal_counts_run_on_planned_quality_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        week_start = date(2026, 6, 29)
+        quality_day = date(2026, 7, 1)
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 3),
+        )
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=quality_day,
+                title="LT intervals",
+                workout_type="threshold",
+                intensity_category="workout",
+                planned_distance=6,
+            ),
+            athlete.id,
+        )
+        week = planning.get_or_create_week(db, week_start, athlete.id)
+        db.add(
+            StravaActivity(
+                strava_activity_id="activity-current-quality",
+                athlete_account_id=athlete.id,
+                name="Morning Run",
+                sport_type="Run",
+                start_date=datetime(2026, 7, 1, 13, 0, 0),
+                start_date_local=datetime(2026, 7, 1, 7, 0, 0),
+                distance=1609.344 * 6,
+                raw_payload_json={},
+            )
+        )
+        db.commit()
+        week = planning.get_week_by_id(db, week.id, athlete.id)
+
+        serialized = planning.serialize_week(week, db)
+
+        quality_goal = next(
+            goal
+            for goal in serialized["goals"]
+            if goal["category"] == "quality" and goal["goal_type"] == "achievement"
+        )
+        quality_evaluation = next(
+            evaluation
+            for evaluation in serialized["goal_evaluations"]
+            if evaluation["goal_id"] == quality_goal["id"]
+        )
+        assert quality_evaluation["status"] == "on_track"
+        assert quality_evaluation["actual_value"] == 1
+        assert quality_evaluation["remaining_planned_value"] == 0
+    finally:
+        db.close()
+
+
 def test_copy_prior_week_copies_goals_forward() -> None:
     db = make_session()
     try:
