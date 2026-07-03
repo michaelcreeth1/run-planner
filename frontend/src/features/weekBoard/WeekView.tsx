@@ -210,6 +210,7 @@ function WeekRow({
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previousHeight = useRef<number | null>(null);
   const isPast = weekStart < selectedWeekStart;
+  const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
 
   useLayoutEffect(() => {
     const frame = frameRef.current;
@@ -286,7 +287,7 @@ function WeekRow({
           <CollapsedWeekCard
             onSelectWeek={onSelectWeek}
             previousWeek={previousWeek}
-            tone={isPast ? "past" : "future"}
+            tone={tone}
             week={week ?? undefined}
             weekStart={weekStart}
           />
@@ -295,6 +296,8 @@ function WeekRow({
     </div>
   );
 }
+
+type CollapsedWeekTone = "past" | "current" | "future";
 
 function CollapsedWeekCard({
   onSelectWeek,
@@ -305,7 +308,7 @@ function CollapsedWeekCard({
 }: {
   onSelectWeek: (weekStart: string) => void;
   previousWeek?: TrainingWeek;
-  tone: "past" | "future";
+  tone: CollapsedWeekTone;
   week?: TrainingWeek;
   weekStart: string;
 }) {
@@ -389,9 +392,11 @@ function ExpandedWeekBoard({
         <section className="week-command-center" aria-label="Loading week command center">
           <header className="week-command-header">
             <div className="week-command-title">
-              <p className="eyebrow">Training week</p>
+              <div className="week-command-meta">
+                <p className="eyebrow">Training week</p>
+                <span className="week-command-mode">Loading week</span>
+              </div>
               <h1>{formatWeekRangeFromStart(weekStart)}</h1>
-              <span>Loading week</span>
             </div>
           </header>
           <ExpandedWeekSkeletonOverview />
@@ -905,7 +910,7 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
   });
 }
 
-function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: "past" | "future") {
+function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: CollapsedWeekTone) {
   if (!week) {
     return "loading";
   }
@@ -929,7 +934,7 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
   return tone === "future" ? "not planned" : "no plan";
 }
 
-function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: "past" | "future") {
+function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: CollapsedWeekTone) {
   if (!week) {
     return "loading";
   }

@@ -55,6 +55,7 @@ export type CompactWeekStatViewModel = {
   value: string;
   detail?: string;
   severity?: DisplaySeverity;
+  outcome?: "hit" | "missed";
 };
 
 export type WeekCommandCenterViewModel = {
@@ -371,17 +372,16 @@ function buildCompactStats(
     ];
   }
 
-  if (mode === "execution") {
-    const actual = mileage?.actualValue ?? week.actualMileage;
-    const target = mileage?.targetValue ?? projectedTargetMiles(week, mileage);
-    const projected = mileage?.projectedValue ?? actual;
-    return [
-      {
-        label: "Mileage",
-        value: target > 0 ? `${formatNumber(actual)} / ${formatNumber(target)}` : `${formatNumber(actual)} mi`,
-        detail: target > 0 ? `${formatNumber(projected)} projected` : undefined,
-        severity: mileage?.severity
-      },
+	  if (mode === "execution") {
+	    const actual = mileage?.actualValue ?? week.actualMileage;
+	    const projected = mileage?.projectedValue ?? actual;
+	    return [
+	      {
+	        label: "Mileage",
+	        value: `${formatNumber(projected)} mi projected`,
+	        detail: `${formatNumber(actual)} mi completed`,
+	        severity: mileage?.severity
+	      },
       {
         label: "Quality",
         value: quality?.statusLabel ?? `${plannedHardDayCount(week)} hard planned`,
@@ -406,27 +406,37 @@ function buildCompactStats(
   return [
     {
       label: "Mileage",
-      value: `${formatNumber(week.actualMileage)} mi`
+      value: mileage?.primaryValue ?? `${formatNumber(week.actualMileage)} mi`,
+      detail: mileage ? `${mileage.statusLabel}: ${mileage.explanation}` : undefined,
+      severity: mileage?.severity,
+      outcome: reviewOutcomeForGoal(mileage)
     },
     {
       label: "Quality",
       value: quality?.primaryValue ?? `${actualHardDayCount(week)} hard days`,
       detail: quality ? `${quality.statusLabel}: ${quality.explanation}` : undefined,
-      severity: quality?.severity
+      severity: quality?.severity,
+      outcome: reviewOutcomeForGoal(quality)
     },
     {
       label: "Long run",
       value: longRun?.primaryValue ?? deriveLongRun(week, mode, today).summary,
       detail: longRun ? `${longRun.statusLabel}: ${longRun.explanation}` : undefined,
-      severity: longRun?.severity
+      severity: longRun?.severity,
+      outcome: reviewOutcomeForGoal(longRun)
     },
     {
       label: "Recovery",
       value: recovery?.primaryValue ?? formatRestDays(actualRestDays(week), "completed"),
       detail: recovery ? `${recovery.statusLabel}: ${recovery.explanation}` : undefined,
-      severity: recovery?.severity
+      severity: recovery?.severity,
+      outcome: reviewOutcomeForGoal(recovery)
     }
   ];
+}
+
+function reviewOutcomeForGoal(goal: GoalCardViewModel | undefined): CompactWeekStatViewModel["outcome"] {
+  return goal && ["achieved", "on_track"].includes(goal.status) ? "hit" : "missed";
 }
 
 function buildPurposeTag(week: TrainingWeek, mode: WeekMode, isUnplanned: boolean) {
@@ -595,16 +605,7 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
   }
 
   return [
-    { id: "review_week", label: "Review week", variant: "primary", icon: "check" },
-    {
-      id: "use_as_template",
-      label: "Use as template",
-      variant: "secondary",
-      icon: "copy",
-      disabled: true,
-      tooltip: "Template actions are coming next."
-    },
-    { id: "edit_goals", label: "Edit goals", variant: "ghost", icon: "target" }
+    { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
   ];
 }
 

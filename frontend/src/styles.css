@@ -1155,6 +1155,13 @@ h1 {
   opacity: 0.62;
 }
 
+.week-preview-card.current .week-peek-day-badge.planned {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  opacity: 1;
+}
+
 .week-preview-card .week-peek-day-badge.loading {
   color: transparent;
   position: relative;
@@ -1311,26 +1318,44 @@ h1 {
   min-width: 0;
 }
 
+.week-command-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
 .week-command-title .eyebrow {
   color: rgba(255, 255, 255, 0.68);
+  margin: 0;
 }
 
 .week-command-title h1 {
   color: var(--bg-surface);
 }
 
-.week-command-title span {
+.week-command-mode {
   align-items: center;
-  background: var(--week-accent-quiet);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  color: #e0f2fe;
+  color: rgba(255, 255, 255, 0.66);
   display: inline-flex;
-  font-size: 0.82rem;
-  font-weight: 600;
-  min-height: 26px;
-  margin-top: 4px;
-  padding: 4px 9px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.week-command-mode::before {
+  background: currentColor;
+  border-radius: 999px;
+  content: "";
+  flex: 0 0 auto;
+  height: 3px;
+  margin-right: 8px;
+  opacity: 0.42;
+  width: 3px;
 }
 
 .week-command-actions {
@@ -2481,12 +2506,9 @@ dt {
   font-size: 1.6rem;
 }
 
-.week-command-title span {
-  background: rgba(241, 245, 249, 0.88);
-  border: 0;
-  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.76);
+.week-command-mode {
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
 }
 
 .week-action-button {
@@ -2625,6 +2647,33 @@ dt {
 .week-command-stat strong {
   font-size: 0.96rem;
   margin-top: 5px;
+}
+
+.week-command-stats--outcomes .week-command-stat {
+  min-height: 88px;
+  padding-right: 46px;
+}
+
+.week-command-stat-outcome {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  width: 28px;
+}
+
+.week-command-stat-outcome--hit {
+  background: var(--tint-success-bg);
+  color: var(--tint-success-text);
+}
+
+.week-command-stat-outcome--missed {
+  background: var(--tint-danger-bg);
+  color: var(--tint-danger-text);
 }
 
 .all-goals-details {
@@ -4807,6 +4856,19 @@ dt {
     padding: 10px 8px 0 0;
   }
 
+  .week-command-stats--outcomes .week-command-stat,
+  .week-command-stats--outcomes .week-command-stat + .week-command-stat {
+    min-height: 92px;
+    padding-right: 36px;
+  }
+
+  .week-command-stat-outcome {
+    height: 24px;
+    right: 8px;
+    top: 10px;
+    width: 24px;
+  }
+
   .week-command-stat:nth-child(even) {
     box-shadow: inset 1px 0 0 var(--border-subtle);
     padding-left: 12px;
@@ -4968,9 +5030,8 @@ dt {
   background: rgba(0, 0, 0, 0.55);
 }
 
-[data-theme="dark"] .week-command-title span {
-  background: var(--bg-muted);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+[data-theme="dark"] .week-command-mode {
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .week-action-button--primary {
@@ -4985,6 +5046,12 @@ dt {
 [data-theme="dark"] .day-column header small,
 [data-theme="dark"] .time-rail-tick.selected {
   color: var(--tint-info-text);
+}
+
+[data-theme="dark"] .week-preview-card.current .week-peek-day-badge.planned {
+  background: rgba(37, 99, 235, 0.2);
+  border-color: rgba(96, 165, 250, 0.36);
+  color: #93c5fd;
 }
 
 [data-theme="dark"] .command-skeleton-block,

@@ -315,6 +315,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     setIsSaving(true);
     try {
       setSuccess(null);
+      setError(null);
       const endpoint =
         planEditor.mode === "edit" && planEditor.id ? `/api/plans/${planEditor.id}` : "/api/plans";
       const method = planEditor.mode === "edit" ? "PUT" : "POST";
@@ -330,6 +331,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
       onPlanApplied();
     } catch (applyError) {
       setError(applyError instanceof Error ? applyError.message : "Could not save the plan.");
+      setSuccess(null);
     } finally {
       setIsSaving(false);
     }
@@ -528,7 +530,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
             </label>
             <label>
               <span>End date</span>
-              <input type="date" value={planEditor.endDate} onChange={(event) => setPlanEditor((current) => current ? { ...current, endDate: normalizeToSunday(event.target.value) } : current)} required />
+              <input type="date" value={planEditor.endDate} onChange={(event) => updatePlanEndDate(setPlanEditor, event.target.value)} required />
             </label>
             <label className="plan-form-grid-span">
               <span>Description</span>
@@ -1166,10 +1168,10 @@ function defaultPlanGoals(goalRace: GoalRace | null): PlanGoalDraft[] {
           {
             category: "race_time" as const,
             label: `Race target ${formatDurationHms(goalRace.targetTime)}`,
-            targetValue: String(goalRace.targetTime),
+            targetValue: "",
             unit: "time" as const,
             flowsDown: false,
-            notes: ""
+            notes: `Target time: ${formatDurationHms(goalRace.targetTime)}`
           }
         ]
       : [])
@@ -1225,12 +1227,12 @@ function applyBoundaryDrag(
   requestedWeekIndex: number
 ) {
   const boundaries = mesocycleBoundaryPositions(editor);
-  const totalWeeks = weeksBetween(editor.startDate, addDays(editor.endDate, 1));
+  if (boundaryIndex === editor.mesocycles.length) {
+    return resizePlanEndToWeekCount(editor, requestedWeekIndex);
+  }
+
   const minWeek = boundaryIndex === 0 ? Math.min(0, requestedWeekIndex) : boundaries[boundaryIndex - 1] + 1;
-  const maxWeek =
-    boundaryIndex === editor.mesocycles.length
-      ? Math.max(totalWeeks, requestedWeekIndex)
-      : boundaries[boundaryIndex + 1] - 1;
+  const maxWeek = boundaries[boundaryIndex + 1] - 1;
   const weekIndex = Math.round(clamp(requestedWeekIndex, minWeek, maxWeek));
   const nextMesocycles = [...editor.mesocycles];
 
@@ -1243,19 +1245,6 @@ function applyBoundaryDrag(
     return {
       ...editor,
       startDate: nextStartDate,
-      mesocycles: normalizeMesocycleOrder(nextMesocycles)
-    };
-  }
-
-  if (boundaryIndex === editor.mesocycles.length) {
-    const nextEndDate = addDays(editor.startDate, weekIndex * 7 - 1);
-    nextMesocycles[nextMesocycles.length - 1] = {
-      ...nextMesocycles[nextMesocycles.length - 1],
-      endDate: nextEndDate
-    };
-    return {
-      ...editor,
-      endDate: nextEndDate,
       mesocycles: normalizeMesocycleOrder(nextMesocycles)
     };
   }
@@ -1287,6 +1276,77 @@ function updateMesocycleBoundary(
     }
     return applyBoundaryDrag(current, boundaryIndex, weeksBetween(current.startDate, boundaryDate));
   });
+}
+
+function updatePlanEndDate(
+  setPlanEditor: Dispatch<SetStateAction<PlanEditorState | null>>,
+  rawEndDate: string
+) {
+  const endDate = normalizeToSunday(rawEndDate);
+  setPlanEditor((current) => {
+    if (!current) {
+      return current;
+    }
+    if (current.mesocycles.length === 0) {
+      return { ...current, endDate };
+    }
+    return resizePlanEndToWeekCount(current, weeksBetween(current.startDate, addDays(endDate, 1)));
+  });
+}
+
+function resizePlanEndToWeekCount(editor: PlanEditorState, requestedWeekCount: number) {
+  const roundedRequestedWeekCount = Math.round(requestedWeekCount);
+  if (!Number.isFinite(roundedRequestedWeekCount)) {
+    return editor;
+  }
+
+  if (editor.mesocycles.length === 0) {
+    const weekCount = Math.max(1, roundedRequestedWeekCount);
+    return {
+      ...editor,
+      endDate: addDays(editor.startDate, weekCount * 7 - 1)
+    };
+  }
+
+  const weekCounts = editor.mesocycles.map((mesocycle) =>
+    Math.max(1, weeksBetween(mesocycle.startDate, addDays(mesocycle.endDate, 1)))
+  );
+  const currentWeekCount = weekCounts.reduce((sum, weekCount) => sum + weekCount, 0);
+  const shrinkCapacity = weekCounts.filter((weekCount) => weekCount > 1).length;
+  const minimumWeekCount = currentWeekCount - shrinkCapacity;
+  const targetWeekCount = Math.max(minimumWeekCount, roundedRequestedWeekCount);
+  let weeksToRemove = Math.max(0, currentWeekCount - targetWeekCount);
+
+  // Pull from the end backward, with each existing phase donating at most one week.
+  for (let index = weekCounts.length - 1; index >= 0 && weeksToRemove > 0; index -= 1) {
+    if (weekCounts[index] <= 1) {
+      continue;
+    }
+    weekCounts[index] -= 1;
+    weeksToRemove -= 1;
+  }
+
+  if (targetWeekCount > currentWeekCount) {
+    weekCounts[weekCounts.length - 1] += targetWeekCount - currentWeekCount;
+  }
+
+  let cursor = editor.startDate;
+  const nextMesocycles = editor.mesocycles.map((mesocycle, index) => {
+    const startDate = cursor;
+    const endDate = addDays(startDate, weekCounts[index] * 7 - 1);
+    cursor = addDays(endDate, 1);
+    return {
+      ...mesocycle,
+      startDate,
+      endDate
+    };
+  });
+
+  return {
+    ...editor,
+    endDate: nextMesocycles.at(-1)?.endDate ?? editor.endDate,
+    mesocycles: normalizeMesocycleOrder(nextMesocycles)
+  };
 }
 
 function updateMesocycle(
