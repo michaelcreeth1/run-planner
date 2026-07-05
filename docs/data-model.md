@@ -21,11 +21,19 @@ sync data are isolated per owned profile.
 
 Remaining implementation order:
 
-1. Training plan, mesocycle, goal race, and plan goal (designed — see
+1. Training plan, mesocycle, goal race, and recurring plan goal (implemented — see
    `requirements/training-plans-requirements.md` and `docs/training-plans-design.md`;
    this supersedes the earlier "training block" roadmap item, and adds
    `mesocycle_id`, structured `purpose`, `target_mileage`, per-field source
    columns, and `is_down_week` to training weeks).
+
+   Goal model (migration 008): `WeekGoal` is the only evaluated goal. `GoalRace`
+   holds the outcome (race date + target time); mesocycles hold the numeric
+   trajectory that scaffolds week scalar targets; `plan_recurring_goals` hold
+   standing weekly intent that plan sync materializes into `WeekGoal` rows with
+   `source='plan'`. Workout-derived week goals use `source='workouts'`; manual
+   edits flip a goal to `source='manual'`, which protects it from
+   re-materialization and from scaffold overwrites.
 2. Workout match.
 3. Daily check-in and weekly summary.
 4. Gear.

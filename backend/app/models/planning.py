@@ -273,10 +273,10 @@ class TrainingPlan(Base):
         cascade="all, delete-orphan",
         order_by="Mesocycle.order_index",
     )
-    plan_goals: Mapped[list["PlanGoal"]] = relationship(
+    recurring_goals: Mapped[list["PlanRecurringGoal"]] = relationship(
         back_populates="training_plan",
         cascade="all, delete-orphan",
-        order_by="PlanGoal.created_at",
+        order_by="PlanRecurringGoal.created_at",
     )
 
 
@@ -315,8 +315,10 @@ class Mesocycle(Base):
     weeks: Mapped[list[TrainingWeek]] = relationship(back_populates="mesocycle")
 
 
-class PlanGoal(Base):
-    __tablename__ = "plan_goals"
+class PlanRecurringGoal(Base):
+    """A weekly goal the plan materializes into every week it scaffolds."""
+
+    __tablename__ = "plan_recurring_goals"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     training_plan_id: Mapped[str] = mapped_column(
@@ -328,10 +330,15 @@ class PlanGoal(Base):
         nullable=False,
     )
     category: Mapped[str] = mapped_column(String, nullable=False)
+    goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")
     label: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     target_value: Mapped[float | None] = mapped_column(Float)
+    min_acceptable: Mapped[float | None] = mapped_column(Float)
+    max_acceptable: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str] = mapped_column(String, nullable=False, default="custom")
-    flows_down: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    evaluation_mode: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    priority: Mapped[str] = mapped_column(String, nullable=False, default="secondary")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -340,4 +347,4 @@ class PlanGoal(Base):
         onupdate=func.now(),
     )
 
-    training_plan: Mapped[TrainingPlan] = relationship(back_populates="plan_goals")
+    training_plan: Mapped[TrainingPlan] = relationship(back_populates="recurring_goals")

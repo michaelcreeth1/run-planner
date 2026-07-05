@@ -59,13 +59,15 @@ def make_plan_payload(
                 "longRunEnd": 5,
             },
         ],
-        "planGoals": [
+        "recurringGoals": [
             {
-                "category": "peak_weekly_mileage",
-                "label": "Peak at 32 miles",
-                "targetValue": 32,
-                "unit": "mi",
-                "flowsDown": True,
+                "category": "strength",
+                "label": "Complete 1 strength session",
+                "targetValue": 1,
+                "minAcceptable": 1,
+                "unit": "sessions",
+                "evaluationMode": "at_least",
+                "priority": "secondary",
             }
         ],
     }
@@ -130,11 +132,21 @@ def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
         assert week_body["targetMileage"] == 28
         assert week_body["targetLongRunDistance"] == 8
 
+        assert [goal["label"] for goal in plan["recurringGoals"]] == ["Complete 1 strength session"]
+        plan_sourced = [goal for goal in week_body["goals"] if goal["source"] == "plan"]
+        assert [goal["label"] for goal in plan_sourced] == ["Complete 1 strength session"]
+
         derived = client.post(f"/api/weeks/{week_body['id']}/goals/derive")
         assert derived.status_code == 200
-        labels = {goal["label"] for goal in derived.json()["goals"]}
+        derived_goals = derived.json()["goals"]
+        labels = {goal["label"] for goal in derived_goals}
         assert "Run 28 miles" in labels
         assert "Long run near 8 miles" in labels
+        sources = {goal["label"]: goal["source"] for goal in derived_goals}
+        assert sources["Run 28 miles"] == "workouts"
+        assert sources["Complete 1 strength session"] == "plan"
+        strength_goals = [goal for goal in derived_goals if goal["category"] == "strength"]
+        assert len(strength_goals) == 1
 
 
 def test_plan_preview_and_replace_preserve_manual_week_overrides() -> None:
@@ -230,3 +242,49 @@ def test_deleting_goal_race_does_not_delete_plan() -> None:
         plan = client.get(f"/api/plans/{plan_id}")
         assert plan.status_code == 200
         assert plan.json()["goalRace"] is None
+
+
+def test_recurring_goals_respect_manual_edits_and_clear_on_delete() -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post(
+            "/api/plans",
+            json=make_plan_payload(start_date="2099-11-02", end_date="2099-11-29"),
+        )
+        assert created.status_code == 201
+        plan = created.json()
+        first_week_start = plan["weekSummaries"][0]["weekStartDate"]
+
+        week = client.get(f"/api/weeks/{first_week_start}").json()
+        plan_goal = next(goal for goal in week["goals"] if goal["source"] == "plan")
+        edited = client.patch(
+            f"/api/week-goals/{plan_goal['id']}",
+            json={"label": "Two strength sessions", "targetValue": 2},
+        )
+        assert edited.status_code == 200
+        assert edited.json()["source"] == "manual"
+
+        replacement = make_plan_payload(
+            name="Revised build",
+            start_date="2099-11-02",
+            end_date="2099-11-29",
+        )
+        updated = client.put(f"/api/plans/{plan['id']}", json=replacement)
+        assert updated.status_code == 200
+
+        week = client.get(f"/api/weeks/{first_week_start}").json()
+        strength_goals = [goal for goal in week["goals"] if goal["category"] == "strength"]
+        assert [goal["label"] for goal in strength_goals] == ["Two strength sessions"]
+        assert strength_goals[0]["source"] == "manual"
+
+        second_week_start = plan["weekSummaries"][1]["weekStartDate"]
+        second_week = client.get(f"/api/weeks/{second_week_start}").json()
+        assert any(goal["source"] == "plan" for goal in second_week["goals"])
+
+        deleted = client.delete(f"/api/plans/{plan['id']}?clearScaffolding=true")
+        assert deleted.status_code == 204
+
+        second_week = client.get(f"/api/weeks/{second_week_start}").json()
+        assert not any(goal["source"] == "plan" for goal in second_week["goals"])
+        first_week = client.get(f"/api/weeks/{first_week_start}").json()
+        assert any(goal["label"] == "Two strength sessions" for goal in first_week["goals"])

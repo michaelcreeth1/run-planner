@@ -8,6 +8,14 @@
       "cwd": "frontend",
       "port": 5174,
       "autoPort": true
+    },
+    {
+      "name": "frontend-local-api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "VITE_PROXY_API_TARGET=http://localhost:8000 npm run dev"],
+      "cwd": "frontend",
+      "port": 5174,
+      "autoPort": true
     }
   ]
 }

@@ -381,7 +381,7 @@ function makeGoalDraft(overrides: Partial<PlanWeekGoalDraft> = {}): PlanWeekGoal
     priority: "primary",
     status: "not_started",
     isEnabled: true,
-    source: "derived_from_plan",
+    source: "workouts",
     sourceLabel: "Schedule",
     ...overrides
   };

@@ -392,7 +392,7 @@ export function newGoalDraft({
     unit,
     evaluationMode,
     priority,
-    source: sourceLabel === "Edited" ? "manual" : sourceLabel === "Existing" ? "manual" : "derived_from_plan",
+    source: sourceLabel === "Edited" ? "manual" : sourceLabel === "Existing" ? "manual" : "workouts",
     sourceLabel,
     noBackToBackHardDays: category === "recovery" ? true : undefined,
     strengthRequired: category === "strength" ? true : undefined

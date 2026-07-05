@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.planning import GoalRace, Mesocycle, PlanGoal, TrainingPlan, TrainingWeek
+from app.models.planning import GoalRace, Mesocycle, PlanRecurringGoal, TrainingPlan, TrainingWeek
 from app.schemas.planning import (
     GoalRaceCreate,
     GoalRaceUpdate,
@@ -37,7 +37,7 @@ PLAN_RELATIONSHIPS = (
     selectinload(TrainingPlan.athlete),
     selectinload(TrainingPlan.goal_race),
     selectinload(TrainingPlan.mesocycles).selectinload(Mesocycle.weeks),
-    selectinload(TrainingPlan.plan_goals),
+    selectinload(TrainingPlan.recurring_goals),
 )
 
 
@@ -169,6 +169,7 @@ def create_plan(db: Session, payload: TrainingPlanSpec, athlete_account_id: str)
         weeks_for_preview(db, athlete_account_id, plan.start_date, plan.end_date),
         linked_weeks_by_start={},
         apply_changes=True,
+        recurring_goals=normalized["recurring_goals"],
     )
     db.commit()
     return get_plan(db, plan.id, athlete_account_id)
@@ -206,6 +207,7 @@ def replace_plan(db: Session, plan_id: str, payload: TrainingPlanSpec, athlete_a
         weeks,
         linked_weeks_by_start=old_linked,
         apply_changes=True,
+        recurring_goals=normalized["recurring_goals"],
     )
     db.commit()
     return get_plan(db, plan.id, athlete_account_id)
@@ -238,6 +240,7 @@ def delete_plan(
         week.mesocycle_id = None
         if clear_scaffolding:
             clear_plan_owned_fields(week)
+            planning.clear_plan_sourced_goals(week)
         db.add(week)
     db.delete(plan)
     db.commit()
@@ -318,7 +321,7 @@ def normalize_plan_spec(
         incoming_status=data["status"],
     )
     data["mesocycles"] = normalize_mesocycles(payload.mesocycles, data["start_date"], data["end_date"])
-    data["plan_goals"] = [goal.model_dump() for goal in payload.plan_goals]
+    data["recurring_goals"] = [goal.model_dump() for goal in payload.recurring_goals]
     return data
 
 
@@ -423,7 +426,7 @@ def replace_plan_children(
     athlete_account_id: str,
 ) -> None:
     plan.mesocycles.clear()
-    plan.plan_goals.clear()
+    plan.recurring_goals.clear()
     db.flush()
 
     for mesocycle_data in normalized["mesocycles"]:
@@ -445,9 +448,9 @@ def replace_plan_children(
         for data in normalized["mesocycles"]
     ]
 
-    for goal_data in normalized["plan_goals"]:
-        plan.plan_goals.append(
-            PlanGoal(
+    for goal_data in normalized["recurring_goals"]:
+        plan.recurring_goals.append(
+            PlanRecurringGoal(
                 athlete_account_id=athlete_account_id,
                 **{
                     key: value
@@ -505,6 +508,7 @@ def scaffold_weeks(
     *,
     linked_weeks_by_start: dict[date, TrainingWeek],
     apply_changes: bool,
+    recurring_goals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scheduled_weeks = materialize_scaffold_weeks(mesocycles)
     scheduled_by_start = {week.week_start_date: week for week in scheduled_weeks}
@@ -589,6 +593,9 @@ def scaffold_weeks(
             preserved_manual_count += 1
             week_warnings.append("Manual long-run override will be preserved.")
 
+        if apply_changes:
+            planning.sync_plan_sourced_goals(existing, recurring_goals or [])
+
         if action != "create":
             action = "skip_overridden" if manual_override and not change_list else "update" if change_list else "annotate"
 
@@ -608,6 +615,7 @@ def scaffold_weeks(
         if apply_changes:
             week.mesocycle_id = None
             clear_plan_owned_fields(week)
+            planning.clear_plan_sourced_goals(week)
             db.add(week)
         diffs.append(
             {
@@ -854,7 +862,7 @@ def serialize_plan(plan: TrainingPlan) -> dict[str, Any]:
         **summary,
         "goal_race": serialize_goal_race(plan.goal_race) if plan.goal_race else None,
         "mesocycles": [serialize_mesocycle(mesocycle) for mesocycle in plan.mesocycles],
-        "plan_goals": [serialize_plan_goal(goal) for goal in plan.plan_goals],
+        "recurring_goals": [serialize_recurring_goal(goal) for goal in plan.recurring_goals],
         "week_summaries": week_summaries,
     }
 
@@ -881,16 +889,21 @@ def serialize_mesocycle(mesocycle: Mesocycle) -> dict[str, Any]:
     }
 
 
-def serialize_plan_goal(goal: PlanGoal) -> dict[str, Any]:
+def serialize_recurring_goal(goal: PlanRecurringGoal) -> dict[str, Any]:
     return {
         "id": goal.id,
         "training_plan_id": goal.training_plan_id,
         "athlete_account_id": goal.athlete_account_id,
         "category": goal.category,
+        "goal_type": goal.goal_type,
         "label": goal.label,
+        "description": goal.description,
         "target_value": goal.target_value,
+        "min_acceptable": goal.min_acceptable,
+        "max_acceptable": goal.max_acceptable,
         "unit": goal.unit,
-        "flows_down": bool(goal.flows_down),
+        "evaluation_mode": goal.evaluation_mode,
+        "priority": goal.priority,
         "notes": goal.notes,
         "created_at": goal.created_at.isoformat() if goal.created_at else "",
         "updated_at": goal.updated_at.isoformat() if goal.updated_at else "",

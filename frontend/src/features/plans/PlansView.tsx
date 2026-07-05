@@ -6,14 +6,16 @@ import { StatusBanner } from "../../components/shared/StatusBanner";
 import { addDays, parseDate, startOfWeek, toDateInputValue } from "../../lib/dates";
 import { fetchJson } from "../../lib/api";
 import { formatCompactWeekRange, formatNumber, formatPace, formatShortDate } from "../../lib/formatters";
+import { goalCategories } from "../../lib/options";
 import type {
   GoalRace,
   Mesocycle,
   MesocyclePhase,
-  PlanGoal,
   RaceDistance,
+  RecurringGoal,
   TrainingPlan,
-  TrainingPlanSummary
+  TrainingPlanSummary,
+  WeekGoalCategory
 } from "../../types/domain";
 
 type PlansViewProps = {
@@ -51,13 +53,11 @@ type MesocycleDraft = {
   notes: string;
 };
 
-type PlanGoalDraft = {
+type RecurringGoalDraft = {
   id?: string;
-  category: PlanGoal["category"];
+  category: WeekGoalCategory;
   label: string;
   targetValue: string;
-  unit: PlanGoal["unit"];
-  flowsDown: boolean;
   notes: string;
 };
 
@@ -71,7 +71,7 @@ type PlanEditorState = {
   goalRaceId: string;
   notes: string;
   mesocycles: MesocycleDraft[];
-  planGoals: PlanGoalDraft[];
+  recurringGoals: RecurringGoalDraft[];
 };
 
 const phaseOptions: Array<{ value: MesocyclePhase; label: string }> = [
@@ -92,14 +92,6 @@ const distanceOptions: Array<{ value: RaceDistance; label: string }> = [
   { value: "other", label: "Other" }
 ];
 
-const planGoalCategoryOptions: Array<{ value: PlanGoal["category"]; label: string }> = [
-  { value: "peak_weekly_mileage", label: "Peak weekly mileage" },
-  { value: "weekly_mileage_progression", label: "Weekly mileage progression" },
-  { value: "long_run_progression", label: "Long-run progression" },
-  { value: "race_time", label: "Race time" },
-  { value: "consistency", label: "Consistency" },
-  { value: "custom", label: "Custom" }
-];
 
 export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansViewProps) {
   const [plans, setPlans] = useState<TrainingPlanSummary[]>([]);
@@ -173,6 +165,44 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     setGoalRaceForm(null);
     setSelectedMesocycleIndex(0);
     setPlanEditor(planToEditor(plan));
+  }
+
+  function updateRecurringGoal(index: number, updates: Partial<RecurringGoalDraft>) {
+    setPlanEditor((current) =>
+      current
+        ? {
+            ...current,
+            recurringGoals: current.recurringGoals.map((goal, goalIndex) =>
+              goalIndex === index ? { ...goal, ...updates } : goal
+            )
+          }
+        : current
+    );
+  }
+
+  function addRecurringGoal() {
+    setPlanEditor((current) =>
+      current
+        ? {
+            ...current,
+            recurringGoals: [
+              ...current.recurringGoals,
+              { category: "custom", label: "", targetValue: "", notes: "" }
+            ]
+          }
+        : current
+    );
+  }
+
+  function removeRecurringGoal(index: number) {
+    setPlanEditor((current) =>
+      current
+        ? {
+            ...current,
+            recurringGoals: current.recurringGoals.filter((_, goalIndex) => goalIndex !== index)
+          }
+        : current
+    );
   }
 
   function openCreateGoalRace() {
@@ -575,16 +605,60 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
 
           <div className="plan-form-section">
             <div className="plan-form-section-header">
-              <strong>Plan goals</strong>
-              <span>{planEditor.planGoals.length}</span>
+              <strong>Recurring weekly goals</strong>
+              <span>{planEditor.recurringGoals.length}</span>
             </div>
-            <div className="plan-goal-list">
-              {planEditor.planGoals.map((goal, index) => (
-                <article key={`${goal.category}-${index}`} className="plan-goal-chip">
-                  <strong>{planGoalCategoryOptions.find((option) => option.value === goal.category)?.label ?? goal.category}</strong>
-                  <span>{goal.label}</span>
-                </article>
+            <p className="plan-form-hint">
+              Added to every week this plan scaffolds. Weekly mileage and long-run targets come from
+              the mesocycles above; use these for standing intent like strength or rest days.
+            </p>
+            <div className="plan-recurring-goal-list">
+              {planEditor.recurringGoals.map((goal, index) => (
+                <div key={goal.id ?? `draft-${index}`} className="plan-recurring-goal-row">
+                  <label>
+                    <span>Category</span>
+                    <select
+                      value={goal.category}
+                      onChange={(event) => updateRecurringGoal(index, { category: event.target.value as WeekGoalCategory })}
+                    >
+                      {goalCategories.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Goal</span>
+                    <input
+                      value={goal.label}
+                      placeholder="Complete 1 strength session"
+                      onChange={(event) => updateRecurringGoal(index, { label: event.target.value })}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>Target</span>
+                    <input
+                      value={goal.targetValue}
+                      inputMode="decimal"
+                      onChange={(event) => updateRecurringGoal(index, { targetValue: event.target.value })}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost-button ghost-button--danger"
+                    onClick={() => removeRecurringGoal(index)}
+                  >
+                    <Trash2 size={16} />
+                    Remove
+                  </button>
+                </div>
               ))}
+              <button type="button" className="ghost-button" onClick={addRecurringGoal}>
+                <Plus size={16} />
+                Add weekly goal
+              </button>
             </div>
           </div>
 
@@ -1049,7 +1123,7 @@ function buildDefaultPlanEditor(goalRace: GoalRace | null): PlanEditorState {
     goalRaceId: goalRace?.id ?? "",
     notes: "",
     mesocycles: generateMesocycles(startDate, endDate, goalRace),
-    planGoals: defaultPlanGoals(goalRace)
+    recurringGoals: []
   };
 }
 
@@ -1078,13 +1152,11 @@ function planToEditor(plan: TrainingPlan): PlanEditorState {
       downWeekReductionPct: toInputNumber(mesocycle.downWeekReductionPct) || "20",
       notes: mesocycle.notes
     })),
-    planGoals: plan.planGoals.map((goal) => ({
+    recurringGoals: plan.recurringGoals.map((goal) => ({
       id: goal.id,
       category: goal.category,
       label: goal.label,
       targetValue: toInputNumber(goal.targetValue),
-      unit: goal.unit,
-      flowsDown: goal.flowsDown,
       notes: goal.notes
     }))
   };
@@ -1153,29 +1225,33 @@ function generateMesocycles(startDate: string, endDate: string, goalRace: GoalRa
   });
 }
 
-function defaultPlanGoals(goalRace: GoalRace | null): PlanGoalDraft[] {
-  return [
-    {
-      category: "peak_weekly_mileage",
-      label: `Peak near ${suggestedPeak(goalRace)} miles`,
-      targetValue: String(suggestedPeak(goalRace)),
-      unit: "mi",
-      flowsDown: true,
-      notes: ""
-    },
-    ...(goalRace?.targetTime
-      ? [
-          {
-            category: "race_time" as const,
-            label: `Race target ${formatDurationHms(goalRace.targetTime)}`,
-            targetValue: "",
-            unit: "time" as const,
-            flowsDown: false,
-            notes: `Target time: ${formatDurationHms(goalRace.targetTime)}`
-          }
-        ]
-      : [])
-  ];
+const recurringGoalUnits: Record<WeekGoalCategory, RecurringGoal["unit"]> = {
+  mileage: "mi",
+  long_run: "mi",
+  sessions: "sessions",
+  quality: "sessions",
+  strength: "sessions",
+  recovery: "days",
+  custom: "custom"
+};
+
+function recurringGoalPayload(goal: RecurringGoalDraft) {
+  const targetValue = optionalNumber(goal.targetValue);
+  const evaluationMode = goal.category !== "custom" && targetValue !== null ? "at_least" : "manual";
+  return {
+    id: goal.id,
+    category: goal.category,
+    goalType: "achievement",
+    label: goal.label,
+    description: "",
+    targetValue,
+    minAcceptable: evaluationMode === "at_least" ? targetValue : null,
+    maxAcceptable: null,
+    unit: recurringGoalUnits[goal.category],
+    evaluationMode,
+    priority: "secondary",
+    notes: goal.notes
+  };
 }
 
 function planPayload(editor: PlanEditorState) {
@@ -1202,15 +1278,7 @@ function planPayload(editor: PlanEditorState) {
       downWeekReductionPct: optionalNumber(mesocycle.downWeekReductionPct) ?? 20,
       notes: mesocycle.notes
     })),
-    planGoals: editor.planGoals.map((goal) => ({
-      id: goal.id,
-      category: goal.category,
-      label: goal.label,
-      targetValue: optionalNumber(goal.targetValue),
-      unit: goal.unit,
-      flowsDown: goal.flowsDown,
-      notes: goal.notes
-    }))
+    recurringGoals: editor.recurringGoals.map(recurringGoalPayload)
   };
 }
 

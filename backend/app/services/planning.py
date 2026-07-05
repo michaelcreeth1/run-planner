@@ -404,16 +404,11 @@ def derive_week_goals(
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     if replace_derived:
         for goal in list(week.goals):
-            if goal.source == "derived_from_plan":
+            if goal.source == "workouts":
                 db.delete(goal)
         db.flush()
 
-    if any(goal.source != "derived_from_plan" for goal in week.goals):
-        existing_categories = {
-            goal.category for goal in week.goals if goal.source != "derived_from_plan"
-        }
-    else:
-        existing_categories = set()
+    existing_categories = {goal.category for goal in week.goals if goal.source != "workouts"}
 
     for goal in default_goals_for_week(week):
         if goal["category"] in existing_categories and goal["goal_type"] == "achievement":
@@ -429,6 +424,47 @@ def derive_week_goals(
 
     db.commit()
     return load_week(db, week.week_start_date, week.athlete_account_id)
+
+
+def sync_plan_sourced_goals(week: TrainingWeek, recurring_goals: list[dict]) -> None:
+    """Materialize a plan's recurring goals onto a week as plan-sourced WeekGoals.
+
+    Manually created goals win: a recurring achievement goal is skipped when the
+    week already has a goal of the same category from a non-derived source.
+    """
+    protected_categories = {
+        goal.category for goal in week.goals if goal.source not in {"plan", "workouts"}
+    }
+    clear_plan_sourced_goals(week)
+    for spec in recurring_goals:
+        if spec["category"] in protected_categories and spec["goal_type"] == "achievement":
+            continue
+        week.goals.append(
+            WeekGoal(
+                athlete_account_id=week.athlete_account_id,
+                week_start_date=week.week_start_date,
+                category=spec["category"],
+                goal_type=spec["goal_type"],
+                label=spec["label"],
+                description=spec["description"],
+                target_value=spec["target_value"],
+                min_acceptable=spec["min_acceptable"],
+                max_acceptable=spec["max_acceptable"],
+                unit=spec["unit"],
+                evaluation_mode=spec["evaluation_mode"],
+                priority=spec["priority"],
+                status="not_started",
+                source="plan",
+                is_editable=1,
+                is_enabled=1,
+            )
+        )
+
+
+def clear_plan_sourced_goals(week: TrainingWeek) -> None:
+    for goal in list(week.goals):
+        if goal.source == "plan":
+            week.goals.remove(goal)
 
 
 def get_week_by_id(
@@ -1163,7 +1199,7 @@ def new_default_goal(
         "evaluation_mode": evaluation_mode,
         "priority": priority,
         "status": "not_started",
-        "source": "derived_from_plan",
+        "source": "workouts",
         "is_editable": True,
         "is_enabled": True,
     }

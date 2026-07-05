@@ -5209,7 +5209,6 @@ dt {
 .mesocycle-editor-card,
 .mesocycle-overview-card,
 .goal-race-card,
-.plan-goal-chip,
 .plan-week-bar {
   border: 1px solid var(--border-subtle);
   border-radius: 1.15rem;
@@ -5470,15 +5469,33 @@ dt {
   color: #b42318;
 }
 
-.plan-goal-list,
 .plan-goal-race-list {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.plan-goal-chip {
-  padding: 0.9rem 1rem;
+.plan-form-hint {
+  margin: 0.35rem 0 0.85rem;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
+.plan-recurring-goal-list {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.85rem;
+}
+
+.plan-recurring-goal-row {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(200px, 2fr) minmax(90px, 0.5fr) auto;
+  align-items: end;
+}
+
+@media (max-width: 720px) {
+  .plan-recurring-goal-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 .plan-detail-grid {

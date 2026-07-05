@@ -1,7 +1,16 @@
 # Training Plans (Planning Section) — Design
 
 **Requirements:** `requirements/training-plans-requirements.md`
-**Status:** Approved design, not yet implemented
+**Status:** Implemented (migration 007), then partially superseded by migration 008
+
+> **Superseded (2026-07-03):** the `plan_goals` table described below was replaced by
+> `plan_recurring_goals`. Plan-level goals are no longer a parallel goal vocabulary
+> (`race_time`, `peak_weekly_mileage`, …): race outcomes live on `goal_races`, the
+> mileage/long-run trajectory lives on mesocycles, and recurring goals use the
+> `week_goals` category vocabulary. Plan sync materializes them into `week_goals`
+> rows with `source='plan'` (manual goals in the same category are preserved).
+> Workout-derived week goals now use `source='workouts'` instead of
+> `'derived_from_plan'`. See `docs/data-model.md`.
 
 This document describes how the Planning section is built: domain model, migration, scaffolding engine, goal flow-down, API, and frontend design. Section references (FR-n) point at the requirements doc.
 

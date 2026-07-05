@@ -66,7 +66,7 @@ WeekGoalStatus = Literal[
     "exceeded",
     "waived",
 ]
-WeekGoalSource = Literal["manual", "derived_from_plan", "template", "ai_suggested"]
+WeekGoalSource = Literal["manual", "plan", "workouts", "template"]
 WeekPurpose = Literal[
     "aerobic_build",
     "maintain",
@@ -82,14 +82,6 @@ RaceDistance = Literal["5k", "10k", "half_marathon", "marathon", "other"]
 RacePriority = Literal["A", "B", "C"]
 PlanStatus = Literal["active", "completed", "archived"]
 MesocyclePhase = Literal["base", "build", "specific", "taper", "race", "recovery", "maintenance"]
-PlanGoalCategory = Literal[
-    "race_time",
-    "peak_weekly_mileage",
-    "weekly_mileage_progression",
-    "long_run_progression",
-    "consistency",
-    "custom",
-]
 PlanPreviewAction = Literal["create", "annotate", "update", "skip_overridden", "unlink"]
 GuardrailStatus = Literal["ok", "warning", "danger", "waived", "not_applicable"]
 GoalSeverity = Literal["info", "success", "warning", "danger"]
@@ -365,17 +357,22 @@ class MesocycleRead(MesocycleSpec):
     updated_at: str
 
 
-class PlanGoalSpec(ApiModel):
+class RecurringGoalSpec(ApiModel):
     id: str | None = None
-    category: PlanGoalCategory
+    category: WeekGoalCategory = "custom"
+    goal_type: WeekGoalType = "achievement"
     label: str = Field(min_length=1, max_length=140)
+    description: str = ""
     target_value: float | None = None
-    unit: WeekGoalUnit | Literal["time"] = "custom"
-    flows_down: bool = True
+    min_acceptable: float | None = None
+    max_acceptable: float | None = None
+    unit: WeekGoalUnit = "custom"
+    evaluation_mode: WeekGoalEvaluationMode = "manual"
+    priority: WeekGoalPriority = "secondary"
     notes: str = ""
 
 
-class PlanGoalRead(PlanGoalSpec):
+class RecurringGoalRead(RecurringGoalSpec):
     id: str
     training_plan_id: str
     athlete_account_id: str
@@ -393,7 +390,7 @@ class TrainingPlanSpec(ApiModel):
     status: PlanStatus = "active"
     notes: str = ""
     mesocycles: list[MesocycleSpec] = Field(min_length=1)
-    plan_goals: list[PlanGoalSpec] = []
+    recurring_goals: list[RecurringGoalSpec] = []
 
 
 class TrainingPlanMetadataPatch(ApiModel):
@@ -462,5 +459,5 @@ class TrainingPlanSummaryRead(ApiModel):
 class TrainingPlanRead(TrainingPlanSummaryRead):
     goal_race: GoalRaceRead | None = None
     mesocycles: list[MesocycleRead]
-    plan_goals: list[PlanGoalRead]
+    recurring_goals: list[RecurringGoalRead]
     week_summaries: list[PlanWeekSummaryRead]
