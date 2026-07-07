@@ -244,6 +244,108 @@ def test_deleting_goal_race_does_not_delete_plan() -> None:
         assert plan.json()["goalRace"] is None
 
 
+def test_default_goals_are_editable_and_overlay_weeks() -> None:
+    with TestClient(app) as client:
+        login(client)
+        seeded = client.get("/api/default-goals")
+        assert seeded.status_code == 200
+        labels = {goal["label"] for goal in seeded.json()}
+        assert "Preserve at least 1 rest day" in labels
+        assert "Long run no more than 30% of week" in labels
+        assert "No more than 2 hard days" in labels
+
+        created = client.post(
+            "/api/planned-workouts",
+            json={"plannedDate": "2099-02-03", "title": "Easy 6", "plannedDistance": 6},
+        )
+        assert created.status_code == 201
+        week = client.get("/api/weeks/2099-02-03").json()
+        sources = {goal["label"]: goal["source"] for goal in week["goals"]}
+        assert sources["No more than 2 hard days"] == "default"
+        assert sources["Preserve at least 1 rest day"] == "default"
+
+        replaced = client.put(
+            "/api/default-goals",
+            json=[
+                {
+                    "category": "quality",
+                    "goalType": "guardrail",
+                    "label": "No more than 1 hard day",
+                    "targetValue": 1,
+                    "maxAcceptable": 1,
+                    "unit": "days",
+                    "evaluationMode": "at_most",
+                    "priority": "guardrail",
+                },
+                {
+                    "category": "strength",
+                    "goalType": "achievement",
+                    "label": "Complete 1 strength session",
+                    "targetValue": 1,
+                    "minAcceptable": 1,
+                    "unit": "sessions",
+                    "evaluationMode": "at_least",
+                    "priority": "secondary",
+                },
+            ],
+        )
+        assert replaced.status_code == 200
+        assert len(replaced.json()) == 2
+
+        week = client.get("/api/weeks/2099-02-03").json()
+        labels = {goal["label"] for goal in week["goals"]}
+        assert "No more than 1 hard day" in labels
+        assert "No more than 2 hard days" not in labels
+        assert "Complete 1 strength session" in labels
+        evaluated_goal_ids = {evaluation["goalId"] for evaluation in week["goalEvaluations"]}
+        assert {goal["id"] for goal in week["goals"]} == evaluated_goal_ids
+
+
+def test_plan_goals_shadow_default_goals_by_category() -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post(
+            "/api/plans",
+            json=make_plan_payload(start_date="2099-12-06", end_date="2100-01-02"),
+        )
+        assert created.status_code == 201
+        plan = created.json()
+        first_week_start = plan["weekSummaries"][0]["weekStartDate"]
+
+        client.put(
+            "/api/default-goals",
+            json=[
+                {
+                    "category": "strength",
+                    "goalType": "achievement",
+                    "label": "Strength once weekly",
+                    "targetValue": 1,
+                    "minAcceptable": 1,
+                    "unit": "sessions",
+                    "evaluationMode": "at_least",
+                    "priority": "secondary",
+                },
+                {
+                    "category": "quality",
+                    "goalType": "guardrail",
+                    "label": "No more than 2 hard days",
+                    "targetValue": 2,
+                    "maxAcceptable": 2,
+                    "unit": "days",
+                    "evaluationMode": "at_most",
+                    "priority": "guardrail",
+                },
+            ],
+        )
+
+        week = client.get(f"/api/weeks/{first_week_start}").json()
+        strength_goals = [goal for goal in week["goals"] if goal["category"] == "strength"]
+        assert [goal["source"] for goal in strength_goals] == ["plan"]
+        assert [goal["label"] for goal in strength_goals] == ["Complete 1 strength session"]
+        guardrails = [goal for goal in week["goals"] if goal["goalType"] == "guardrail"]
+        assert any(goal["source"] == "default" for goal in guardrails)
+
+
 def test_recurring_goals_respect_manual_edits_and_clear_on_delete() -> None:
     with TestClient(app) as client:
         login(client)

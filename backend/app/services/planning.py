@@ -10,6 +10,7 @@ from app.models.planning import (
     AthleteAccount,
     PlannedWorkout,
     PlannedWorkoutStep,
+    RecurringGoal,
     TrainingWeek,
     WeekGoal,
 )
@@ -18,6 +19,7 @@ from app.schemas.planning import (
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
     PlanWeekSave,
+    RecurringGoalSpec,
     TrainingWeekPatch,
     WeekGoalCreate,
     WeekGoalUpdate,
@@ -47,6 +49,41 @@ QUALITY_KEYWORDS = (
 )
 VIRTUAL_WEEK_ID_PREFIX = "virtual-week:"
 VIRTUAL_GOAL_ID_PREFIX = "virtual-goal:"
+DEFAULT_ATHLETE_GOALS: list[dict] = [
+    {
+        "category": "recovery",
+        "goal_type": "achievement",
+        "label": "Preserve at least 1 rest day",
+        "target_value": 1,
+        "min_acceptable": 1,
+        "max_acceptable": None,
+        "unit": "days",
+        "evaluation_mode": "at_least",
+        "priority": "secondary",
+    },
+    {
+        "category": "long_run",
+        "goal_type": "guardrail",
+        "label": "Long run no more than 30% of week",
+        "target_value": 30,
+        "min_acceptable": None,
+        "max_acceptable": 30,
+        "unit": "percent",
+        "evaluation_mode": "at_most",
+        "priority": "guardrail",
+    },
+    {
+        "category": "quality",
+        "goal_type": "guardrail",
+        "label": "No more than 2 hard days",
+        "target_value": 2,
+        "min_acceptable": None,
+        "max_acceptable": 2,
+        "unit": "days",
+        "evaluation_mode": "at_most",
+        "priority": "guardrail",
+    },
+]
 WEEK_PURPOSE_IDS = frozenset(
     {
         "aerobic_build",
@@ -116,6 +153,8 @@ def ensure_default_athlete(db: Session) -> AthleteAccount:
 
     athlete = AthleteAccount(display_name="Michael Creeth", timezone="America/Denver")
     db.add(athlete)
+    db.flush()
+    seed_default_goals(db, athlete.id)
     db.commit()
     db.refresh(athlete)
     return athlete
@@ -404,11 +443,13 @@ def derive_week_goals(
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     if replace_derived:
         for goal in list(week.goals):
-            if goal.source == "workouts":
+            if goal.source in {"workouts", "default"}:
                 db.delete(goal)
         db.flush()
 
-    existing_categories = {goal.category for goal in week.goals if goal.source != "workouts"}
+    existing_categories = {
+        goal.category for goal in week.goals if goal.source in {"manual", "plan"}
+    }
 
     for goal in default_goals_for_week(week):
         if goal["category"] in existing_categories and goal["goal_type"] == "achievement":
@@ -426,16 +467,74 @@ def derive_week_goals(
     return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
+def list_default_goals(db: Session, athlete_account_id: str) -> list[RecurringGoal]:
+    return list(
+        db.scalars(
+            select(RecurringGoal)
+            .where(
+                RecurringGoal.athlete_account_id == athlete_account_id,
+                RecurringGoal.training_plan_id.is_(None),
+            )
+            .order_by(RecurringGoal.created_at)
+        )
+    )
+
+
+def replace_default_goals(
+    db: Session,
+    athlete_account_id: str,
+    specs: list[RecurringGoalSpec],
+) -> list[RecurringGoal]:
+    for goal in list_default_goals(db, athlete_account_id):
+        db.delete(goal)
+    db.flush()
+    for spec in specs:
+        data = spec.model_dump()
+        data.pop("id", None)
+        db.add(RecurringGoal(athlete_account_id=athlete_account_id, **data))
+    db.commit()
+    return list_default_goals(db, athlete_account_id)
+
+
+def seed_default_goals(db: Session, athlete_account_id: str) -> None:
+    for spec in DEFAULT_ATHLETE_GOALS:
+        db.add(RecurringGoal(athlete_account_id=athlete_account_id, **spec))
+
+
+def serialize_recurring_goal(goal: RecurringGoal) -> dict:
+    return {
+        "id": goal.id,
+        "athlete_account_id": goal.athlete_account_id,
+        "training_plan_id": goal.training_plan_id,
+        "category": goal.category,
+        "goal_type": goal.goal_type,
+        "label": goal.label,
+        "description": goal.description,
+        "target_value": goal.target_value,
+        "min_acceptable": goal.min_acceptable,
+        "max_acceptable": goal.max_acceptable,
+        "unit": goal.unit,
+        "evaluation_mode": goal.evaluation_mode,
+        "priority": goal.priority,
+        "notes": goal.notes,
+        "created_at": goal.created_at.isoformat() if goal.created_at else "",
+        "updated_at": goal.updated_at.isoformat() if goal.updated_at else "",
+    }
+
+
 def sync_plan_sourced_goals(week: TrainingWeek, recurring_goals: list[dict]) -> None:
     """Materialize a plan's recurring goals onto a week as plan-sourced WeekGoals.
 
     Manually created goals win: a recurring achievement goal is skipped when the
-    week already has a goal of the same category from a non-derived source.
+    week already has a manual goal of the same category. Workout-derived goals
+    in a colliding category are replaced.
     """
-    protected_categories = {
-        goal.category for goal in week.goals if goal.source not in {"plan", "workouts"}
-    }
+    protected_categories = {goal.category for goal in week.goals if goal.source == "manual"}
+    incoming_categories = {spec["category"] for spec in recurring_goals}
     clear_plan_sourced_goals(week)
+    for goal in list(week.goals):
+        if goal.source in {"workouts", "default"} and goal.category in incoming_categories:
+            week.goals.remove(goal)
     for spec in recurring_goals:
         if spec["category"] in protected_categories and spec["goal_type"] == "achievement":
             continue
@@ -851,7 +950,13 @@ def serialize_activity(activity: StravaActivity) -> dict:
     }
 
 
-def serialize_week(week: TrainingWeek, db: Session) -> dict:
+def serialize_week(
+    week: TrainingWeek,
+    db: Session,
+    default_goals: list[RecurringGoal] | None = None,
+) -> dict:
+    if default_goals is None:
+        default_goals = list_default_goals(db, week.athlete_account_id)
     workouts = list(week.workouts)
     actual_activities = activities_for_week(db, week)
     totals = week_totals(workouts, actual_activities)
@@ -871,7 +976,7 @@ def serialize_week(week: TrainingWeek, db: Session) -> dict:
     )
 
     week_state = get_week_state(week)
-    goals = enabled_goals_for_week(week)
+    goals = enabled_goals_for_week(week, default_goals)
     goal_evaluations = [
         evaluate_goal(goal, week, workouts, actual_activities, week_state) for goal in goals
     ]
@@ -957,21 +1062,62 @@ def week_totals(workouts: list[PlannedWorkout], activities: list[StravaActivity]
     }
 
 
-def enabled_goals_for_week(week: TrainingWeek) -> list[WeekGoal]:
-    goals = [goal for goal in week.goals if goal.is_enabled]
-    if goals or not week.workouts:
-        return goals
+def enabled_goals_for_week(
+    week: TrainingWeek,
+    default_goals: list[RecurringGoal] | None = None,
+) -> list[WeekGoal]:
+    """Stored goals plus a virtual overlay of the athlete's default goals.
 
-    return [
-        WeekGoal(
+    Defaults are never persisted per week: they are evaluated live so that a
+    Settings edit applies everywhere at once. A default is hidden when any
+    stored goal already covers its category and goal type.
+    """
+    goals = [goal for goal in week.goals if goal.is_enabled]
+    if not goals and not week.workouts:
+        return []
+
+    def virtual_goal(index: int, spec: dict) -> WeekGoal:
+        return WeekGoal(
             id=virtual_goal_id(week.id, index),
             training_week_id=week.id,
             athlete_account_id=week.athlete_account_id,
             week_start_date=week.week_start_date,
-            **goal,
+            **spec,
         )
-        for index, goal in enumerate(default_goals_for_week(week), start=1)
-    ]
+
+    next_index = 1
+    if not goals:
+        derived = default_goals_for_week(week)
+        goals = [virtual_goal(index, spec) for index, spec in enumerate(derived, start=1)]
+        next_index = len(derived) + 1
+
+    covered = {(goal.category, goal.goal_type) for goal in goals}
+    for default in default_goals or []:
+        if (default.category, default.goal_type) in covered:
+            continue
+        goals.append(
+            virtual_goal(
+                next_index,
+                {
+                    "category": default.category,
+                    "goal_type": default.goal_type,
+                    "label": default.label,
+                    "description": default.description,
+                    "target_value": default.target_value,
+                    "min_acceptable": default.min_acceptable,
+                    "max_acceptable": default.max_acceptable,
+                    "unit": default.unit,
+                    "evaluation_mode": default.evaluation_mode,
+                    "priority": default.priority,
+                    "status": "not_started",
+                    "source": "default",
+                    "is_editable": False,
+                    "is_enabled": True,
+                },
+            )
+        )
+        next_index += 1
+    return goals
 
 
 def serialize_goal(goal: WeekGoal) -> dict:
@@ -1125,42 +1271,6 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
             )
         )
 
-    goals.append(
-        new_default_goal(
-            "recovery",
-            "achievement",
-            "Preserve at least 1 rest day",
-            target_value=1,
-            min_acceptable=1,
-            unit="days",
-            evaluation_mode="at_least",
-            priority="secondary",
-        )
-    )
-    goals.append(
-        new_default_goal(
-            "long_run",
-            "guardrail",
-            "Long run no more than 30% of week",
-            target_value=30,
-            max_acceptable=30,
-            unit="percent",
-            evaluation_mode="at_most",
-            priority="guardrail",
-        )
-    )
-    goals.append(
-        new_default_goal(
-            "quality",
-            "guardrail",
-            "No more than 2 hard days",
-            target_value=2,
-            max_acceptable=2,
-            unit="days",
-            evaluation_mode="at_most",
-            priority="guardrail",
-        )
-    )
     return goals
 
 

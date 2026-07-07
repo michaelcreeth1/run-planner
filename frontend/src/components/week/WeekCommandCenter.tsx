@@ -28,7 +28,7 @@ type WeekCommandCenterProps = {
 };
 
 export function WeekCommandCenter({ onAction, onEditGoal, viewModel }: WeekCommandCenterProps) {
-  const showNarrative = viewModel.mode === "planning";
+  const showNarrative = viewModel.mode === "planning" && viewModel.narrative.trim().length > 0;
   const showGoalOutcomes = viewModel.mode === "review";
 
   if (viewModel.isUnplanned) {
@@ -225,7 +225,7 @@ function GoalCard({
 }) {
   const Icon = iconForStatus(goal.status);
   return (
-    <article className={`goal-card goal-card--${goal.severity}`}>
+    <article className={`goal-card goal-card--${goal.severity} goal-card--${goal.status}`}>
       <div className="goal-card-icon" aria-hidden="true">
         <Icon size={16} />
       </div>

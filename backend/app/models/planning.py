@@ -273,10 +273,10 @@ class TrainingPlan(Base):
         cascade="all, delete-orphan",
         order_by="Mesocycle.order_index",
     )
-    recurring_goals: Mapped[list["PlanRecurringGoal"]] = relationship(
+    recurring_goals: Mapped[list["RecurringGoal"]] = relationship(
         back_populates="training_plan",
         cascade="all, delete-orphan",
-        order_by="PlanRecurringGoal.created_at",
+        order_by="RecurringGoal.created_at",
     )
 
 
@@ -315,19 +315,23 @@ class Mesocycle(Base):
     weeks: Mapped[list[TrainingWeek]] = relationship(back_populates="mesocycle")
 
 
-class PlanRecurringGoal(Base):
-    """A weekly goal the plan materializes into every week it scaffolds."""
+class RecurringGoal(Base):
+    """A standing weekly goal or guardrail.
 
-    __tablename__ = "plan_recurring_goals"
+    Scoped to a plan when training_plan_id is set (materialized into each week
+    the plan scaffolds); an athlete-wide default when it is NULL (materialized
+    into any week at goal-derivation time).
+    """
+
+    __tablename__ = "recurring_goals"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
-    training_plan_id: Mapped[str] = mapped_column(
-        ForeignKey("training_plans.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     athlete_account_id: Mapped[str] = mapped_column(
         ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    training_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("training_plans.id", ondelete="CASCADE")
     )
     category: Mapped[str] = mapped_column(String, nullable=False)
     goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")
@@ -347,4 +351,4 @@ class PlanRecurringGoal(Base):
         onupdate=func.now(),
     )
 
-    training_plan: Mapped[TrainingPlan] = relationship(back_populates="recurring_goals")
+    training_plan: Mapped[TrainingPlan | None] = relationship(back_populates="recurring_goals")

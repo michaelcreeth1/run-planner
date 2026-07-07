@@ -36,6 +36,11 @@
   --accent-amber: #f59e0b;
   --accent-slate: #64748b;
 
+  --planned: #2563eb;
+  --tint-planned-bg: #eff6ff;
+  --tint-planned-border: #bfdbfe;
+  --tint-planned-text: #1d4ed8;
+
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -1143,8 +1148,9 @@ h1 {
 }
 
 .week-preview-card .week-peek-day-badge.planned {
-  background: var(--tint-info-bg);
-  color: var(--primary-hover);
+  background: var(--tint-planned-bg);
+  border-color: var(--tint-planned-border);
+  color: var(--tint-planned-text);
 }
 
 .week-preview-card .week-peek-day-badge.rest {
@@ -1156,9 +1162,9 @@ h1 {
 }
 
 .week-preview-card.current .week-peek-day-badge.planned {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
+  background: var(--tint-planned-bg);
+  border-color: var(--tint-planned-border);
+  color: var(--tint-planned-text);
   opacity: 1;
 }
 
@@ -1516,6 +1522,16 @@ h1 {
   background: var(--success);
 }
 
+.week-command-stat--info {
+  box-shadow:
+    inset 0 0 0 1px var(--tint-planned-border),
+    0 10px 22px rgba(37, 99, 235, 0.06);
+}
+
+.week-command-stat--info::before {
+  background: var(--planned);
+}
+
 .week-command-stat--warning {
   box-shadow:
     inset 0 0 0 1px var(--tint-warning-border),
@@ -1594,8 +1610,8 @@ h1 {
 
 .goal-card--info {
   box-shadow:
-    inset 0 0 0 1px rgba(191, 219, 254, 0.9),
-    0 12px 26px rgba(15, 118, 110, 0.06);
+    inset 0 0 0 1px var(--tint-planned-border),
+    0 12px 26px rgba(37, 99, 235, 0.06);
 }
 
 .goal-card--success {
@@ -1630,7 +1646,7 @@ h1 {
 }
 
 .goal-card--info .goal-card-icon {
-  color: var(--primary-hover);
+  color: var(--tint-planned-text);
 }
 
 .goal-card--success .goal-card-icon {
@@ -1693,6 +1709,12 @@ h1 {
   background: var(--tint-info-bg);
   border-color: var(--tint-info-border);
   color: var(--primary-hover);
+}
+
+.goal-status-pill--planned {
+  background: var(--tint-planned-bg);
+  border-color: var(--tint-planned-border);
+  color: var(--tint-planned-text);
 }
 
 .goal-status-pill--success {
@@ -2614,6 +2636,10 @@ dt {
   color: var(--tint-success-text);
 }
 
+.week-goal-summary-item--info strong {
+  color: var(--tint-planned-text);
+}
+
 .week-goal-summary-item--warning strong {
   color: var(--tint-warning-text);
 }
@@ -2838,6 +2864,14 @@ dt {
   box-shadow: none;
 }
 
+.workout-item--planned:not(.rest) {
+  --workout-color: var(--planned);
+
+  background: var(--tint-planned-bg);
+  border-color: var(--tint-planned-border);
+  box-shadow: none;
+}
+
 .workout-item--missed {
   background: transparent;
   border-color: var(--border-strong);
@@ -2914,6 +2948,10 @@ dt {
 
 .workout-status-line--done {
   color: var(--tint-success-text);
+}
+
+.workout-status-line--planned {
+  color: var(--tint-planned-text);
 }
 
 .workout-meta {
@@ -3586,6 +3624,201 @@ dt {
   padding: 0;
 }
 
+.goals-view {
+  gap: 18px;
+  max-width: 1180px;
+}
+
+.goals-page-intro {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 2px 2px 0;
+}
+
+.goals-page-intro > div {
+  max-width: 640px;
+  min-width: 0;
+}
+
+.goals-page-intro h1 {
+  font-size: 1.32rem;
+  letter-spacing: 0;
+  line-height: 1.18;
+}
+
+.goals-page-intro .ghost-button {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.goals-layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.85fr);
+}
+
+.goals-section-header {
+  align-items: flex-start;
+}
+
+.goals-section-header > div {
+  min-width: 0;
+}
+
+.goals-section-kicker {
+  align-items: center;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 650;
+  gap: 6px;
+  letter-spacing: var(--tracking-caps);
+  line-height: 1;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.goals-section-kicker svg {
+  flex: 0 0 auto;
+}
+
+.goals-race-panel {
+  position: sticky;
+  top: calc(var(--app-header-height) + var(--app-header-gap));
+}
+
+.goals-empty-state {
+  align-items: start;
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  padding: 12px;
+}
+
+.goals-empty-state > svg {
+  color: var(--primary);
+  margin-top: 1px;
+}
+
+.goals-empty-state strong,
+.goals-empty-state span {
+  display: block;
+}
+
+.goals-empty-state strong {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.goals-empty-state span {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.goals-empty-state--compact {
+  margin: 2px 0;
+}
+
+.goals-race-stack {
+  display: grid;
+  gap: 0;
+}
+
+.goals-race-item {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  padding: 12px 0;
+}
+
+.goals-race-stack .goals-race-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.goals-race-date-badge {
+  align-self: start;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  display: grid;
+  justify-items: center;
+  min-height: 48px;
+  padding: 6px 4px;
+}
+
+.goals-race-date-badge span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.goals-race-date-badge strong {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  line-height: 1.05;
+  margin-top: 4px;
+}
+
+.goals-race-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.goals-race-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.goals-race-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goals-race-title-row span {
+  background: var(--bg-muted);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.goals-race-main > span,
+.goals-race-main small {
+  align-items: center;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.8rem;
+  gap: 5px;
+  min-width: 0;
+}
+
+.goals-race-main svg {
+  flex: 0 0 auto;
+}
+
 .settings-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -3950,7 +4183,7 @@ dt {
 }
 
 .load-week-planned {
-  background: var(--primary);
+  background: var(--planned);
   opacity: 0.78;
 }
 
@@ -4424,7 +4657,7 @@ dt {
 }
 
 .mileage-line--planned {
-  stroke: var(--primary);
+  stroke: var(--planned);
   stroke-dasharray: 8 7;
 }
 
@@ -4438,7 +4671,7 @@ dt {
 }
 
 .mileage-point--planned {
-  stroke: var(--primary);
+  stroke: var(--planned);
 }
 
 .mileage-chart-y-label,
@@ -4484,7 +4717,7 @@ dt {
 }
 
 .mileage-chart-legend .planned {
-  background: var(--primary);
+  background: var(--planned);
 }
 
 .mileage-chart-legend .baseline {
@@ -4562,6 +4795,225 @@ dt {
   justify-self: start;
 }
 
+.settings-form .primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.settings-form select {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font: inherit;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.settings-note--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.default-goals-workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.default-goals-overview {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.default-goals-overview > div {
+  min-width: 0;
+}
+
+.default-goals-save {
+  flex: 0 0 auto;
+  min-height: 40px;
+}
+
+.default-goals-content {
+  display: grid;
+  gap: 14px;
+}
+
+.default-goal-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.default-goal-section--achievement {
+  border-top: 3px solid var(--primary);
+}
+
+.default-goal-section--guardrail {
+  border-top: 3px solid var(--accent-amber);
+}
+
+.default-goal-section-header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.default-goal-section-header > div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.default-goal-section-header strong,
+.default-goal-section-header span {
+  display: block;
+}
+
+.default-goal-section-header strong {
+  font-size: 0.96rem;
+}
+
+.default-goal-section-header span:not(.default-goal-section-icon):not(.default-goal-count) {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.default-goal-section-icon,
+.default-goal-remove {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.default-goal-section-icon svg,
+.default-goal-remove svg {
+  display: block;
+}
+
+.default-goal-section-header .default-goal-section-icon {
+  background: var(--tint-info-bg);
+  border-radius: var(--radius-sm);
+  color: var(--tint-info-text);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 36px;
+  width: 36px;
+}
+
+.default-goal-section--guardrail .default-goal-section-icon {
+  background: var(--tint-warning-bg);
+  color: var(--tint-warning-text);
+}
+
+.default-goal-section-header .default-goal-count {
+  align-items: center;
+  background: var(--bg-muted);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  height: 30px;
+  justify-content: center;
+  min-width: 30px;
+  padding: 0 9px;
+}
+
+.default-goal-list {
+  display: grid;
+  gap: 10px;
+}
+
+.default-goal-item {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+}
+
+.default-goal-fields {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(128px, 0.85fr) minmax(0, 1.15fr);
+}
+
+.default-goal-field input,
+.default-goal-field select {
+  width: 100%;
+}
+
+.default-goal-remove {
+  align-self: end;
+  color: var(--tint-danger-text);
+  height: 34px;
+  margin-bottom: 2px;
+  min-width: 0;
+  padding: 0;
+  width: 34px;
+}
+
+.default-goal-add {
+  justify-self: start;
+}
+
+@media (max-width: 1080px) {
+  .goals-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .goals-race-panel {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .goals-page-intro,
+  .settings-card-header.goals-section-header,
+  .default-goals-overview {
+    display: grid;
+    gap: 12px;
+  }
+
+  .goals-page-intro .ghost-button,
+  .default-goals-save {
+    width: 100%;
+  }
+
+  .default-goal-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .goals-race-item {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .goals-race-title-row {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .default-goal-item {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+}
+
 @media (max-width: 860px) {
   .app-shell {
     display: block;
@@ -4602,7 +5054,7 @@ dt {
 
   .nav-tabs {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .nav-tabs button {
@@ -4620,6 +5072,11 @@ dt {
     height: auto;
     overflow: visible;
     padding: 0 14px 18px;
+  }
+
+  .app-header {
+    margin: 0 -14px 18px;
+    padding: 12px 14px;
   }
 
   h1 {
@@ -4987,10 +5444,14 @@ dt {
   --gradient-brand: linear-gradient(90deg, #15edc3 0%, #52cf7f 100%);
 
   --accent-cyan: #15edc3;
+  --planned: #60a5fa;
   --success: #52cf7f;
   --warning: #ffc857;
   --danger: #ff6b5c;
 
+  --tint-planned-bg: rgba(37, 99, 235, 0.2);
+  --tint-planned-border: rgba(96, 165, 250, 0.36);
+  --tint-planned-text: #93c5fd;
   --tint-success-bg: rgba(82, 207, 127, 0.14);
   --tint-success-border: rgba(82, 207, 127, 0.35);
   --tint-success-text: #52cf7f;
@@ -5041,17 +5502,14 @@ dt {
 }
 
 [data-theme="dark"] .goal-status-pill--info,
-[data-theme="dark"] .week-preview-card .week-peek-day-badge.planned,
 [data-theme="dark"] .segmented-control button.active,
 [data-theme="dark"] .day-column header small,
 [data-theme="dark"] .time-rail-tick.selected {
   color: var(--tint-info-text);
 }
 
-[data-theme="dark"] .week-preview-card.current .week-peek-day-badge.planned {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: rgba(96, 165, 250, 0.36);
-  color: #93c5fd;
+[data-theme="dark"] .goal-status-pill--planned {
+  color: var(--tint-planned-text);
 }
 
 [data-theme="dark"] .command-skeleton-block,

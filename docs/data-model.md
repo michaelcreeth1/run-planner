@@ -27,13 +27,19 @@ Remaining implementation order:
    `mesocycle_id`, structured `purpose`, `target_mileage`, per-field source
    columns, and `is_down_week` to training weeks).
 
-   Goal model (migration 008): `WeekGoal` is the only evaluated goal. `GoalRace`
-   holds the outcome (race date + target time); mesocycles hold the numeric
-   trajectory that scaffolds week scalar targets; `plan_recurring_goals` hold
-   standing weekly intent that plan sync materializes into `WeekGoal` rows with
-   `source='plan'`. Workout-derived week goals use `source='workouts'`; manual
-   edits flip a goal to `source='manual'`, which protects it from
-   re-materialization and from scaffold overwrites.
+   Goal model (migrations 008–009): `WeekGoal` is the only evaluated goal.
+   `GoalRace` holds the outcome (race date + target time); mesocycles hold the
+   numeric trajectory that scaffolds week scalar targets; `recurring_goals`
+   hold standing weekly intent. Rows with a `training_plan_id` belong to a plan
+   and are materialized into `WeekGoal` rows (`source='plan'`) when the plan
+   scaffolds weeks; rows with a NULL `training_plan_id` are the athlete's
+   defaults — standing goals and guardrails edited in Settings, seeded at
+   athlete creation, and overlaid virtually on every week at read time
+   (`source='default'`, never persisted per week, hidden when a stored goal
+   covers the same category and goal type). Workout-derived week goals use
+   `source='workouts'`; manual edits flip a goal to `source='manual'`, which
+   protects it from re-materialization and from scaffold overwrites.
+   Precedence: manual > plan > workouts > default.
 2. Workout match.
 3. Daily check-in and weekly summary.
 4. Gear.

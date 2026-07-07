@@ -66,7 +66,7 @@ WeekGoalStatus = Literal[
     "exceeded",
     "waived",
 ]
-WeekGoalSource = Literal["manual", "plan", "workouts", "template"]
+WeekGoalSource = Literal["manual", "plan", "workouts", "default"]
 WeekPurpose = Literal[
     "aerobic_build",
     "maintain",
@@ -374,7 +374,7 @@ class RecurringGoalSpec(ApiModel):
 
 class RecurringGoalRead(RecurringGoalSpec):
     id: str
-    training_plan_id: str
+    training_plan_id: str | None = None
     athlete_account_id: str
     created_at: str
     updated_at: str

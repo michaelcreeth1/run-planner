@@ -479,17 +479,20 @@ function buildNarrative(
     return "Start from the prior week, choose a purpose, review proposed goals, then save the plan.";
   }
 
-  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
-    const targetMileage = week.targetMileage ? `${formatNumber(week.targetMileage)} miles.` : "Set the weekly load.";
-    const longRunSentence =
-      week.targetLongRunDistance !== null
-        ? `Long run near ${formatNumber(week.targetLongRunDistance)} miles.`
-        : "Long run is not set yet.";
-    return `${purposeLabel(week)} week. ${targetMileage} ${longRunSentence}`;
-  }
-
   if (week.notes.trim()) {
     return week.notes.trim();
+  }
+
+  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
+    if (week.targetMileage === null) {
+      return "";
+    }
+
+    const pieces = [`${purposeLabel(week)} week around ${formatNumber(week.targetMileage)} miles.`];
+    if (week.targetLongRunDistance !== null) {
+      pieces.push(`Long run near ${formatNumber(week.targetLongRunDistance)} miles.`);
+    }
+    return pieces.join(" ");
   }
 
   const qualityCount = plannedHardDayCount(week);

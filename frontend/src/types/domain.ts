@@ -62,7 +62,7 @@ export type WeekGoalStatus =
   | "missed"
   | "exceeded"
   | "waived";
-export type WeekGoalSource = "manual" | "plan" | "workouts" | "template";
+export type WeekGoalSource = "manual" | "plan" | "workouts" | "default";
 export type GoalSeverity = "info" | "success" | "warning" | "danger";
 export type WeekState = "past" | "current" | "future";
 export type FieldSource = "manual" | "plan";
@@ -406,7 +406,7 @@ export type Mesocycle = {
 
 export type RecurringGoal = {
   id: string;
-  trainingPlanId: string;
+  trainingPlanId: string | null;
   athleteAccountId: string;
   category: WeekGoalCategory;
   goalType: WeekGoalType;

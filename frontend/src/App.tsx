@@ -8,6 +8,7 @@ import {
   Route,
   Settings,
   ShieldAlert,
+  Target,
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -18,6 +19,7 @@ import { Placeholder } from "./components/shared/Placeholder";
 import { StatusBanner } from "./components/shared/StatusBanner";
 import { ActivitiesView } from "./features/activities/ActivitiesView";
 import { AnalyticsView } from "./features/analytics/AnalyticsView";
+import { GoalsView } from "./features/goals/GoalsView";
 import { PlansView } from "./features/plans/PlansView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
@@ -54,6 +56,7 @@ const WEEK_STACK_LOAD_BATCH = 6;
 const tabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
+  { id: "goals", label: "Goals", icon: Target },
   { id: "activities", label: "Activities", icon: Activity },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Settings", icon: Settings }
@@ -765,6 +768,9 @@ function App() {
               selectWeek(start, "time-rail");
             }}
           />
+        ) : null}
+        {activeTab === "goals" ? (
+          <GoalsView writesBlocked={staleFrontend} onManageRaces={() => setActiveTab("plan")} />
         ) : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
         {activeTab === "analytics" ? (

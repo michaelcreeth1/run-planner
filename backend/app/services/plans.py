@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.planning import GoalRace, Mesocycle, PlanRecurringGoal, TrainingPlan, TrainingWeek
+from app.models.planning import GoalRace, Mesocycle, RecurringGoal, TrainingPlan, TrainingWeek
 from app.schemas.planning import (
     GoalRaceCreate,
     GoalRaceUpdate,
@@ -450,7 +450,7 @@ def replace_plan_children(
 
     for goal_data in normalized["recurring_goals"]:
         plan.recurring_goals.append(
-            PlanRecurringGoal(
+            RecurringGoal(
                 athlete_account_id=athlete_account_id,
                 **{
                     key: value
@@ -889,25 +889,8 @@ def serialize_mesocycle(mesocycle: Mesocycle) -> dict[str, Any]:
     }
 
 
-def serialize_recurring_goal(goal: PlanRecurringGoal) -> dict[str, Any]:
-    return {
-        "id": goal.id,
-        "training_plan_id": goal.training_plan_id,
-        "athlete_account_id": goal.athlete_account_id,
-        "category": goal.category,
-        "goal_type": goal.goal_type,
-        "label": goal.label,
-        "description": goal.description,
-        "target_value": goal.target_value,
-        "min_acceptable": goal.min_acceptable,
-        "max_acceptable": goal.max_acceptable,
-        "unit": goal.unit,
-        "evaluation_mode": goal.evaluation_mode,
-        "priority": goal.priority,
-        "notes": goal.notes,
-        "created_at": goal.created_at.isoformat() if goal.created_at else "",
-        "updated_at": goal.updated_at.isoformat() if goal.updated_at else "",
-    }
+def serialize_recurring_goal(goal: RecurringGoal) -> dict[str, Any]:
+    return planning.serialize_recurring_goal(goal)
 
 
 def serialize_plan_week_summaries(plan: TrainingPlan) -> list[dict[str, Any]]:
