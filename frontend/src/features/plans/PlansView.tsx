@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
 import type { CSSProperties, Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Placeholder } from "../../components/shared/Placeholder";
@@ -11,6 +11,7 @@ import type {
   GoalRace,
   Mesocycle,
   MesocyclePhase,
+  PlanWeekSummary,
   RaceDistance,
   RecurringGoal,
   TrainingPlan,
@@ -570,7 +571,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
 
           <div className="plan-form-section">
             <div className="plan-form-section-header">
-              <div>
+              <div className="section-title-row">
                 <strong>Mesocycles</strong>
                 <span>
                   {planEditor.mesocycles.length} phases
@@ -692,7 +693,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
               <button
                 key={plan.id}
                 type="button"
-                className={`plan-week-bar ${selectedPlan?.id === plan.id ? "plan-week-bar--manual" : ""}`}
+                className={`plan-list-item ${selectedPlan?.id === plan.id ? "plan-list-item--selected" : ""}`}
                 onClick={() => setSelectedPlanId(plan.id)}
               >
                 <strong>{plan.name}</strong>
@@ -739,12 +740,35 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
               </div>
             </div>
             <div className="plan-timeline">
-              {selectedPlan.weekSummaries.map((week) => (
-                <button key={week.weekStartDate} type="button" className={`plan-week-bar plan-week-bar--${week.mesocyclePhase ?? "base"} ${week.hasManualOverride ? "plan-week-bar--manual" : ""}`} onClick={() => onSelectWeek(week.weekStartDate)}>
-                  <span>{formatShortDate(week.weekStartDate)}</span>
-                  <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
-                  <small>{week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}</small>
-                </button>
+              {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => (
+                <section key={`${group.phase ?? "none"}-${groupIndex}`} className="plan-timeline-group">
+                  <header className={`plan-timeline-group-header plan-phase--${group.phase ?? "base"}`}>
+                    <span className="plan-phase-dot" aria-hidden="true" />
+                    <strong>{group.name ?? (group.phase ? phaseLabel(group.phase) : "Weeks")}</strong>
+                    <span>
+                      {formatCompactWeekRange(group.weeks[0].week.weekStartDate, group.weeks[group.weeks.length - 1].week.weekEndDate)}
+                      {" · "}
+                      {group.weeks.length} {group.weeks.length === 1 ? "week" : "weeks"}
+                    </span>
+                  </header>
+                  <div className="plan-timeline-weeks">
+                    {group.weeks.map(({ week, index }) => (
+                      <button
+                        key={week.weekStartDate}
+                        type="button"
+                        className={`plan-week-bar plan-phase--${week.mesocyclePhase ?? "base"} ${week.hasManualOverride ? "plan-week-bar--manual" : ""}`}
+                        onClick={() => onSelectWeek(week.weekStartDate)}
+                      >
+                        <span className="plan-week-bar-label">
+                          W{index + 1} · {formatShortDate(week.weekStartDate)}
+                          {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
+                        </span>
+                        <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
+                        <small>{week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}</small>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           </article>
@@ -755,19 +779,41 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
               <span>{selectedPlan.mesocycles.length}</span>
             </div>
             <div className="mesocycle-overview-list">
-              {selectedPlan.mesocycles.map((mesocycle) => (
-                <article key={mesocycle.id} className="mesocycle-overview-card">
-                  <header>
-                    <strong>{mesocycle.name || phaseLabel(mesocycle.phase)}</strong>
-                    <span>{phaseLabel(mesocycle.phase)}</span>
-                  </header>
-                  <p>{formatCompactWeekRange(mesocycle.startDate, mesocycle.endDate)}</p>
-                  <small>
-                    {mesocycle.targetMileageStart ?? "-"} {"->"} {mesocycle.targetMileageEnd ?? "-"} mi
-                    {mesocycle.downWeekCadence ? ` · down week every ${mesocycle.downWeekCadence}` : ""}
-                  </small>
-                </article>
-              ))}
+              {selectedPlan.mesocycles.map((mesocycle) => {
+                const label = phaseLabel(mesocycle.phase);
+                const weekCount = Math.max(1, weeksBetween(mesocycle.startDate, addDays(mesocycle.endDate, 1)));
+                return (
+                  <article key={mesocycle.id} className={`mesocycle-overview-card plan-phase--${mesocycle.phase}`}>
+                    <div className="mesocycle-overview-main">
+                      <div className="mesocycle-overview-title">
+                        <strong>{mesocycle.name || label}</strong>
+                        {mesocycle.name && mesocycle.name !== label ? (
+                          <span className="plan-phase-pill">{label}</span>
+                        ) : null}
+                      </div>
+                      <span className="mesocycle-overview-range">
+                        {formatCompactWeekRange(mesocycle.startDate, mesocycle.endDate)} · {weekCount}{" "}
+                        {weekCount === 1 ? "week" : "weeks"}
+                      </span>
+                    </div>
+                    <div className="mesocycle-overview-metrics">
+                      <strong>
+                        {mesocycle.targetMileageStart ?? "–"} → {mesocycle.targetMileageEnd ?? "–"} mi
+                      </strong>
+                      <small>
+                        {[
+                          mesocycle.longRunStart || mesocycle.longRunEnd
+                            ? `Long run ${mesocycle.longRunStart ?? "–"} → ${mesocycle.longRunEnd ?? "–"}`
+                            : null,
+                          mesocycle.downWeekCadence ? `down week every ${mesocycle.downWeekCadence}` : null
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "No down weeks"}
+                      </small>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </article>
         </div>
@@ -913,6 +959,13 @@ function MesocycleInspector({
   if (!selected) {
     return null;
   }
+  const selectedWeekCount = Math.max(1, weeksBetween(selected.startDate, addDays(selected.endDate, 1)));
+  const longRunStartAuto = autoLongRun(selected.targetMileageStart);
+  const longRunEndAuto = autoLongRun(selected.targetMileageEnd);
+  const hasLongRunOverride =
+    optionalNumber(selected.longRunStart) !== null || optionalNumber(selected.longRunEnd) !== null;
+  const longRunStartEffective = optionalNumber(selected.longRunStart) ?? longRunStartAuto;
+  const longRunEndEffective = optionalNumber(selected.longRunEnd) ?? longRunEndAuto;
 
   return (
     <article className="mesocycle-inspector">
@@ -966,7 +1019,19 @@ function MesocycleInspector({
       <div className="mesocycle-editor-grid">
         <label>
           <span>Phase</span>
-          <select value={selected.phase} onChange={(event) => updateMesocycle(setEditor, index, { phase: event.target.value as MesocyclePhase })}>
+          <select
+            value={selected.phase}
+            onChange={(event) => {
+              const nextPhase = event.target.value as MesocyclePhase;
+              updateMesocycle(setEditor, index, {
+                phase: nextPhase,
+                name:
+                  !selected.name || selected.name === phaseLabel(selected.phase)
+                    ? phaseLabel(nextPhase)
+                    : selected.name
+              });
+            }}
+          >
             {phaseOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -975,56 +1040,121 @@ function MesocycleInspector({
           </select>
         </label>
         <label>
-          <span>Name</span>
-          <input value={selected.name} onChange={(event) => updateMesocycle(setEditor, index, { name: event.target.value })} />
-        </label>
-        <label>
-          <span>Start</span>
+          <span>Length (weeks)</span>
           <input
-            type="date"
-            value={selected.startDate}
-            onChange={(event) => updateMesocycleBoundary(setEditor, index, normalizeToMonday(event.target.value))}
+            type="number"
+            min={1}
+            value={selectedWeekCount}
+            onChange={(event) => {
+              const weekCount = Number(event.target.value);
+              if (Number.isFinite(weekCount) && weekCount >= 1) {
+                resizeMesocycleLength(setEditor, index, Math.round(weekCount));
+              }
+            }}
           />
         </label>
+        <div className="mesocycle-field-group">
+          <span>Weekly mileage</span>
+          <div className="mesocycle-mileage-inputs">
+            <input
+              inputMode="decimal"
+              aria-label="Mileage at phase start"
+              value={selected.targetMileageStart}
+              onChange={(event) => updateMesocycle(setEditor, index, { targetMileageStart: event.target.value })}
+            />
+            <span aria-hidden="true">→</span>
+            <input
+              inputMode="decimal"
+              aria-label="Mileage at phase end"
+              value={selected.targetMileageEnd}
+              onChange={(event) => updateMesocycle(setEditor, index, { targetMileageEnd: event.target.value })}
+            />
+            <span>mi</span>
+          </div>
+        </div>
         <label>
-          <span>End</span>
-          <input
-            type="date"
-            value={selected.endDate}
-            onChange={(event) => updateMesocycleBoundary(setEditor, index + 1, addDays(normalizeToSunday(event.target.value), 1))}
-          />
-        </label>
-        <label>
-          <span>Mileage start</span>
-          <input inputMode="decimal" value={selected.targetMileageStart} onChange={(event) => updateMesocycle(setEditor, index, { targetMileageStart: event.target.value })} />
-        </label>
-        <label>
-          <span>Mileage end</span>
-          <input inputMode="decimal" value={selected.targetMileageEnd} onChange={(event) => updateMesocycle(setEditor, index, { targetMileageEnd: event.target.value })} />
-        </label>
-        <label>
-          <span>Long run start</span>
-          <input inputMode="decimal" value={selected.longRunStart} onChange={(event) => updateMesocycle(setEditor, index, { longRunStart: event.target.value })} />
-        </label>
-        <label>
-          <span>Long run end</span>
-          <input inputMode="decimal" value={selected.longRunEnd} onChange={(event) => updateMesocycle(setEditor, index, { longRunEnd: event.target.value })} />
-        </label>
-        <label>
-          <span>Down cadence</span>
-          <input inputMode="numeric" value={selected.downWeekCadence} onChange={(event) => updateMesocycle(setEditor, index, { downWeekCadence: event.target.value })} />
-        </label>
-        <label>
-          <span>Reduction %</span>
-          <input inputMode="decimal" value={selected.downWeekReductionPct} onChange={(event) => updateMesocycle(setEditor, index, { downWeekReductionPct: event.target.value })} />
-        </label>
-        <label className="plan-form-grid-span">
-          <span>Notes</span>
-          <textarea value={selected.notes} onChange={(event) => updateMesocycle(setEditor, index, { notes: event.target.value })} rows={2} />
+          <span>Down weeks</span>
+          <select
+            value={selected.downWeekCadence}
+            onChange={(event) => updateMesocycle(setEditor, index, { downWeekCadence: event.target.value })}
+          >
+            {cadenceOptions(selected.downWeekCadence).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
+      {longRunStartEffective !== null || longRunEndEffective !== null ? (
+        <p className="mesocycle-auto-hint">
+          Long run {longRunStartEffective ?? "–"} → {longRunEndEffective ?? "–"} mi ·{" "}
+          {hasLongRunOverride ? "custom" : "auto"}
+        </p>
+      ) : null}
+      <details className="mesocycle-advanced">
+        <summary>
+          <ChevronDown size={14} />
+          Advanced
+        </summary>
+        <div className="mesocycle-editor-grid">
+          <label>
+            <span>Name</span>
+            <input value={selected.name} onChange={(event) => updateMesocycle(setEditor, index, { name: event.target.value })} />
+          </label>
+          <label>
+            <span>Long run start (mi)</span>
+            <input
+              inputMode="decimal"
+              placeholder={longRunStartAuto !== null ? `Auto: ${longRunStartAuto}` : "Auto"}
+              value={selected.longRunStart}
+              onChange={(event) => updateMesocycle(setEditor, index, { longRunStart: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Long run end (mi)</span>
+            <input
+              inputMode="decimal"
+              placeholder={longRunEndAuto !== null ? `Auto: ${longRunEndAuto}` : "Auto"}
+              value={selected.longRunEnd}
+              onChange={(event) => updateMesocycle(setEditor, index, { longRunEnd: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Down week reduction %</span>
+            <input inputMode="decimal" value={selected.downWeekReductionPct} onChange={(event) => updateMesocycle(setEditor, index, { downWeekReductionPct: event.target.value })} />
+          </label>
+          <label className="plan-form-grid-span">
+            <span>Notes</span>
+            <textarea value={selected.notes} onChange={(event) => updateMesocycle(setEditor, index, { notes: event.target.value })} rows={2} />
+          </label>
+        </div>
+      </details>
     </article>
   );
+}
+
+type PlanWeekGroup = {
+  phase: MesocyclePhase | null;
+  name: string | null;
+  weeks: Array<{ week: PlanWeekSummary; index: number }>;
+};
+
+function groupWeeksByMesocycle(weeks: PlanWeekSummary[]): PlanWeekGroup[] {
+  const groups: PlanWeekGroup[] = [];
+  weeks.forEach((week, index) => {
+    const last = groups[groups.length - 1];
+    if (last && last.phase === week.mesocyclePhase && last.name === week.mesocycleName) {
+      last.weeks.push({ week, index });
+    } else {
+      groups.push({
+        phase: week.mesocyclePhase,
+        name: week.mesocycleName,
+        weeks: [{ week, index }]
+      });
+    }
+  });
+  return groups;
 }
 
 function defaultGoalRaceForm(): GoalRaceFormState {
@@ -1146,8 +1276,14 @@ function planToEditor(plan: TrainingPlan): PlanEditorState {
       endDate: mesocycle.endDate,
       targetMileageStart: toInputNumber(mesocycle.targetMileageStart),
       targetMileageEnd: toInputNumber(mesocycle.targetMileageEnd),
-      longRunStart: toInputNumber(mesocycle.longRunStart),
-      longRunEnd: toInputNumber(mesocycle.longRunEnd),
+      longRunStart:
+        mesocycle.longRunStart === autoLongRun(mesocycle.targetMileageStart)
+          ? ""
+          : toInputNumber(mesocycle.longRunStart),
+      longRunEnd:
+        mesocycle.longRunEnd === autoLongRun(mesocycle.targetMileageEnd)
+          ? ""
+          : toInputNumber(mesocycle.longRunEnd),
       downWeekCadence: toInputNumber(mesocycle.downWeekCadence),
       downWeekReductionPct: toInputNumber(mesocycle.downWeekReductionPct) || "20",
       notes: mesocycle.notes
@@ -1216,8 +1352,8 @@ function generateMesocycles(startDate: string, endDate: string, goalRace: GoalRa
       endDate: addDays(lastWeek, 6),
       targetMileageStart: toInputNumber(startMileage),
       targetMileageEnd: toInputNumber(endMileage),
-      longRunStart: toInputNumber(Math.max(Math.round(startMileage * 0.28), 6)),
-      longRunEnd: toInputNumber(Math.max(Math.round(endMileage * 0.28), 6)),
+      longRunStart: "",
+      longRunEnd: "",
       downWeekCadence: item.phase === "taper" ? "" : "4",
       downWeekReductionPct: "20",
       notes: ""
@@ -1272,8 +1408,8 @@ function planPayload(editor: PlanEditorState) {
       endDate: mesocycle.endDate,
       targetMileageStart: optionalNumber(mesocycle.targetMileageStart),
       targetMileageEnd: optionalNumber(mesocycle.targetMileageEnd),
-      longRunStart: optionalNumber(mesocycle.longRunStart),
-      longRunEnd: optionalNumber(mesocycle.longRunEnd),
+      longRunStart: optionalNumber(mesocycle.longRunStart) ?? autoLongRun(mesocycle.targetMileageStart),
+      longRunEnd: optionalNumber(mesocycle.longRunEnd) ?? autoLongRun(mesocycle.targetMileageEnd),
       downWeekCadence: optionalNumber(mesocycle.downWeekCadence),
       downWeekReductionPct: optionalNumber(mesocycle.downWeekReductionPct) ?? 20,
       notes: mesocycle.notes
@@ -1333,17 +1469,49 @@ function applyBoundaryDrag(
   };
 }
 
-function updateMesocycleBoundary(
+function resizeMesocycleLength(
   setPlanEditor: Dispatch<SetStateAction<PlanEditorState | null>>,
-  boundaryIndex: number,
-  boundaryDate: string
+  index: number,
+  weekCount: number
 ) {
   setPlanEditor((current) => {
-    if (!current) {
+    if (!current || !current.mesocycles[index]) {
       return current;
     }
-    return applyBoundaryDrag(current, boundaryIndex, weeksBetween(current.startDate, boundaryDate));
+    const nextWeekCount = Math.max(1, weekCount);
+    if (index === current.mesocycles.length - 1) {
+      const mesocycle = current.mesocycles[index];
+      const endDate = addDays(mesocycle.startDate, nextWeekCount * 7 - 1);
+      const nextMesocycles = [...current.mesocycles];
+      nextMesocycles[index] = { ...mesocycle, endDate };
+      return {
+        ...current,
+        endDate,
+        mesocycles: normalizeMesocycleOrder(nextMesocycles)
+      };
+    }
+    const boundaries = mesocycleBoundaryPositions(current);
+    return applyBoundaryDrag(current, index + 1, boundaries[index] + nextWeekCount);
   });
+}
+
+function autoLongRun(mileage: string | number | null | undefined) {
+  const value = optionalNumber(mileage);
+  return value === null ? null : Math.max(Math.round(value * 0.28), 6);
+}
+
+function cadenceOptions(currentValue: string) {
+  const options = [
+    { value: "", label: "Off" },
+    { value: "3", label: "Every 3rd week" },
+    { value: "4", label: "Every 4th week" }
+  ];
+  if (currentValue && !options.some((option) => option.value === currentValue)) {
+    const cadence = Number(currentValue);
+    const ordinal = cadence === 2 ? "2nd" : `${currentValue}th`;
+    options.push({ value: currentValue, label: `Every ${ordinal} week` });
+  }
+  return options;
 }
 
 function updatePlanEndDate(
@@ -1454,8 +1622,8 @@ function addMesocycle(setPlanEditor: Dispatch<SetStateAction<PlanEditorState | n
       endDate: nextEnd,
       targetMileageStart: toInputNumber(previousMileage),
       targetMileageEnd: toInputNumber(previousMileage),
-      longRunStart: toInputNumber(Math.max(Math.round(previousMileage * 0.28), 6)),
-      longRunEnd: toInputNumber(Math.max(Math.round(previousMileage * 0.28), 6)),
+      longRunStart: "",
+      longRunEnd: "",
       downWeekCadence: "",
       downWeekReductionPct: "20",
       notes: ""

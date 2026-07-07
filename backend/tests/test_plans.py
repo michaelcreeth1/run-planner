@@ -149,6 +149,45 @@ def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
         assert len(strength_goals) == 1
 
 
+def test_goal_race_update_persists_race_date_with_full_form_payload() -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post(
+            "/api/goal-races",
+            json={
+                "name": "Updated Date Half",
+                "raceDate": "2099-04-12",
+                "distance": "half_marathon",
+                "targetTime": 6000,
+                "priority": "A",
+            },
+        )
+        assert created.status_code == 201
+        goal_race_id = created.json()["id"]
+
+        updated = client.patch(
+            f"/api/goal-races/{goal_race_id}",
+            json={
+                "name": "Updated Date Half",
+                "raceDate": "2099-04-19",
+                "distance": "half_marathon",
+                "distanceMiles": None,
+                "targetTime": 6000,
+                "priority": "A",
+                "location": "",
+                "altitudeContext": "",
+                "notes": "",
+            },
+        )
+
+        assert updated.status_code == 200
+        assert updated.json()["raceDate"] == "2099-04-19"
+        listed = client.get("/api/goal-races")
+        assert listed.status_code == 200
+        matching = next(race for race in listed.json() if race["id"] == goal_race_id)
+        assert matching["raceDate"] == "2099-04-19"
+
+
 def test_plan_preview_and_replace_preserve_manual_week_overrides() -> None:
     with TestClient(app) as client:
         login(client)

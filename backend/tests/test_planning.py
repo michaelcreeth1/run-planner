@@ -11,10 +11,12 @@ from app.main import app
 from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek
 from app.schemas.planning import (
     PlannedWorkoutCreate,
+    PlannedWorkoutUpdate,
     PlanWeekGoal,
     PlanWeekSave,
     PlanWeekWorkout,
     WeekGoalCreate,
+    WeekGoalUpdate,
 )
 from app.services import planning
 
@@ -605,6 +607,89 @@ def test_current_week_quality_goal_counts_run_on_planned_quality_day(
         assert quality_evaluation["status"] == "on_track"
         assert quality_evaluation["actual_value"] == 1
         assert quality_evaluation["remaining_planned_value"] == 0
+    finally:
+        db.close()
+
+
+def test_workout_distance_update_refreshes_workout_derived_mileage_goal() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 8, 4),
+                title="Easy 10",
+                planned_distance=10,
+            ),
+        )
+        week = planning.get_or_create_week(db, date(2099, 8, 3))
+        planning.derive_week_goals(db, week.id)
+
+        planning.update_workout(
+            db,
+            workout.id,
+            PlannedWorkoutUpdate(planned_distance=12),
+        )
+        refreshed = planning.load_week(db, date(2099, 8, 3))
+        mileage_goals = [
+            goal
+            for goal in refreshed.goals
+            if goal.category == "mileage" and goal.goal_type == "achievement"
+        ]
+
+        assert len(mileage_goals) == 1
+        assert mileage_goals[0].source == "workouts"
+        assert mileage_goals[0].label == "Run 12 miles"
+        assert mileage_goals[0].target_value == 12
+        assert mileage_goals[0].min_acceptable == 11.3
+        assert mileage_goals[0].max_acceptable == 12.7
+    finally:
+        db.close()
+
+
+def test_workout_update_preserves_manual_mileage_goal() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 8, 11),
+                title="Easy 10",
+                planned_distance=10,
+            ),
+        )
+        week = planning.get_or_create_week(db, date(2099, 8, 10))
+        derived_week = planning.derive_week_goals(db, week.id)
+        mileage_goal = next(goal for goal in derived_week.goals if goal.category == "mileage")
+        planning.update_week_goal(
+            db,
+            mileage_goal.id,
+            WeekGoalUpdate(
+                label="Manual mileage cap",
+                target_value=8,
+                min_acceptable=7,
+                max_acceptable=9,
+            ),
+        )
+
+        planning.update_workout(
+            db,
+            workout.id,
+            PlannedWorkoutUpdate(planned_distance=12),
+        )
+        refreshed = planning.load_week(db, date(2099, 8, 10))
+        mileage_goals = [
+            goal
+            for goal in refreshed.goals
+            if goal.category == "mileage" and goal.goal_type == "achievement"
+        ]
+
+        assert len(mileage_goals) == 1
+        assert mileage_goals[0].source == "manual"
+        assert mileage_goals[0].label == "Manual mileage cap"
+        assert mileage_goals[0].target_value == 8
+        assert mileage_goals[0].min_acceptable == 7
+        assert mileage_goals[0].max_acceptable == 9
     finally:
         db.close()
 

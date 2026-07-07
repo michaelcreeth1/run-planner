@@ -442,14 +442,25 @@ def derive_week_goals(
 ) -> TrainingWeek:
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
     if replace_derived:
-        for goal in list(week.goals):
-            if goal.source in {"workouts", "default"}:
-                db.delete(goal)
-        db.flush()
+        replace_workout_derived_goals(db, week)
+    else:
+        add_workout_derived_goals(db, week)
 
-    existing_categories = {
-        goal.category for goal in week.goals if goal.source in {"manual", "plan"}
-    }
+    db.commit()
+    return load_week(db, week.week_start_date, week.athlete_account_id)
+
+
+def replace_workout_derived_goals(db: Session, week: TrainingWeek) -> None:
+    for goal in list(week.goals):
+        if goal.source in {"workouts", "default"}:
+            week.goals.remove(goal)
+            db.delete(goal)
+    db.flush()
+    add_workout_derived_goals(db, week)
+
+
+def add_workout_derived_goals(db: Session, week: TrainingWeek) -> None:
+    existing_categories = {goal.category for goal in week.goals if goal.source in {"manual", "plan"}}
 
     for goal in default_goals_for_week(week):
         if goal["category"] in existing_categories and goal["goal_type"] == "achievement":
@@ -462,9 +473,6 @@ def derive_week_goals(
                 **goal,
             )
         )
-
-    db.commit()
-    return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
 def list_default_goals(db: Session, athlete_account_id: str) -> list[RecurringGoal]:
@@ -599,16 +607,27 @@ def get_or_create_week_for_mutation(
     return get_week_by_id(db, week_id, athlete_account_id)
 
 
-def recalculate_week(db: Session, week: TrainingWeek) -> TrainingWeek:
+def recalculate_week(
+    db: Session,
+    week: TrainingWeek,
+    *,
+    refresh_existing_workout_goals: bool = False,
+) -> TrainingWeek:
     totals = week_totals(list(week.workouts), activities_for_week(db, week))
     week.planned_mileage = totals["planned_mileage"]
     week.planned_time = totals["planned_time"]
     week.actual_mileage = totals["actual_mileage"]
     week.actual_time = totals["actual_time"]
+    if refresh_existing_workout_goals and has_workout_derived_goals(week):
+        replace_workout_derived_goals(db, week)
     db.add(week)
     db.commit()
     db.refresh(week)
     return week
+
+
+def has_workout_derived_goals(week: TrainingWeek) -> bool:
+    return any(goal.source in {"workouts", "default"} for goal in week.goals)
 
 
 def create_workout(
@@ -627,7 +646,7 @@ def create_workout(
     db.add(workout)
     db.commit()
     db.refresh(workout)
-    recalculate_week(db, week)
+    recalculate_week(db, week, refresh_existing_workout_goals=True)
     return get_workout(db, workout.id, active_athlete_id)
 
 
@@ -725,7 +744,11 @@ def duplicate_workout(
     db.add(clone)
     db.commit()
     db.refresh(clone)
-    recalculate_week(db, get_week_by_id(db, source.training_week_id, source.athlete_account_id))
+    recalculate_week(
+        db,
+        get_week_by_id(db, source.training_week_id, source.athlete_account_id),
+        refresh_existing_workout_goals=True,
+    )
     return get_workout(db, clone.id, source.athlete_account_id)
 
 
@@ -891,7 +914,11 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
     active_athlete_id = workout.athlete_account_id
     db.delete(workout)
     db.commit()
-    recalculate_week(db, get_week_by_id(db, week_id, active_athlete_id))
+    recalculate_week(
+        db,
+        get_week_by_id(db, week_id, active_athlete_id),
+        refresh_existing_workout_goals=True,
+    )
 
 
 def recalculate_impacted_weeks(
@@ -900,7 +927,11 @@ def recalculate_impacted_weeks(
     athlete_account_id: str | None = None,
 ) -> None:
     for week_id in week_ids:
-        recalculate_week(db, get_week_by_id(db, week_id, athlete_account_id))
+        recalculate_week(
+            db,
+            get_week_by_id(db, week_id, athlete_account_id),
+            refresh_existing_workout_goals=True,
+        )
 
 
 def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]:

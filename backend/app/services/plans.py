@@ -84,7 +84,7 @@ def update_goal_race(
     if "distance" in updates or "distance_miles" in updates:
         merged = {
             "name": race.name,
-            "race_date": race.race_date,
+            "race_date": updates.get("race_date", race.race_date),
             "distance": updates.get("distance", race.distance),
             "distance_miles": updates.get("distance_miles", race.distance_miles),
             "target_time": updates.get("target_time", race.target_time),
