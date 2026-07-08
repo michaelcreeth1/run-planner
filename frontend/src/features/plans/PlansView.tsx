@@ -154,11 +154,10 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
   }
 
   function openCreatePlan() {
-    const goalRace = goalRaces[0] ?? null;
     setSuccess(null);
     setGoalRaceForm(null);
     setSelectedMesocycleIndex(0);
-    setPlanEditor(buildDefaultPlanEditor(goalRace));
+    setPlanEditor(buildDefaultPlanEditor(null));
   }
 
   function openEditPlan(plan: TrainingPlan) {
@@ -557,7 +556,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
             </label>
             <label>
               <span>Start date</span>
-              <input type="date" value={planEditor.startDate} onChange={(event) => setPlanEditor((current) => current ? { ...current, startDate: normalizeToMonday(event.target.value) } : current)} required />
+              <input type="date" value={planEditor.startDate} onChange={(event) => updatePlanStartDate(setPlanEditor, event.target.value)} required />
             </label>
             <label>
               <span>End date</span>
@@ -1530,6 +1529,24 @@ function updatePlanEndDate(
   });
 }
 
+function updatePlanStartDate(
+  setPlanEditor: Dispatch<SetStateAction<PlanEditorState | null>>,
+  rawStartDate: string
+) {
+  const startDate = normalizeToMonday(rawStartDate);
+  setPlanEditor((current) => {
+    if (!current) {
+      return current;
+    }
+    if (current.mesocycles.length === 0) {
+      const requestedWeekCount = weeksBetween(startDate, addDays(current.endDate, 1));
+      const weekCount = Math.max(1, Math.round(requestedWeekCount));
+      return { ...current, startDate, endDate: addDays(startDate, weekCount * 7 - 1) };
+    }
+    return resizePlanStartToWeekCount(current, startDate, weeksBetween(startDate, addDays(current.endDate, 1)));
+  });
+}
+
 function resizePlanEndToWeekCount(editor: PlanEditorState, requestedWeekCount: number) {
   const roundedRequestedWeekCount = Math.round(requestedWeekCount);
   if (!Number.isFinite(roundedRequestedWeekCount)) {
@@ -1544,42 +1561,81 @@ function resizePlanEndToWeekCount(editor: PlanEditorState, requestedWeekCount: n
     };
   }
 
+  const weekCounts = rebalanceMesocycleWeekCounts(
+    editor,
+    roundedRequestedWeekCount,
+    editor.mesocycles.length - 1,
+    [...editor.mesocycles.keys()].reverse()
+  );
+
+  return reflowMesocycles(editor, editor.startDate, weekCounts);
+}
+
+function resizePlanStartToWeekCount(
+  editor: PlanEditorState,
+  startDate: string,
+  requestedWeekCount: number
+) {
+  const roundedRequestedWeekCount = Math.round(requestedWeekCount);
+  if (!Number.isFinite(roundedRequestedWeekCount)) {
+    return editor;
+  }
+
+  const weekCounts = rebalanceMesocycleWeekCounts(
+    editor,
+    roundedRequestedWeekCount,
+    0,
+    [...editor.mesocycles.keys()]
+  );
+
+  return reflowMesocycles(editor, startDate, weekCounts);
+}
+
+function rebalanceMesocycleWeekCounts(
+  editor: PlanEditorState,
+  requestedWeekCount: number,
+  growthIndex: number,
+  shrinkOrder: number[]
+) {
   const weekCounts = editor.mesocycles.map((mesocycle) =>
     Math.max(1, weeksBetween(mesocycle.startDate, addDays(mesocycle.endDate, 1)))
   );
   const currentWeekCount = weekCounts.reduce((sum, weekCount) => sum + weekCount, 0);
-  const shrinkCapacity = weekCounts.filter((weekCount) => weekCount > 1).length;
-  const minimumWeekCount = currentWeekCount - shrinkCapacity;
-  const targetWeekCount = Math.max(minimumWeekCount, roundedRequestedWeekCount);
+  const targetWeekCount = Math.max(weekCounts.length, requestedWeekCount);
   let weeksToRemove = Math.max(0, currentWeekCount - targetWeekCount);
 
-  // Pull from the end backward, with each existing phase donating at most one week.
-  for (let index = weekCounts.length - 1; index >= 0 && weeksToRemove > 0; index -= 1) {
-    if (weekCounts[index] <= 1) {
-      continue;
+  for (const index of shrinkOrder) {
+    if (weeksToRemove <= 0) {
+      break;
     }
-    weekCounts[index] -= 1;
-    weeksToRemove -= 1;
+    const removableWeeks = Math.min(weekCounts[index] - 1, weeksToRemove);
+    weekCounts[index] -= removableWeeks;
+    weeksToRemove -= removableWeeks;
   }
 
   if (targetWeekCount > currentWeekCount) {
-    weekCounts[weekCounts.length - 1] += targetWeekCount - currentWeekCount;
+    weekCounts[growthIndex] += targetWeekCount - currentWeekCount;
   }
 
-  let cursor = editor.startDate;
+  return weekCounts;
+}
+
+function reflowMesocycles(editor: PlanEditorState, startDate: string, weekCounts: number[]) {
+  let cursor = startDate;
   const nextMesocycles = editor.mesocycles.map((mesocycle, index) => {
-    const startDate = cursor;
-    const endDate = addDays(startDate, weekCounts[index] * 7 - 1);
-    cursor = addDays(endDate, 1);
+    const nextStartDate = cursor;
+    const nextEndDate = addDays(nextStartDate, weekCounts[index] * 7 - 1);
+    cursor = addDays(nextEndDate, 1);
     return {
       ...mesocycle,
-      startDate,
-      endDate
+      startDate: nextStartDate,
+      endDate: nextEndDate
     };
   });
 
   return {
     ...editor,
+    startDate,
     endDate: nextMesocycles.at(-1)?.endDate ?? editor.endDate,
     mesocycles: normalizeMesocycleOrder(nextMesocycles)
   };

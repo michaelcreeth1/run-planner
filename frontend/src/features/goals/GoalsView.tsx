@@ -70,15 +70,8 @@ export function GoalsView({
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">
             <div>
-              <span className="goals-section-kicker">
-                <Flag size={15} />
-                Race anchors
-              </span>
               <h2>Goal races</h2>
             </div>
-            <span className="settings-pill settings-pill--neutral">
-              {races.length} {races.length === 1 ? "race" : "races"}
-            </span>
           </header>
           {racesError ? <div className="settings-note settings-note--danger">{racesError}</div> : null}
           {!racesError && sortedRaces.length === 0 ? (
@@ -86,7 +79,7 @@ export function GoalsView({
               <Flag size={18} />
               <div>
                 <strong>No races yet</strong>
-                <span>Add one in the Plan tab to anchor a training plan.</span>
+                <span>Use Manage races to add one and anchor a training plan.</span>
               </div>
             </div>
           ) : null}

@@ -159,7 +159,7 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
         </div>
         <button
           type="button"
-          className="icon-button default-goal-remove"
+          className="icon-button icon-button--danger default-goal-remove"
           aria-label={`Remove ${removeLabel}`}
           title={`Remove ${removeLabel}`}
           onClick={() => removeDraft(index)}
@@ -174,11 +174,7 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
     <section className="settings-form default-goals-workspace">
       <header className="settings-card default-goals-overview">
         <div>
-          <span className="goals-section-kicker">
-            <Target size={15} />
-            Weekly defaults
-          </span>
-          <h2>Reusable week rules</h2>
+          <h2>Weekly defaults</h2>
           <p>Standing goals and guardrails applied unless a plan or manual edit overrides them.</p>
         </div>
         {!isLoading ? (
@@ -199,6 +195,8 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
         </section>
       ) : (
         <>
+          {message ? <div className="settings-note">{message}</div> : null}
+          {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
           <div className="default-goals-content">
             <section className="default-goal-section default-goal-section--achievement">
               <header className="default-goal-section-header">
@@ -211,7 +209,6 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
                     <span>Targets to preserve when weeks are created.</span>
                   </div>
                 </div>
-                <span className="default-goal-count">{achievements.length}</span>
               </header>
               {achievements.length === 0 ? (
                 <div className="goals-empty-state goals-empty-state--compact">
@@ -240,7 +237,6 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
                     <span>Limits that flag weeks before training gets lopsided.</span>
                   </div>
                 </div>
-                <span className="default-goal-count">{guardrails.length}</span>
               </header>
               {guardrails.length === 0 ? (
                 <div className="goals-empty-state goals-empty-state--compact">
@@ -258,8 +254,6 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
               </button>
             </section>
           </div>
-          {message ? <div className="settings-note">{message}</div> : null}
-          {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
         </>
       )}
     </section>

@@ -3669,23 +3669,6 @@ dt {
   min-width: 0;
 }
 
-.goals-section-kicker {
-  align-items: center;
-  color: var(--text-secondary);
-  display: inline-flex;
-  font-size: 0.7rem;
-  font-weight: 650;
-  gap: 6px;
-  letter-spacing: var(--tracking-caps);
-  line-height: 1;
-  margin-bottom: 7px;
-  text-transform: uppercase;
-}
-
-.goals-section-kicker svg {
-  flex: 0 0 auto;
-}
-
 .goals-race-panel {
   position: sticky;
   top: calc(var(--app-header-height) + var(--app-header-gap));
@@ -4831,6 +4814,16 @@ dt {
   min-width: 0;
 }
 
+.default-goals-overview h2 {
+  font-size: 1.05rem;
+}
+
+.default-goals-overview p {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  margin: 4px 0 0;
+}
+
 .default-goals-save {
   flex: 0 0 auto;
   min-height: 40px;
@@ -4883,7 +4876,7 @@ dt {
   font-size: 0.96rem;
 }
 
-.default-goal-section-header span:not(.default-goal-section-icon):not(.default-goal-count) {
+.default-goal-section-header span:not(.default-goal-section-icon) {
   color: var(--text-secondary);
   font-size: 0.8rem;
   line-height: 1.35;
@@ -4917,21 +4910,6 @@ dt {
   color: var(--tint-warning-text);
 }
 
-.default-goal-section-header .default-goal-count {
-  align-items: center;
-  background: var(--bg-muted);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 0.78rem;
-  font-weight: 700;
-  height: 30px;
-  justify-content: center;
-  min-width: 30px;
-  padding: 0 9px;
-}
-
 .default-goal-list {
   display: grid;
   gap: 10px;
@@ -4958,7 +4936,6 @@ dt {
 
 .default-goal-remove {
   align-self: end;
-  color: var(--tint-danger-text);
   height: 34px;
   margin-bottom: 2px;
   min-width: 0;
@@ -6030,7 +6007,7 @@ dt {
   height: 2.25rem;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--bg-surface);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -6041,7 +6018,7 @@ dt {
 }
 
 .icon-button--danger {
-  color: #b42318;
+  color: var(--tint-danger-text);
 }
 
 .plan-goal-race-list {

@@ -16,6 +16,14 @@
       "cwd": "frontend",
       "port": 5174,
       "autoPort": true
+    },
+    {
+      "name": "frontend-scratch-api-8001",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "VITE_PROXY_API_TARGET=http://localhost:8001 npm run dev"],
+      "cwd": "frontend",
+      "port": 5174,
+      "autoPort": true
     }
   ]
 }
