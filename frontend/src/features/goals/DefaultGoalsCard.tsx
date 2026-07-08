@@ -1,52 +1,133 @@
-import { Plus, Save, ShieldCheck, Target, Trash2 } from "lucide-react";
+import { Check, Pencil, Plus, Save, ShieldCheck, Target, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchJson } from "../../lib/api";
-import { goalCategories, goalUnits } from "../../lib/options";
-import type { RecurringGoal, WeekGoalCategory, WeekGoalType, WeekGoalUnit } from "../../types/domain";
+import { goalCategories, goalEvaluationModes, goalUnits } from "../../lib/options";
+import type {
+  RecurringGoal,
+  WeekGoalCategory,
+  WeekGoalEvaluationMode,
+  WeekGoalType,
+  WeekGoalUnit
+} from "../../types/domain";
 
 type DefaultGoalDraft = {
+  key: string;
   id?: string;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
+  evaluationMode: WeekGoalEvaluationMode;
   value: string;
+  minValue: string;
+  maxValue: string;
   unit: WeekGoalUnit;
 };
 
+const singleValueModes: WeekGoalEvaluationMode[] = ["at_least", "at_most", "exact-ish"];
+
+function unitSuffix(unit: WeekGoalUnit, countField: string): string {
+  const singular = Number(countField) === 1;
+  switch (unit) {
+    case "mi":
+      return " mi";
+    case "percent":
+      return "%";
+    case "sessions":
+      return singular ? " session" : " sessions";
+    case "days":
+      return singular ? " day" : " days";
+    default:
+      return "";
+  }
+}
+
+function numberToField(value: number | null): string {
+  return value === null ? "" : String(value);
+}
+
+function fieldToNumber(value: string): number | null {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function goalToDraft(goal: RecurringGoal): DefaultGoalDraft {
-  const value = goal.targetValue ?? goal.maxAcceptable ?? goal.minAcceptable;
+  const singleValue =
+    goal.evaluationMode === "at_least"
+      ? goal.minAcceptable ?? goal.targetValue
+      : goal.evaluationMode === "at_most"
+        ? goal.maxAcceptable ?? goal.targetValue
+        : goal.targetValue;
   return {
+    key: goal.id,
     id: goal.id,
     category: goal.category,
     goalType: goal.goalType,
     label: goal.label,
-    value: value === null || value === undefined ? "" : String(value),
+    evaluationMode: goal.evaluationMode,
+    value: numberToField(singleValue),
+    minValue: numberToField(goal.minAcceptable),
+    maxValue: numberToField(goal.maxAcceptable),
     unit: goal.unit
   };
 }
 
+// evaluate_numeric on the backend reads min/max acceptable, so each mode
+// writes the bound it is judged by; targetValue mirrors it for display.
 function draftToPayload(draft: DefaultGoalDraft) {
-  const value = draft.value.trim() === "" ? null : Number(draft.value);
-  const numeric = value !== null && Number.isFinite(value) ? value : null;
-  const isGuardrail = draft.goalType === "guardrail";
+  const value = fieldToNumber(draft.value);
+  const bounds =
+    draft.evaluationMode === "at_least"
+      ? { targetValue: value, minAcceptable: value, maxAcceptable: null }
+      : draft.evaluationMode === "at_most"
+        ? { targetValue: value, minAcceptable: null, maxAcceptable: value }
+        : draft.evaluationMode === "exact-ish"
+          ? { targetValue: value, minAcceptable: null, maxAcceptable: null }
+          : draft.evaluationMode === "range"
+            ? {
+                targetValue: null,
+                minAcceptable: fieldToNumber(draft.minValue),
+                maxAcceptable: fieldToNumber(draft.maxValue)
+              }
+            : { targetValue: null, minAcceptable: null, maxAcceptable: null };
   return {
     id: draft.id,
     category: draft.category,
     goalType: draft.goalType,
-    label: draft.label,
+    label: draft.label.trim(),
     description: "",
-    targetValue: numeric,
-    minAcceptable: !isGuardrail && numeric !== null ? numeric : null,
-    maxAcceptable: isGuardrail && numeric !== null ? numeric : null,
+    ...bounds,
     unit: draft.unit,
-    evaluationMode: numeric === null ? "manual" : isGuardrail ? "at_most" : "at_least",
-    priority: isGuardrail ? "guardrail" : "secondary",
+    evaluationMode: draft.evaluationMode,
+    priority: draft.goalType === "guardrail" ? "guardrail" : "secondary",
     notes: ""
   };
 }
 
+function ruleSummary(draft: DefaultGoalDraft): string {
+  switch (draft.evaluationMode) {
+    case "at_least":
+      return draft.value ? `≥ ${draft.value}${unitSuffix(draft.unit, draft.value)}` : "No value set";
+    case "at_most":
+      return draft.value ? `≤ ${draft.value}${unitSuffix(draft.unit, draft.value)}` : "No value set";
+    case "exact-ish":
+      return draft.value ? `≈ ${draft.value}${unitSuffix(draft.unit, draft.value)}` : "No value set";
+    case "range":
+      return draft.minValue && draft.maxValue
+        ? `${draft.minValue}–${draft.maxValue}${unitSuffix(draft.unit, draft.maxValue)}`
+        : "No range set";
+    case "boolean":
+      return "Yes / no";
+    default:
+      return "Checked manually";
+  }
+}
+
 export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) {
   const [drafts, setDrafts] = useState<DefaultGoalDraft[]>([]);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -61,21 +142,40 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
       .finally(() => setIsLoading(false));
   }, []);
 
-  function updateDraft(index: number, updates: Partial<DefaultGoalDraft>) {
-    setDrafts((current) =>
-      current.map((draft, draftIndex) => (draftIndex === index ? { ...draft, ...updates } : draft))
-    );
+  function updateDraft(key: string, updates: Partial<DefaultGoalDraft>) {
+    setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...updates } : draft)));
+  }
+
+  function changeMode(draft: DefaultGoalDraft, mode: WeekGoalEvaluationMode) {
+    const updates: Partial<DefaultGoalDraft> = { evaluationMode: mode };
+    if (mode === "range" && draft.minValue === "") {
+      updates.minValue = draft.value;
+    }
+    if (singleValueModes.includes(mode) && draft.value === "") {
+      updates.value = draft.minValue || draft.maxValue;
+    }
+    updateDraft(draft.key, updates);
   }
 
   function addDraft(goalType: WeekGoalType) {
-    setDrafts((current) => [
-      ...current,
-      { category: "custom", goalType, label: "", value: "", unit: "custom" }
-    ]);
+    const draft: DefaultGoalDraft = {
+      key: crypto.randomUUID(),
+      category: "custom",
+      goalType,
+      label: "",
+      evaluationMode: goalType === "guardrail" ? "at_most" : "at_least",
+      value: "",
+      minValue: "",
+      maxValue: "",
+      unit: "custom"
+    };
+    setDrafts((current) => [...current, draft]);
+    setEditingKey(draft.key);
   }
 
-  function removeDraft(index: number) {
-    setDrafts((current) => current.filter((_, draftIndex) => draftIndex !== index));
+  function removeDraft(key: string) {
+    setDrafts((current) => current.filter((draft) => draft.key !== key));
+    setEditingKey((current) => (current === key ? null : current));
   }
 
   async function save() {
@@ -84,6 +184,10 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
     }
     setMessage(null);
     setError(null);
+    if (drafts.some((draft) => !draft.label.trim())) {
+      setError("Give every goal a name before saving.");
+      return;
+    }
     setIsSaving(true);
     try {
       const saved = await fetchJson<RecurringGoal[]>("/api/default-goals", {
@@ -91,6 +195,7 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
         body: JSON.stringify(drafts.map(draftToPayload))
       });
       setDrafts(saved.map(goalToDraft));
+      setEditingKey(null);
       setMessage("Weekly defaults saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save default goals.");
@@ -103,69 +208,136 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
   const guardrails = drafts.filter((draft) => draft.goalType === "guardrail");
 
   function renderRow(draft: DefaultGoalDraft) {
-    const index = drafts.indexOf(draft);
     const isGuardrail = draft.goalType === "guardrail";
-    const removeLabel = draft.label.trim() || (isGuardrail ? "this guardrail" : "this goal");
+    const isEditing = editingKey === draft.key;
+    const name = draft.label.trim() || (isGuardrail ? "New guardrail" : "New goal");
+    const categoryLabel = goalCategories.find((option) => option.value === draft.category)?.label ?? "Custom";
+    const showValueFields = draft.evaluationMode !== "boolean" && draft.evaluationMode !== "manual";
 
     return (
       <article
-        key={draft.id ?? `draft-${index}`}
-        className={`default-goal-item default-goal-item--${draft.goalType}`}
+        key={draft.key}
+        className={`default-goal-item${isEditing ? " default-goal-item--editing" : ""}`}
       >
-        <div className="default-goal-fields">
-          <label className="default-goal-field default-goal-field--category">
-            <span>Category</span>
-            <select
-              value={draft.category}
-              onChange={(event) => updateDraft(index, { category: event.target.value as WeekGoalCategory })}
+        {isEditing ? (
+          <div className="default-goal-editor">
+            <label className="default-goal-name">
+              <span>{isGuardrail ? "Guardrail" : "Goal"}</span>
+              <input
+                autoFocus={!draft.label}
+                value={draft.label}
+                placeholder={isGuardrail ? "No more than 2 hard days" : "Preserve at least 1 rest day"}
+                onChange={(event) => updateDraft(draft.key, { label: event.target.value })}
+              />
+            </label>
+            <div className="default-goal-editor-grid">
+              <label>
+                <span>Category</span>
+                <select
+                  value={draft.category}
+                  onChange={(event) =>
+                    updateDraft(draft.key, { category: event.target.value as WeekGoalCategory })
+                  }
+                >
+                  {goalCategories.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Condition</span>
+                <select
+                  value={draft.evaluationMode}
+                  onChange={(event) => changeMode(draft, event.target.value as WeekGoalEvaluationMode)}
+                >
+                  {goalEvaluationModes.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {draft.evaluationMode === "range" ? (
+                <>
+                  <label>
+                    <span>Min</span>
+                    <input
+                      value={draft.minValue}
+                      inputMode="decimal"
+                      onChange={(event) => updateDraft(draft.key, { minValue: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>Max</span>
+                    <input
+                      value={draft.maxValue}
+                      inputMode="decimal"
+                      onChange={(event) => updateDraft(draft.key, { maxValue: event.target.value })}
+                    />
+                  </label>
+                </>
+              ) : null}
+              {singleValueModes.includes(draft.evaluationMode) ? (
+                <label>
+                  <span>{isGuardrail ? "Limit" : "Value"}</span>
+                  <input
+                    value={draft.value}
+                    inputMode="decimal"
+                    onChange={(event) => updateDraft(draft.key, { value: event.target.value })}
+                  />
+                </label>
+              ) : null}
+              {showValueFields ? (
+                <label>
+                  <span>Unit</span>
+                  <select
+                    value={draft.unit}
+                    onChange={(event) => updateDraft(draft.key, { unit: event.target.value as WeekGoalUnit })}
+                  >
+                    {goalUnits.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+            <div className="default-goal-editor-actions">
+              <button
+                type="button"
+                className="ghost-button default-goal-delete"
+                onClick={() => removeDraft(draft.key)}
+              >
+                <Trash2 size={15} />
+                <span>Remove</span>
+              </button>
+              <button type="button" className="ghost-button" onClick={() => setEditingKey(null)}>
+                <Check size={15} />
+                <span>Done</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="default-goal-display">
+            <div className="default-goal-summary">
+              <strong>{name}</strong>
+              <small>{categoryLabel}</small>
+            </div>
+            <span className="default-goal-rule">{ruleSummary(draft)}</span>
+            <button
+              type="button"
+              className="icon-button default-goal-edit"
+              aria-label={`Edit ${name}`}
+              title={`Edit ${name}`}
+              onClick={() => setEditingKey(draft.key)}
             >
-              {goalCategories.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="default-goal-field default-goal-field--label">
-            <span>{isGuardrail ? "Guardrail rule" : "Goal"}</span>
-            <input
-              value={draft.label}
-              placeholder={isGuardrail ? "No more than 2 hard days" : "Preserve at least 1 rest day"}
-              onChange={(event) => updateDraft(index, { label: event.target.value })}
-              required
-            />
-          </label>
-          <label className="default-goal-field default-goal-field--value">
-            <span>{isGuardrail ? "Limit" : "Target"}</span>
-            <input
-              value={draft.value}
-              inputMode="decimal"
-              onChange={(event) => updateDraft(index, { value: event.target.value })}
-            />
-          </label>
-          <label className="default-goal-field default-goal-field--unit">
-            <span>Unit</span>
-            <select
-              value={draft.unit}
-              onChange={(event) => updateDraft(index, { unit: event.target.value as WeekGoalUnit })}
-            >
-              {goalUnits.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <button
-          type="button"
-          className="icon-button icon-button--danger default-goal-remove"
-          aria-label={`Remove ${removeLabel}`}
-          title={`Remove ${removeLabel}`}
-          onClick={() => removeDraft(index)}
-        >
-          <Trash2 size={15} />
-        </button>
+              <Pencil size={14} />
+            </button>
+          </div>
+        )}
       </article>
     );
   }

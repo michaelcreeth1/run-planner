@@ -121,6 +121,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     ? goalRaces.find((goalRace) => goalRace.id === planEditor.goalRaceId) ?? null
     : null;
   const hasActiveEditor = Boolean(goalRaceForm || planEditor);
+  const today = toDateInputValue(new Date());
 
   useEffect(() => {
     loadOverview();
@@ -217,30 +218,11 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     setGoalRaceForm(goalRaceToForm(goalRace));
   }
 
-  async function openPlanForGoalRace(goalRace: GoalRace, linkedPlan: TrainingPlanSummary | undefined) {
+  function openCreatePlanForRace(goalRace: GoalRace) {
     setSuccess(null);
     setGoalRaceForm(null);
     setSelectedMesocycleIndex(0);
-    if (!linkedPlan) {
-      setPlanEditor(buildDefaultPlanEditor(goalRace));
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const plan =
-        selectedPlan?.id === linkedPlan.id
-          ? selectedPlan
-          : await fetchJson<TrainingPlan>(`/api/plans/${linkedPlan.id}`);
-      setSelectedPlanId(plan.id);
-      setSelectedPlan(plan);
-      openEditPlan(plan);
-      setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load the plan.");
-    } finally {
-      setIsSaving(false);
-    }
+    setPlanEditor(buildDefaultPlanEditor(goalRace));
   }
 
   async function saveGoalRace(event: FormEvent<HTMLFormElement>) {
@@ -367,7 +349,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     }
   }
 
-  async function deletePlan(plan: TrainingPlan) {
+  async function deletePlan(planId: string) {
     if (
       writesBlocked ||
       !window.confirm("Delete this training plan? Weeks, workouts, and goals will be preserved.")
@@ -376,7 +358,7 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
     }
     try {
       setSuccess(null);
-      await fetchJson(`/api/plans/${plan.id}?clearScaffolding=false`, { method: "DELETE" });
+      await fetchJson(`/api/plans/${planId}?clearScaffolding=false`, { method: "DELETE" });
       setSelectedPlan(null);
       setSelectedPlanId(null);
       setPlanEditor(null);
@@ -518,14 +500,16 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
                     >
                       <Trash2 size={16} />
                     </button>
-                    <button
-                      type="button"
-                      className="primary-button goal-race-plan-button"
-                      disabled={writesBlocked || isSaving}
-                      onClick={() => openPlanForGoalRace(goalRace, linkedPlan)}
-                    >
-                      {linkedPlan ? "Edit Plan" : "Create Plan"}
-                    </button>
+                    {!linkedPlan ? (
+                      <button
+                        type="button"
+                        className="primary-button goal-race-plan-button"
+                        disabled={writesBlocked || isSaving}
+                        onClick={() => openCreatePlanForRace(goalRace)}
+                      >
+                        Create plan
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -669,6 +653,17 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
             <button type="button" className="ghost-button" onClick={() => setPlanEditor(null)}>
               Close
             </button>
+            {planEditor.mode === "edit" && planEditor.id ? (
+              <button
+                type="button"
+                className="ghost-button ghost-button--danger plan-form-actions-end"
+                disabled={writesBlocked}
+                onClick={() => deletePlan(planEditor.id as string)}
+              >
+                <Trash2 size={16} />
+                Delete plan
+              </button>
+            ) : null}
           </div>
         </form>
       ) : null}
@@ -681,141 +676,103 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
         />
       ) : null}
 
-      {!hasActiveEditor && plans.length > 0 ? (
-        <div className="plan-card">
-          <div className="plan-form-section-header">
-            <strong>All plans</strong>
-            <span>{plans.length}</span>
-          </div>
-          <div className="plan-goal-race-list">
-            {plans.map((plan) => (
-              <button
-                key={plan.id}
-                type="button"
-                className={`plan-list-item ${selectedPlan?.id === plan.id ? "plan-list-item--selected" : ""}`}
-                onClick={() => setSelectedPlanId(plan.id)}
-              >
-                <strong>{plan.name}</strong>
-                <span>{formatCompactWeekRange(plan.startDate, plan.endDate)}</span>
-                <small>{plan.goalRaceName ?? "Date-range plan"}</small>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
       {!hasActiveEditor && selectedPlan ? (
-        <div className="plan-detail-grid">
-          <article className="plan-card plan-hero">
-            <div className="plan-hero-header">
-              <div>
-                <p className="eyebrow">{selectedPlan.status.replaceAll("_", " ")}</p>
-                <h2>{selectedPlan.name}</h2>
-                <p>{selectedPlan.description || "Long-range structure for week planning."}</p>
-              </div>
-              <div className="plans-toolbar-actions">
-                <button type="button" className="ghost-button" onClick={() => openEditPlan(selectedPlan)} disabled={writesBlocked}>
-                  <Pencil size={16} />
-                  Edit
+        <article className="plan-card plan-hero">
+          {plans.length > 1 ? (
+            <nav className="plan-switcher" aria-label="Switch plan">
+              {plans.map((plan) => (
+                <button
+                  key={plan.id}
+                  type="button"
+                  className={`plan-switcher-pill ${selectedPlan.id === plan.id ? "plan-switcher-pill--active" : ""}`}
+                  onClick={() => setSelectedPlanId(plan.id)}
+                >
+                  {plan.name}
                 </button>
-                <button type="button" className="ghost-button ghost-button--danger" onClick={() => deletePlan(selectedPlan)} disabled={writesBlocked}>
-                  <Trash2 size={16} />
-                  Delete
-                </button>
-              </div>
-            </div>
-            <div className="plan-hero-metrics">
-              <div>
-                <span>Range</span>
-                <strong>{formatCompactWeekRange(selectedPlan.startDate, selectedPlan.endDate)}</strong>
-              </div>
-              <div>
-                <span>Race</span>
-                <strong>{selectedPlan.goalRace?.name ?? "Date-range plan"}</strong>
-              </div>
-              <div>
-                <span>Target pace</span>
-                <strong>{selectedPlan.goalRace?.targetPaceSecondsPerMile ? formatPace(selectedPlan.goalRace.targetPaceSecondsPerMile, 1) : "-"}</strong>
-              </div>
-            </div>
-            <div className="plan-timeline">
-              {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => (
-                <section key={`${group.phase ?? "none"}-${groupIndex}`} className="plan-timeline-group">
-                  <header className={`plan-timeline-group-header plan-phase--${group.phase ?? "base"}`}>
-                    <span className="plan-phase-dot" aria-hidden="true" />
-                    <strong>{group.name ?? (group.phase ? phaseLabel(group.phase) : "Weeks")}</strong>
-                    <span>
-                      {formatCompactWeekRange(group.weeks[0].week.weekStartDate, group.weeks[group.weeks.length - 1].week.weekEndDate)}
-                      {" · "}
-                      {group.weeks.length} {group.weeks.length === 1 ? "week" : "weeks"}
-                    </span>
-                  </header>
-                  <div className="plan-timeline-weeks">
-                    {group.weeks.map(({ week, index }) => (
-                      <button
-                        key={week.weekStartDate}
-                        type="button"
-                        className={`plan-week-bar plan-phase--${week.mesocyclePhase ?? "base"} ${week.hasManualOverride ? "plan-week-bar--manual" : ""}`}
-                        onClick={() => onSelectWeek(week.weekStartDate)}
-                      >
-                        <span className="plan-week-bar-label">
-                          W{index + 1} · {formatShortDate(week.weekStartDate)}
-                          {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
-                        </span>
-                        <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
-                        <small>{week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}</small>
-                      </button>
-                    ))}
-                  </div>
-                </section>
               ))}
+            </nav>
+          ) : null}
+          <div className="plan-hero-header">
+            <div>
+              <p className="eyebrow">{selectedPlan.status.replaceAll("_", " ")}</p>
+              <h2>{selectedPlan.name}</h2>
+              <p>{selectedPlan.description || "Long-range structure for week planning."}</p>
             </div>
-          </article>
-
-          <article className="plan-card">
-            <div className="plan-form-section-header">
-              <strong>Mesocycles</strong>
-              <span>{selectedPlan.mesocycles.length}</span>
+            <div className="plans-toolbar-actions">
+              <button type="button" className="ghost-button" onClick={() => openEditPlan(selectedPlan)} disabled={writesBlocked}>
+                <Pencil size={16} />
+                Edit plan
+              </button>
             </div>
-            <div className="mesocycle-overview-list">
-              {selectedPlan.mesocycles.map((mesocycle) => {
-                const label = phaseLabel(mesocycle.phase);
-                const weekCount = Math.max(1, weeksBetween(mesocycle.startDate, addDays(mesocycle.endDate, 1)));
-                return (
-                  <article key={mesocycle.id} className={`mesocycle-overview-card plan-phase--${mesocycle.phase}`}>
-                    <div className="mesocycle-overview-main">
-                      <div className="mesocycle-overview-title">
-                        <strong>{mesocycle.name || label}</strong>
-                        {mesocycle.name && mesocycle.name !== label ? (
-                          <span className="plan-phase-pill">{label}</span>
-                        ) : null}
-                      </div>
-                      <span className="mesocycle-overview-range">
-                        {formatCompactWeekRange(mesocycle.startDate, mesocycle.endDate)} · {weekCount}{" "}
-                        {weekCount === 1 ? "week" : "weeks"}
+          </div>
+          <div className="plan-hero-metrics">
+            <div>
+              <span>Range</span>
+              <strong>{formatCompactWeekRange(selectedPlan.startDate, selectedPlan.endDate)}</strong>
+            </div>
+            <div>
+              <span>Race</span>
+              <strong>{selectedPlan.goalRace?.name ?? "Date-range plan"}</strong>
+            </div>
+            <div>
+              <span>Target pace</span>
+              <strong>{selectedPlan.goalRace?.targetPaceSecondsPerMile ? formatPace(selectedPlan.goalRace.targetPaceSecondsPerMile, 1) : "-"}</strong>
+            </div>
+            <div>
+              <span>Peak week</span>
+              <strong>{peakWeekMileage(selectedPlan.weekSummaries) ? `${formatNumber(peakWeekMileage(selectedPlan.weekSummaries))} mi` : "-"}</strong>
+            </div>
+          </div>
+          <PlanShape weeks={selectedPlan.weekSummaries} onSelectWeek={onSelectWeek} />
+          <div className="plan-timeline">
+            {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => {
+              const mesocycle = group.mesocycleId
+                ? selectedPlan.mesocycles.find((cycle) => cycle.id === group.mesocycleId) ?? null
+                : null;
+              return (
+                <section key={`${group.mesocycleId ?? "none"}-${groupIndex}`} className="plan-timeline-group">
+                  <header className={`plan-timeline-group-header plan-phase--${group.phase ?? "base"}`}>
+                    <div className="plan-timeline-group-title">
+                      <span className="plan-phase-dot" aria-hidden="true" />
+                      <strong>{group.name ?? (group.phase ? phaseLabel(group.phase) : "Weeks")}</strong>
+                      <span>
+                        {formatCompactWeekRange(group.weeks[0].week.weekStartDate, group.weeks[group.weeks.length - 1].week.weekEndDate)}
+                        {" · "}
+                        {group.weeks.length} {group.weeks.length === 1 ? "week" : "weeks"}
                       </span>
                     </div>
-                    <div className="mesocycle-overview-metrics">
-                      <strong>
-                        {mesocycle.targetMileageStart ?? "–"} → {mesocycle.targetMileageEnd ?? "–"} mi
-                      </strong>
-                      <small>
-                        {[
-                          mesocycle.longRunStart || mesocycle.longRunEnd
-                            ? `Long run ${mesocycle.longRunStart ?? "–"} → ${mesocycle.longRunEnd ?? "–"}`
-                            : null,
-                          mesocycle.downWeekCadence ? `down week every ${mesocycle.downWeekCadence}` : null
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || "No down weeks"}
-                      </small>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </article>
-        </div>
+                    {mesocycle ? <p className="plan-timeline-group-summary">{mesocycleSummary(mesocycle)}</p> : null}
+                  </header>
+                  <div className="plan-timeline-weeks">
+                    {group.weeks.map(({ week, index }) => {
+                      const hasActivity = week.plannedMileage > 0 || week.actualMileage > 0;
+                      const isCurrentWeek = week.weekStartDate <= today && today <= week.weekEndDate;
+                      return (
+                        <button
+                          key={week.weekStartDate}
+                          type="button"
+                          className={`plan-week-bar ${week.hasManualOverride ? "plan-week-bar--manual" : ""} ${isCurrentWeek ? "plan-week-bar--current" : ""}`}
+                          onClick={() => onSelectWeek(week.weekStartDate)}
+                        >
+                          <span className="plan-week-bar-label">
+                            W{index + 1} · {formatShortDate(week.weekStartDate)}
+                            {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
+                          </span>
+                          <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
+                          {week.warning || hasActivity ? (
+                            <small>
+                              {week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}
+                            </small>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </article>
       ) : null}
     </section>
   );
@@ -1134,6 +1091,7 @@ function MesocycleInspector({
 }
 
 type PlanWeekGroup = {
+  mesocycleId: string | null;
   phase: MesocyclePhase | null;
   name: string | null;
   weeks: Array<{ week: PlanWeekSummary; index: number }>;
@@ -1143,10 +1101,11 @@ function groupWeeksByMesocycle(weeks: PlanWeekSummary[]): PlanWeekGroup[] {
   const groups: PlanWeekGroup[] = [];
   weeks.forEach((week, index) => {
     const last = groups[groups.length - 1];
-    if (last && last.phase === week.mesocyclePhase && last.name === week.mesocycleName) {
+    if (last && last.mesocycleId === week.mesocycleId && last.phase === week.mesocyclePhase) {
       last.weeks.push({ week, index });
     } else {
       groups.push({
+        mesocycleId: week.mesocycleId,
         phase: week.mesocyclePhase,
         name: week.mesocycleName,
         weeks: [{ week, index }]
@@ -1154,6 +1113,117 @@ function groupWeeksByMesocycle(weeks: PlanWeekSummary[]): PlanWeekGroup[] {
     }
   });
   return groups;
+}
+
+function peakWeekMileage(weeks: PlanWeekSummary[]) {
+  return Math.max(0, ...weeks.map((week) => week.targetMileage ?? 0));
+}
+
+function currentWeekMarker(weeks: PlanWeekSummary[]): { index: number; label: string } | null {
+  const today = toDateInputValue(new Date());
+  const currentIndex = weeks.findIndex((week) => week.weekStartDate <= today && today <= week.weekEndDate);
+  if (currentIndex >= 0) {
+    return { index: currentIndex, label: "Now" };
+  }
+  if (weeks.length > 0 && today < weeks[0].weekStartDate) {
+    return { index: 0, label: "Next" };
+  }
+  return null;
+}
+
+function PlanShape({
+  onSelectWeek,
+  weeks
+}: {
+  onSelectWeek: (weekStartDate: string) => void;
+  weeks: PlanWeekSummary[];
+}) {
+  const maxMileage = peakWeekMileage(weeks);
+  if (weeks.length < 2 || maxMileage <= 0) {
+    return null;
+  }
+  const marker = currentWeekMarker(weeks);
+  return (
+    <div className="plan-shape">
+      <div className="plan-shape-peak">
+        <span>Peak {formatNumber(maxMileage)} mi/wk</span>
+      </div>
+      <div className="plan-shape-bars">
+        {weeks.map((week, index) => {
+          const target = week.targetMileage ?? 0;
+          const detail = target ? `${formatNumber(target)} mi target` : "no target";
+          const label = `Week ${index + 1}, ${formatShortDate(week.weekStartDate)}: ${detail}${week.isDownWeek ? ", down week" : ""}`;
+          return (
+            <button
+              key={week.weekStartDate}
+              type="button"
+              className={`plan-shape-bar plan-phase--${week.mesocyclePhase ?? "base"} ${week.isDownWeek ? "plan-shape-bar--down" : ""}`}
+              style={{ height: `${Math.max((target / maxMileage) * 100, 4)}%` }}
+              title={label}
+              aria-label={label}
+              onClick={() => onSelectWeek(week.weekStartDate)}
+            />
+          );
+        })}
+        {marker ? (
+          <div
+            className="plan-shape-now"
+            style={{ left: `${((marker.index + 0.5) / weeks.length) * 100}%` }}
+            aria-hidden="true"
+          >
+            <span>{marker.label}</span>
+          </div>
+        ) : null}
+      </div>
+      <div className="plan-shape-phases" aria-hidden="true">
+        {groupWeeksByMesocycle(weeks).map((group, groupIndex) => (
+          <span
+            key={`${group.mesocycleId ?? "none"}-${groupIndex}`}
+            className={`plan-phase--${group.phase ?? "base"}`}
+            style={{ flexGrow: group.weeks.length }}
+          >
+            {group.name ?? (group.phase ? phaseLabel(group.phase) : "")}
+          </span>
+        ))}
+      </div>
+      <div className="plan-shape-axis">
+        <span>{formatShortDate(weeks[0].weekStartDate)}</span>
+        <span>{formatShortDate(weeks[weeks.length - 1].weekEndDate)}</span>
+      </div>
+    </div>
+  );
+}
+
+const phaseEmphasis: Record<MesocyclePhase, string> = {
+  base: "Aerobic foundation",
+  build: "Growing workload",
+  specific: "Race-specific sharpening",
+  taper: "Freshen up for race day",
+  race: "Race week",
+  recovery: "Absorb and rebuild",
+  maintenance: "Hold steady"
+};
+
+function ordinalWeek(cadence: number) {
+  return cadence === 2 ? "2nd" : cadence === 3 ? "3rd" : `${cadence}th`;
+}
+
+function mesocycleSummary(mesocycle: Mesocycle) {
+  const parts: string[] = [phaseEmphasis[mesocycle.phase] ?? phaseLabel(mesocycle.phase)];
+  const start = mesocycle.targetMileageStart;
+  const end = mesocycle.targetMileageEnd;
+  if (start !== null && end !== null) {
+    parts.push(start === end ? `hold ${formatNumber(start)} mi/wk` : `${formatNumber(start)} → ${formatNumber(end)} mi/wk`);
+  } else if (end !== null) {
+    parts.push(`to ${formatNumber(end)} mi/wk`);
+  }
+  if (mesocycle.longRunEnd !== null) {
+    parts.push(`long runs to ${formatNumber(mesocycle.longRunEnd)} mi`);
+  }
+  if (mesocycle.downWeekCadence) {
+    parts.push(`every ${ordinalWeek(mesocycle.downWeekCadence)} week easier`);
+  }
+  return parts.join(" · ");
 }
 
 function defaultGoalRaceForm(): GoalRaceFormState {
@@ -1506,9 +1576,7 @@ function cadenceOptions(currentValue: string) {
     { value: "4", label: "Every 4th week" }
   ];
   if (currentValue && !options.some((option) => option.value === currentValue)) {
-    const cadence = Number(currentValue);
-    const ordinal = cadence === 2 ? "2nd" : `${currentValue}th`;
-    options.push({ value: currentValue, label: `Every ${ordinal} week` });
+    options.push({ value: currentValue, label: `Every ${ordinalWeek(Number(currentValue))} week` });
   }
   return options;
 }
