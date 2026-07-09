@@ -1,9 +1,10 @@
 import { CalendarDays, Flag, MapPin, Route } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchJson } from "../../lib/api";
 import type { GoalRace } from "../../types/domain";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
 import { GoalImpactSection } from "./GoalImpactSection";
+import { invalidateRuleContext } from "./useRuleContext";
 
 const raceDistanceLabels: Record<GoalRace["distance"], string> = {
   "5k": "5K",
@@ -43,6 +44,7 @@ export function GoalsView({
 }) {
   const [races, setRaces] = useState<GoalRace[]>([]);
   const [racesError, setRacesError] = useState<string | null>(null);
+  const [ruleContextRefreshKey, setRuleContextRefreshKey] = useState(0);
 
   useEffect(() => {
     fetchJson<GoalRace[]>("/api/goal-races")
@@ -53,6 +55,11 @@ export function GoalsView({
   }, []);
 
   const sortedRaces = [...races].sort((left, right) => left.raceDate.localeCompare(right.raceDate));
+
+  const refreshRuleContext = useCallback(() => {
+    invalidateRuleContext();
+    setRuleContextRefreshKey((current) => current + 1);
+  }, []);
 
   return (
     <section className="settings-view goals-view">
@@ -67,15 +74,15 @@ export function GoalsView({
         </button>
       </header>
 
-      <GoalImpactSection onSelectWeek={onSelectWeek} />
+      <GoalImpactSection contextRefreshKey={ruleContextRefreshKey} onSelectWeek={onSelectWeek} />
 
       <div className="goals-layout">
-        <DefaultGoalsCard writesBlocked={writesBlocked} />
+        <DefaultGoalsCard onRulesSaved={refreshRuleContext} writesBlocked={writesBlocked} />
 
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">
             <div>
-              <h2>Goal races</h2>
+              <h2>Races</h2>
             </div>
           </header>
           {racesError ? <div className="settings-note settings-note--danger">{racesError}</div> : null}

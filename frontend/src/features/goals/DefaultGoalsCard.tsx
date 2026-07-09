@@ -1,5 +1,5 @@
-import { Check, Pencil, Plus, Save, ShieldCheck, Target, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, Pencil, Plus, Target, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchJson } from "../../lib/api";
 import { goalCategories, goalEvaluationModes, goalUnits } from "../../lib/options";
 import type {
@@ -24,6 +24,8 @@ type DefaultGoalDraft = {
 };
 
 const singleValueModes: WeekGoalEvaluationMode[] = ["at_least", "at_most", "exact-ish"];
+const AUTOSAVE_DELAY_MS = 650;
+const RULE_NAME_REQUIRED_MESSAGE = "Name every rule to save changes.";
 
 function unitSuffix(unit: WeekGoalUnit, countField: string): string {
   const singular = Number(countField) === 1;
@@ -106,6 +108,28 @@ function draftToPayload(draft: DefaultGoalDraft) {
   };
 }
 
+function serializeDrafts(drafts: DefaultGoalDraft[]) {
+  return JSON.stringify(drafts.map(draftToPayload));
+}
+
+function savedGoalsToDrafts(goals: RecurringGoal[], sourceDrafts: DefaultGoalDraft[]) {
+  return goals.map((goal, index) => ({
+    ...goalToDraft(goal),
+    key: sourceDrafts[index]?.key ?? goal.id
+  }));
+}
+
+function mergeSavedIds(currentDrafts: DefaultGoalDraft[], sourceDrafts: DefaultGoalDraft[], savedDrafts: DefaultGoalDraft[]) {
+  const savedBySourceKey = new Map(sourceDrafts.map((draft, index) => [draft.key, savedDrafts[index]]));
+  return currentDrafts.map((draft) => {
+    if (draft.id) {
+      return draft;
+    }
+    const savedDraft = savedBySourceKey.get(draft.key);
+    return savedDraft?.id ? { ...draft, id: savedDraft.id } : draft;
+  });
+}
+
 function ruleSummary(draft: DefaultGoalDraft): string {
   switch (draft.evaluationMode) {
     case "at_least":
@@ -125,22 +149,117 @@ function ruleSummary(draft: DefaultGoalDraft): string {
   }
 }
 
-export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) {
+export function DefaultGoalsCard({
+  onRulesSaved,
+  writesBlocked
+}: {
+  onRulesSaved?: () => void;
+  writesBlocked: boolean;
+}) {
   const [drafts, setDrafts] = useState<DefaultGoalDraft[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hasLoadedDraftsRef = useRef(false);
+  const lastSavedSnapshotRef = useRef("");
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     fetchJson<RecurringGoal[]>("/api/default-goals")
-      .then((goals) => setDrafts(goals.map(goalToDraft)))
+      .then((goals) => {
+        const loadedDrafts = goals.map(goalToDraft);
+        lastSavedSnapshotRef.current = serializeDrafts(loadedDrafts);
+        hasLoadedDraftsRef.current = true;
+        setDrafts(loadedDrafts);
+      })
       .catch((loadError) =>
         setError(loadError instanceof Error ? loadError.message : "Could not load default goals.")
       )
       .finally(() => setIsLoading(false));
   }, []);
+
+  const saveDrafts = useCallback(
+    async (draftsToSave: DefaultGoalDraft[]) => {
+      if (writesBlocked || draftsToSave.some((draft) => !draft.label.trim())) {
+        return;
+      }
+      const snapshotToSave = serializeDrafts(draftsToSave);
+      if (snapshotToSave === lastSavedSnapshotRef.current) {
+        return;
+      }
+
+      setIsSaving(true);
+      setMessage("Saving changes…");
+      setError(null);
+      try {
+        const saved = await fetchJson<RecurringGoal[]>("/api/default-goals", {
+          method: "PUT",
+          body: JSON.stringify(draftsToSave.map(draftToPayload))
+        });
+        const savedDrafts = savedGoalsToDrafts(saved, draftsToSave);
+        const savedSnapshot = serializeDrafts(savedDrafts);
+        lastSavedSnapshotRef.current = savedSnapshot;
+        setDrafts((currentDrafts) =>
+          serializeDrafts(currentDrafts) === snapshotToSave
+            ? savedDrafts
+            : mergeSavedIds(currentDrafts, draftsToSave, savedDrafts)
+        );
+        setMessage("Rules saved.");
+        onRulesSaved?.();
+      } catch (saveError) {
+        setError(saveError instanceof Error ? saveError.message : "Could not save default goals.");
+        setMessage(null);
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [onRulesSaved, writesBlocked]
+  );
+
+  useEffect(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    if (isLoading || isSaving || !hasLoadedDraftsRef.current) {
+      return;
+    }
+
+    const currentSnapshot = serializeDrafts(drafts);
+    if (currentSnapshot === lastSavedSnapshotRef.current) {
+      setError(null);
+      setMessage((current) => (current === RULE_NAME_REQUIRED_MESSAGE ? null : current));
+      return;
+    }
+
+    if (writesBlocked) {
+      setMessage(null);
+      setError("Rules are read-only right now.");
+      return;
+    }
+
+    if (drafts.some((draft) => !draft.label.trim())) {
+      setError(null);
+      setMessage(RULE_NAME_REQUIRED_MESSAGE);
+      return;
+    }
+
+    setError(null);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      void saveDrafts(drafts);
+    }, AUTOSAVE_DELAY_MS);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [drafts, isLoading, isSaving, saveDrafts, writesBlocked]);
 
   function updateDraft(key: string, updates: Partial<DefaultGoalDraft>) {
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...updates } : draft)));
@@ -178,39 +297,10 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
     setEditingKey((current) => (current === key ? null : current));
   }
 
-  async function save() {
-    if (writesBlocked || isSaving) {
-      return;
-    }
-    setMessage(null);
-    setError(null);
-    if (drafts.some((draft) => !draft.label.trim())) {
-      setError("Give every goal a name before saving.");
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const saved = await fetchJson<RecurringGoal[]>("/api/default-goals", {
-        method: "PUT",
-        body: JSON.stringify(drafts.map(draftToPayload))
-      });
-      setDrafts(saved.map(goalToDraft));
-      setEditingKey(null);
-      setMessage("Weekly defaults saved.");
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save default goals.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  const achievements = drafts.filter((draft) => draft.goalType === "achievement");
-  const guardrails = drafts.filter((draft) => draft.goalType === "guardrail");
-
   function renderRow(draft: DefaultGoalDraft) {
     const isGuardrail = draft.goalType === "guardrail";
     const isEditing = editingKey === draft.key;
-    const name = draft.label.trim() || (isGuardrail ? "New guardrail" : "New goal");
+    const name = draft.label.trim() || "New rule";
     const categoryLabel = goalCategories.find((option) => option.value === draft.category)?.label ?? "Custom";
     const showValueFields = draft.evaluationMode !== "boolean" && draft.evaluationMode !== "manual";
 
@@ -222,7 +312,7 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
         {isEditing ? (
           <div className="default-goal-editor">
             <label className="default-goal-name">
-              <span>{isGuardrail ? "Guardrail" : "Goal"}</span>
+              <span>Rule</span>
               <input
                 autoFocus={!draft.label}
                 value={draft.label}
@@ -231,6 +321,18 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
               />
             </label>
             <div className="default-goal-editor-grid">
+              <label>
+                <span>Type</span>
+                <select
+                  value={draft.goalType}
+                  onChange={(event) =>
+                    updateDraft(draft.key, { goalType: event.target.value as WeekGoalType })
+                  }
+                >
+                  <option value="achievement">Goal</option>
+                  <option value="guardrail">Guardrail</option>
+                </select>
+              </label>
               <label>
                 <span>Category</span>
                 <select
@@ -344,88 +446,49 @@ export function DefaultGoalsCard({ writesBlocked }: { writesBlocked: boolean }) 
 
   return (
     <section className="settings-form default-goals-workspace">
-      <header className="settings-card default-goals-overview">
-        <div>
-          <h2>Weekly defaults</h2>
-          <p>Standing goals and guardrails applied unless a plan or manual edit overrides them.</p>
-        </div>
-        {!isLoading ? (
-          <button
-            className="primary default-goals-save"
-            type="button"
-            disabled={writesBlocked || isSaving}
-            onClick={save}
-          >
-            <Save size={16} />
-            <span>{isSaving ? "Saving" : "Save defaults"}</span>
-          </button>
-        ) : null}
-      </header>
       {isLoading ? (
         <section className="settings-card">
           <div className="settings-note">Loading…</div>
         </section>
       ) : (
         <>
-          {message ? <div className="settings-note">{message}</div> : null}
-          {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
           <div className="default-goals-content">
-            <section className="default-goal-section default-goal-section--achievement">
+            <section className="default-goal-section">
               <header className="default-goal-section-header">
                 <div>
                   <span className="default-goal-section-icon">
                     <Target size={17} />
                   </span>
                   <div>
-                    <strong>Standing goals</strong>
-                    <span>Targets to preserve when weeks are created.</span>
+                    <strong>Rules</strong>
+                    <span>Goals and guardrails applied to every week unless a plan or manual edit overrides them.</span>
                   </div>
                 </div>
               </header>
-              {achievements.length === 0 ? (
+              {drafts.length === 0 ? (
                 <div className="goals-empty-state goals-empty-state--compact">
                   <Target size={17} />
                   <div>
-                    <strong>No standing goals</strong>
-                    <span>Add a target you want every week to remember.</span>
+                    <strong>No rules yet</strong>
+                    <span>Add a target or limit you want every week to remember.</span>
                   </div>
                 </div>
               ) : null}
-              <div className="default-goal-list">{achievements.map(renderRow)}</div>
+              <div className="default-goal-list">{drafts.map(renderRow)}</div>
               <button type="button" className="ghost-button default-goal-add" onClick={() => addDraft("achievement")}>
                 <Plus size={16} />
-                <span>Add goal</span>
-              </button>
-            </section>
-
-            <section className="default-goal-section default-goal-section--guardrail">
-              <header className="default-goal-section-header">
-                <div>
-                  <span className="default-goal-section-icon">
-                    <ShieldCheck size={17} />
-                  </span>
-                  <div>
-                    <strong>Guardrails</strong>
-                    <span>Limits that flag weeks before training gets lopsided.</span>
-                  </div>
-                </div>
-              </header>
-              {guardrails.length === 0 ? (
-                <div className="goals-empty-state goals-empty-state--compact">
-                  <ShieldCheck size={17} />
-                  <div>
-                    <strong>No guardrails</strong>
-                    <span>Add a limit for risk, recovery, or intensity.</span>
-                  </div>
-                </div>
-              ) : null}
-              <div className="default-goal-list">{guardrails.map(renderRow)}</div>
-              <button type="button" className="ghost-button default-goal-add" onClick={() => addDraft("guardrail")}>
-                <Plus size={16} />
-                <span>Add guardrail</span>
+                <span>Add rule</span>
               </button>
             </section>
           </div>
+
+          {isSaving || message || error ? (
+            <div className="default-goals-footer">
+              {isSaving ? <div className="settings-note">Saving changes…</div> : null}
+              {!isSaving && message ? <div className="settings-note">{message}</div> : null}
+              {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
+            </div>
+          ) : null}
         </>
       )}
     </section>

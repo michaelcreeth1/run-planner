@@ -35,8 +35,14 @@ type CellTooltip = {
   top: number;
 };
 
-export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDate: string) => void }) {
-  const { plan, defaultGoals, isLoading: contextLoading, error: contextError } = useRuleContext();
+export function GoalImpactSection({
+  contextRefreshKey = 0,
+  onSelectWeek
+}: {
+  contextRefreshKey?: number;
+  onSelectWeek: (weekStartDate: string) => void;
+}) {
+  const { plan, defaultGoals, isLoading: contextLoading, error: contextError } = useRuleContext(contextRefreshKey);
   const [historyWeeks, setHistoryWeeks] = useState(DEFAULT_HISTORY_WEEKS);
   const [weeks, setWeeks] = useState<Record<string, TrainingWeek>>({});
   const [weeksError, setWeeksError] = useState<string | null>(null);

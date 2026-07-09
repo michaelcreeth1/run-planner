@@ -47,7 +47,7 @@ async function fetchRuleContext(): Promise<RuleContext> {
   return { plan, defaultGoals };
 }
 
-export function useRuleContext(): RuleContextState {
+export function useRuleContext(refreshKey = 0): RuleContextState {
   const [state, setState] = useState<RuleContextState>({
     plan: null,
     defaultGoals: [],
@@ -76,7 +76,7 @@ export function useRuleContext(): RuleContextState {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [refreshKey]);
 
   return state;
 }
