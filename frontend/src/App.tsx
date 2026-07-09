@@ -41,6 +41,8 @@ import type {
   StravaActivity,
   StravaStatus,
   SyncJob,
+  TrainingPlan,
+  TrainingPlanSummary,
   TrainingWeek,
   WeekGoal,
   WeekGoalForm,
@@ -95,6 +97,7 @@ function App() {
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
+  const [activePlan, setActivePlan] = useState<TrainingPlan | null>(null);
   const [analyticsPlanning, setAnalyticsPlanning] = useState<AnalyticsPlanning | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
@@ -176,6 +179,7 @@ function App() {
     setVisibleWeekStarts(starts);
     loadWeeks(starts, { force: true });
     loadTrainingTimeline();
+    loadActivePlan();
     loadStravaStatus();
     loadActivities();
   }, [session?.activeAthleteAccountId, session?.authenticated]);
@@ -217,6 +221,7 @@ function App() {
   function clearAppData() {
     setWeekStack({});
     setTimelineSummary(null);
+    setActivePlan(null);
     setAnalyticsPlanning(null);
     setActivities([]);
     setStravaStatus(null);
@@ -595,6 +600,26 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
+  function loadActivePlan() {
+    fetchJson<TrainingPlanSummary[]>("/api/plans")
+      .then((plans) => {
+        const primary =
+          plans.find((plan) => plan.isCurrent) ??
+          plans.find((plan) => plan.isUpcoming) ??
+          plans[0] ??
+          null;
+        if (!primary) {
+          setActivePlan(null);
+          return null;
+        }
+        return fetchJson<TrainingPlan>(`/api/plans/${primary.id}`).then((plan) => {
+          setActivePlan(plan);
+          return plan;
+        });
+      })
+      .catch((error: Error) => setApiError(error.message));
+  }
+
   function loadAnalyticsPlanning() {
     setAnalyticsLoading(true);
     const params = new URLSearchParams({
@@ -729,16 +754,20 @@ function App() {
 
         {activeTab === "week" ? (
           <WeekView
+            activePlan={activePlan}
             canLoadNewerWeeks={canLoadNewerWeeks}
             canLoadOlderWeeks={canLoadOlderWeeks}
+            currentWeekStart={currentWeekStart}
             isLoading={isLoadingWeek}
             onJumpToThisWeek={jumpToThisWeek}
             onLoadNewerWeeks={appendNewerWeeks}
             onLoadOlderWeeks={prependOlderWeeks}
+            onOpenPlan={() => setActiveTab("plan")}
             onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
             onSelectWeek={(start) => selectWeek(start, "week-stack")}
             selectedWeekStart={weekStart}
             timelineIndex={timelineIndex}
+            today={todayDateString()}
             week={week}
             weekStack={weekStack}
             weekStarts={visibleWeekStarts}
@@ -761,6 +790,7 @@ function App() {
             onPlanApplied={() => {
               refreshVisibleWeeks();
               loadTrainingTimeline();
+              loadActivePlan();
               loadAnalyticsPlanning();
             }}
             onSelectWeek={(start) => {

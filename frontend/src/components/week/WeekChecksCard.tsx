@@ -1,5 +1,5 @@
-import { ChevronRight, ListChecks } from "lucide-react";
-import { useMemo } from "react";
+import { ChevronDown, ChevronRight, ListChecks } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { RuleEvaluation, RuleStatus } from "../../features/goals/ruleEvaluation";
 import { buildPlanRules, evaluateRulesForWeek, ruleStatusLabels } from "../../features/goals/ruleEvaluation";
 import { useRuleContext } from "../../features/goals/useRuleContext";
@@ -33,39 +33,54 @@ export function WeekChecksCard({
     );
   }, [defaultGoals, error, isLoading, plan, week]);
 
+  const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
+  const attentionEvaluations = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status));
+  const [isOpen, setIsOpen] = useState(issueCount > 0);
+
+  // Start each selected week in its useful default state: open for exceptions, closed for a clean slate.
+  useEffect(() => {
+    setIsOpen(issueCount > 0);
+  }, [issueCount, week.weekStartDate]);
+
   // An entirely pending week has nothing to check yet — stay out of the way.
   if (isLoading || error || evaluations.length === 0 || evaluations.every((evaluation) => evaluation.status === "pending")) {
     return null;
   }
 
-  const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
+  const summary =
+    issueCount === 0 ? "All checks pass" : issueCount === 1 ? "1 check needs attention" : `${issueCount} checks need attention`;
 
   return (
-    <section className="week-checks-card" aria-label="Week checks">
-      <header className="week-checks-header">
+    <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="week-checks-header">
         <span className="week-checks-title">
           <ListChecks size={15} />
           <strong>Week checks</strong>
         </span>
-        <small>{issueCount === 0 ? "All checks pass" : `${issueCount} need${issueCount === 1 ? "s" : ""} attention`}</small>
-      </header>
-      <ul className="week-checks-list">
-        {evaluations.map((evaluation) => (
-          <WeekCheckRow
-            key={evaluation.ruleId}
-            evaluation={evaluation}
-            onOpen={() => {
-              const workout = firstRelatedWorkout(evaluation, week);
-              if (workout) {
-                onEditWorkout(workout);
-              } else {
-                onOpenPlanWeek(week);
-              }
-            }}
-          />
-        ))}
-      </ul>
-    </section>
+        <span className="week-checks-summary">
+          <small>{summary}</small>
+          <ChevronDown aria-hidden="true" size={16} />
+        </span>
+      </summary>
+      {attentionEvaluations.length ? (
+        <ul className="week-checks-list">
+          {attentionEvaluations.map((evaluation) => (
+            <WeekCheckRow
+              key={evaluation.ruleId}
+              evaluation={evaluation}
+              onOpen={() => {
+                const workout = firstRelatedWorkout(evaluation, week);
+                if (workout) {
+                  onEditWorkout(workout);
+                } else {
+                  onOpenPlanWeek(week);
+                }
+              }}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </details>
   );
 }
 

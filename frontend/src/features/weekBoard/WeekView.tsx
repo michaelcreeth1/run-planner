@@ -1,12 +1,14 @@
 import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
+import { WeekContextStrip } from "../../components/week/WeekContextStrip";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
+import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
-import type { ActualActivity, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
+import type { ActualActivity, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
 import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
 import {
   formatCompactWeekRange,
@@ -28,16 +30,20 @@ import {
 } from "../../lib/formatters";
 
 export function WeekView({
+  activePlan,
   canLoadNewerWeeks,
   canLoadOlderWeeks,
+  currentWeekStart,
   isLoading,
   onJumpToThisWeek,
   onLoadNewerWeeks,
   onLoadOlderWeeks,
+  onOpenPlan,
   onSelectTimeWeek,
   onSelectWeek,
   selectedWeekStart,
   timelineIndex,
+  today,
   week,
   weekStack,
   weekStarts,
@@ -53,16 +59,20 @@ export function WeekView({
   onSync,
   copyingPriorWeekId
 }: {
+  activePlan: TrainingPlan | null;
   canLoadNewerWeeks: boolean;
   canLoadOlderWeeks: boolean;
+  currentWeekStart: string;
   isLoading: boolean;
   onJumpToThisWeek: () => void;
   onLoadNewerWeeks: () => void;
   onLoadOlderWeeks: () => void;
+  onOpenPlan: () => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
   timelineIndex: TrainingTimelineIndex;
+  today: string;
   week: TrainingWeek | null;
   weekStack: Record<string, TrainingWeek>;
   weekStarts: string[];
@@ -80,6 +90,12 @@ export function WeekView({
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const contextStrip = buildWeekContextStrip({
+    plan: activePlan,
+    currentWeek: weekStack[currentWeekStart] ?? null,
+    currentWeekStart,
+    today
+  });
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
@@ -130,8 +146,10 @@ export function WeekView({
   }, [canLoadNewerWeeks, onLoadNewerWeeks]);
 
   return (
-    <section className="week-stack-layout" aria-busy={isLoading}>
-      <section className="week-timeline" aria-label="Training week timeline">
+    <>
+      <WeekContextStrip viewModel={contextStrip} onOpenPlan={onOpenPlan} onJumpToToday={onJumpToThisWeek} />
+      <section className="week-stack-layout" aria-busy={isLoading}>
+        <section className="week-timeline" aria-label="Training week timeline">
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
@@ -157,14 +175,15 @@ export function WeekView({
           />
         ))}
         <div className="week-stack-sentinel" aria-hidden="true" ref={newerWeeksSentinelRef} />
-      </section>
+        </section>
 
-      <TrainingTimeRail
-        index={timelineIndex}
-        onJumpToThisWeek={onJumpToThisWeek}
-        onSelectWeek={onSelectTimeWeek}
-      />
-    </section>
+        <TrainingTimeRail
+          index={timelineIndex}
+          onJumpToThisWeek={onJumpToThisWeek}
+          onSelectWeek={onSelectTimeWeek}
+        />
+      </section>
+    </>
   );
 }
 
@@ -207,43 +226,9 @@ function WeekRow({
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const previousHeight = useRef<number | null>(null);
   const isPast = weekStart < selectedWeekStart;
   const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
-
-  useLayoutEffect(() => {
-    const frame = frameRef.current;
-    const content = contentRef.current;
-    if (!frame || !content) {
-      return;
-    }
-
-    const nextHeight = content.getBoundingClientRect().height;
-    const startHeight = previousHeight.current;
-    const reduceMotion = prefersReducedMotion();
-
-    if (startHeight !== null && Math.abs(startHeight - nextHeight) > 1 && !reduceMotion) {
-      frame.style.height = `${startHeight}px`;
-      frame.style.overflow = "hidden";
-      window.requestAnimationFrame(() => {
-        frame.style.height = `${nextHeight}px`;
-      });
-
-      const finish = window.setTimeout(() => {
-        frame.style.height = "auto";
-        frame.style.overflow = "visible";
-      }, 240);
-
-      previousHeight.current = nextHeight;
-      return () => window.clearTimeout(finish);
-    }
-
-    frame.style.height = "auto";
-    frame.style.overflow = "visible";
-    previousHeight.current = nextHeight;
-  }, [isExpanded, isLoading, week]);
 
   useEffect(() => {
     if (!isExpanded || !frameRef.current) {
@@ -265,7 +250,7 @@ function WeekRow({
       data-testid="week-row"
       ref={frameRef}
     >
-      <div className="week-row-content" ref={contentRef}>
+      <div className="week-row-content">
         {isExpanded ? (
           <ExpandedWeekBoard
             days={Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))}
@@ -482,12 +467,6 @@ function WeekSlate({
             week
           })
         }
-        onEditGoal={(goalId) => {
-          const goal = week.goals.find((candidate) => candidate.id === goalId);
-          if (goal) {
-            onOpenPlanWeek(week);
-          }
-        }}
       />
 
       {!viewModel.isUnplanned ? (
