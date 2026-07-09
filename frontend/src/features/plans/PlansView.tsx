@@ -9,7 +9,6 @@ import { formatCompactWeekRange, formatNumber, formatPace, formatShortDate } fro
 import { goalCategories } from "../../lib/options";
 import type {
   GoalRace,
-  Mesocycle,
   MesocyclePhase,
   PlanWeekSummary,
   RaceDistance,
@@ -105,9 +104,15 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
   const [planEditor, setPlanEditor] = useState<PlanEditorState | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedMesocycleIndex, setSelectedMesocycleIndex] = useState(0);
-  const [lastSavedGoalRaceId, setLastSavedGoalRaceId] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const plansByStartDate = useMemo(
+    () =>
+      [...plans].sort(
+        (left, right) => left.startDate.localeCompare(right.startDate) || left.name.localeCompare(right.name)
+      ),
+    [plans]
+  );
   const primaryPlan = useMemo(
     () =>
       plans.find((plan) => plan.id === selectedPlanId) ??
@@ -208,21 +213,27 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
 
   function openCreateGoalRace() {
     setSuccess(null);
-    setPlanEditor(null);
     setGoalRaceForm(defaultGoalRaceForm());
   }
 
   function openEditGoalRace(goalRace: GoalRace) {
     setSuccess(null);
-    setPlanEditor(null);
     setGoalRaceForm(goalRaceToForm(goalRace));
   }
 
-  function openCreatePlanForRace(goalRace: GoalRace) {
-    setSuccess(null);
-    setGoalRaceForm(null);
+  function changePlanRace(goalRaceId: string) {
+    const goalRace = goalRaces.find((race) => race.id === goalRaceId) ?? null;
     setSelectedMesocycleIndex(0);
-    setPlanEditor(buildDefaultPlanEditor(goalRace));
+    setPlanEditor((current) => {
+      if (!current) {
+        return current;
+      }
+      // A new plan is reseeded around the chosen race; an existing plan only relinks.
+      if (current.mode === "create") {
+        return buildDefaultPlanEditor(goalRace);
+      }
+      return { ...current, goalRaceId };
+    });
   }
 
   async function saveGoalRace(event: FormEvent<HTMLFormElement>) {
@@ -247,7 +258,6 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
       );
       const nextGoalRaces = upsertGoalRace(goalRaces, savedGoalRace);
       setGoalRaces(nextGoalRaces);
-      setLastSavedGoalRaceId(savedGoalRace.id);
       setPlans((current) =>
         current.map((plan) =>
           plan.goalRaceId === savedGoalRace.id ? { ...plan, goalRaceName: savedGoalRace.name } : plan
@@ -270,49 +280,13 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
       } else {
         setSelectedMesocycleIndex(0);
         setPlanEditor((current) =>
-          current
+          current && current.mode === "edit"
             ? { ...current, goalRaceId: savedGoalRace.id }
             : buildDefaultPlanEditor(savedGoalRace)
         );
       }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save race.");
-      setSuccess(null);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function deleteGoalRace(goalRace: GoalRace) {
-    if (
-      writesBlocked ||
-      !window.confirm(`Delete ${goalRace.name}? Plans that use it will become date-range plans.`)
-    ) {
-      return;
-    }
-    setIsSaving(true);
-    try {
-      await fetchJson(`/api/goal-races/${goalRace.id}`, { method: "DELETE" });
-      setGoalRaces((current) => current.filter((race) => race.id !== goalRace.id));
-      setLastSavedGoalRaceId((current) => (current === goalRace.id ? null : current));
-      setGoalRaceForm((current) => (current?.id === goalRace.id ? null : current));
-      setPlans((current) =>
-        current.map((plan) =>
-          plan.goalRaceId === goalRace.id ? { ...plan, goalRaceId: null, goalRaceName: null } : plan
-        )
-      );
-      setSelectedPlan((current) =>
-        current?.goalRaceId === goalRace.id
-          ? { ...current, goalRaceId: null, goalRaceName: null, goalRace: null }
-          : current
-      );
-      setPlanEditor((current) =>
-        current?.goalRaceId === goalRace.id ? { ...current, goalRaceId: "" } : current
-      );
-      setSuccess(`${goalRace.name} was deleted.`);
-      setError(null);
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Could not delete race.");
       setSuccess(null);
     } finally {
       setIsSaving(false);
@@ -384,10 +358,6 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
           <h1>Macrocycle overview</h1>
         </div>
         <div className="plans-toolbar-actions">
-          <button type="button" className="ghost-button" onClick={openCreateGoalRace} disabled={writesBlocked}>
-            <Plus size={16} />
-            Add race
-          </button>
           <button type="button" className="primary-button" onClick={openCreatePlan} disabled={writesBlocked}>
             <Plus size={16} />
             Create training plan
@@ -455,69 +425,6 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
         </form>
       ) : null}
 
-      {!hasActiveEditor && goalRaces.length > 0 ? (
-        <article className="plan-card">
-          <div className="plan-form-section-header">
-            <div className="section-title-row">
-              <strong>Races</strong>
-              <span>{goalRaces.length} saved</span>
-            </div>
-          </div>
-          <div className="plan-goal-race-list">
-            {goalRaces.map((goalRace) => {
-              const linkedPlan = plans.find((plan) => plan.goalRaceId === goalRace.id);
-              return (
-                <article
-                  key={goalRace.id}
-                  className={`goal-race-card ${goalRace.id === lastSavedGoalRaceId ? "goal-race-card--new" : ""}`}
-                >
-                  <div className="goal-race-card-main">
-                    <strong>{goalRace.name}</strong>
-                    <span>{formatShortDate(goalRace.raceDate)} · {distanceLabel(goalRace.distance)}</span>
-                    <small>
-                      {goalRace.targetTime ? formatDurationHms(goalRace.targetTime) : "No target time set"}
-                      {goalRace.targetPaceSecondsPerMile ? ` · ${formatPace(goalRace.targetPaceSecondsPerMile, 1)}` : ""}
-                    </small>
-                  </div>
-                  <div className="goal-race-card-actions">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      disabled={writesBlocked}
-                      title="Edit race"
-                      aria-label={`Edit ${goalRace.name}`}
-                      onClick={() => openEditGoalRace(goalRace)}
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button icon-button--danger"
-                      disabled={writesBlocked || isSaving}
-                      title="Delete race"
-                      aria-label={`Delete ${goalRace.name}`}
-                      onClick={() => deleteGoalRace(goalRace)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    {!linkedPlan ? (
-                      <button
-                        type="button"
-                        className="primary-button goal-race-plan-button"
-                        disabled={writesBlocked || isSaving}
-                        onClick={() => openCreatePlanForRace(goalRace)}
-                      >
-                        Create plan
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </article>
-      ) : null}
-
       {planEditor ? (
         <form className="plan-card plan-form" onSubmit={savePlan}>
           <div className="plan-form-header">
@@ -538,6 +445,33 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
               <span>Name</span>
               <input value={planEditor.name} onChange={(event) => setPlanEditor((current) => current ? { ...current, name: event.target.value } : current)} required />
             </label>
+            <div className="mesocycle-field-group">
+              <span>Race</span>
+              <div className="plan-race-row">
+                <select
+                  aria-label="Race"
+                  value={planEditor.goalRaceId}
+                  onChange={(event) => changePlanRace(event.target.value)}
+                >
+                  <option value="">No race · date range</option>
+                  {goalRaces.map((goalRace) => (
+                    <option key={goalRace.id} value={goalRace.id}>
+                      {goalRace.name} · {formatShortDate(goalRace.raceDate)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="ghost-button ghost-button--compact"
+                  disabled={writesBlocked}
+                  onClick={() =>
+                    planEditorGoalRace ? openEditGoalRace(planEditorGoalRace) : openCreateGoalRace()
+                  }
+                >
+                  {planEditorGoalRace ? "Edit race" : "New race"}
+                </button>
+              </div>
+            </div>
             <label>
               <span>Start date</span>
               <input type="date" value={planEditor.startDate} onChange={(event) => updatePlanStartDate(setPlanEditor, event.target.value)} required />
@@ -678,9 +612,9 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
 
       {!hasActiveEditor && selectedPlan ? (
         <article className="plan-card plan-hero">
-          {plans.length > 1 ? (
+          {plansByStartDate.length > 1 ? (
             <nav className="plan-switcher" aria-label="Switch plan">
-              {plans.map((plan) => (
+              {plansByStartDate.map((plan) => (
                 <button
                   key={plan.id}
                   type="button"
@@ -725,52 +659,48 @@ export function PlansView({ onPlanApplied, onSelectWeek, writesBlocked }: PlansV
           </div>
           <PlanShape weeks={selectedPlan.weekSummaries} onSelectWeek={onSelectWeek} />
           <div className="plan-timeline">
-            {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => {
-              const mesocycle = group.mesocycleId
-                ? selectedPlan.mesocycles.find((cycle) => cycle.id === group.mesocycleId) ?? null
-                : null;
-              return (
-                <section key={`${group.mesocycleId ?? "none"}-${groupIndex}`} className="plan-timeline-group">
-                  <header className={`plan-timeline-group-header plan-phase--${group.phase ?? "base"}`}>
-                    <div className="plan-timeline-group-title">
-                      <span className="plan-phase-dot" aria-hidden="true" />
-                      <strong>{group.name ?? (group.phase ? phaseLabel(group.phase) : "Weeks")}</strong>
-                      <span>
-                        {formatCompactWeekRange(group.weeks[0].week.weekStartDate, group.weeks[group.weeks.length - 1].week.weekEndDate)}
-                        {" · "}
-                        {group.weeks.length} {group.weeks.length === 1 ? "week" : "weeks"}
-                      </span>
-                    </div>
-                    {mesocycle ? <p className="plan-timeline-group-summary">{mesocycleSummary(mesocycle)}</p> : null}
-                  </header>
-                  <div className="plan-timeline-weeks">
-                    {group.weeks.map(({ week, index }) => {
-                      const hasActivity = week.plannedMileage > 0 || week.actualMileage > 0;
-                      const isCurrentWeek = week.weekStartDate <= today && today <= week.weekEndDate;
-                      return (
-                        <button
-                          key={week.weekStartDate}
-                          type="button"
-                          className={`plan-week-bar ${week.hasManualOverride ? "plan-week-bar--manual" : ""} ${isCurrentWeek ? "plan-week-bar--current" : ""}`}
-                          onClick={() => onSelectWeek(week.weekStartDate)}
-                        >
-                          <span className="plan-week-bar-label">
-                            W{index + 1} · {formatShortDate(week.weekStartDate)}
-                            {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
-                          </span>
-                          <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
-                          {week.warning || hasActivity ? (
-                            <small>
-                              {week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}
-                            </small>
-                          ) : null}
-                        </button>
-                      );
-                    })}
+            {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => (
+              <section key={`${group.mesocycleId ?? "none"}-${groupIndex}`} className="plan-timeline-group">
+                <header className={`plan-timeline-group-header plan-phase--${group.phase ?? "base"}`}>
+                  <div className="plan-timeline-group-title">
+                    <span className="plan-phase-dot" aria-hidden="true" />
+                    <strong>{group.name ?? (group.phase ? phaseLabel(group.phase) : "Weeks")}</strong>
+                    <span>
+                      {formatCompactWeekRange(group.weeks[0].week.weekStartDate, group.weeks[group.weeks.length - 1].week.weekEndDate)}
+                      {" · "}
+                      {group.weeks.length} {group.weeks.length === 1 ? "week" : "weeks"}
+                    </span>
                   </div>
-                </section>
-              );
-            })}
+                </header>
+                <div className="plan-timeline-weeks">
+                  {group.weeks.map(({ week, index }) => {
+                    const hasActivity = week.plannedMileage > 0 || week.actualMileage > 0;
+                    const isCurrentWeek = week.weekStartDate <= today && today <= week.weekEndDate;
+                    return (
+                      <button
+                        key={week.weekStartDate}
+                        type="button"
+                        className={`plan-week-bar ${week.hasManualOverride ? "plan-week-bar--manual" : ""} ${isCurrentWeek ? "plan-week-bar--current" : ""}`}
+                        onClick={() => onSelectWeek(week.weekStartDate)}
+                      >
+                        <span className="plan-week-bar-label">
+                          <span className="plan-week-bar-date">
+                            W{index + 1} · {formatShortDate(week.weekStartDate)}
+                          </span>
+                          {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
+                        </span>
+                        <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
+                        {week.warning || hasActivity ? (
+                          <small>
+                            {week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}
+                          </small>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         </article>
       ) : null}
@@ -1194,36 +1124,8 @@ function PlanShape({
   );
 }
 
-const phaseEmphasis: Record<MesocyclePhase, string> = {
-  base: "Aerobic foundation",
-  build: "Growing workload",
-  specific: "Race-specific sharpening",
-  taper: "Freshen up for race day",
-  race: "Race week",
-  recovery: "Absorb and rebuild",
-  maintenance: "Hold steady"
-};
-
 function ordinalWeek(cadence: number) {
   return cadence === 2 ? "2nd" : cadence === 3 ? "3rd" : `${cadence}th`;
-}
-
-function mesocycleSummary(mesocycle: Mesocycle) {
-  const parts: string[] = [phaseEmphasis[mesocycle.phase] ?? phaseLabel(mesocycle.phase)];
-  const start = mesocycle.targetMileageStart;
-  const end = mesocycle.targetMileageEnd;
-  if (start !== null && end !== null) {
-    parts.push(start === end ? `hold ${formatNumber(start)} mi/wk` : `${formatNumber(start)} → ${formatNumber(end)} mi/wk`);
-  } else if (end !== null) {
-    parts.push(`to ${formatNumber(end)} mi/wk`);
-  }
-  if (mesocycle.longRunEnd !== null) {
-    parts.push(`long runs to ${formatNumber(mesocycle.longRunEnd)} mi`);
-  }
-  if (mesocycle.downWeekCadence) {
-    parts.push(`every ${ordinalWeek(mesocycle.downWeekCadence)} week easier`);
-  }
-  return parts.join(" · ");
 }
 
 function defaultGoalRaceForm(): GoalRaceFormState {
@@ -1908,10 +1810,6 @@ function mileageRangeForPhase(phase: MesocyclePhase, baseline: number, peak: num
 
 function phaseLabel(phase: MesocyclePhase) {
   return phaseOptions.find((option) => option.value === phase)?.label ?? phase;
-}
-
-function distanceLabel(distance: RaceDistance) {
-  return distanceOptions.find((option) => option.value === distance)?.label ?? distance;
 }
 
 function optionalNumber(value: string | number | null | undefined) {

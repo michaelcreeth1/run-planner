@@ -770,7 +770,14 @@ function App() {
           />
         ) : null}
         {activeTab === "goals" ? (
-          <GoalsView writesBlocked={staleFrontend} onManageRaces={() => setActiveTab("plan")} />
+          <GoalsView
+            writesBlocked={staleFrontend}
+            onManageRaces={() => setActiveTab("plan")}
+            onSelectWeek={(start) => {
+              setActiveTab("week");
+              selectWeek(start, "time-rail");
+            }}
+          />
         ) : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
         {activeTab === "analytics" ? (

@@ -2,6 +2,7 @@ import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Tr
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
+import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
@@ -488,6 +489,10 @@ function WeekSlate({
           }
         }}
       />
+
+      {!viewModel.isUnplanned ? (
+        <WeekChecksCard week={week} onEditWorkout={onEdit} onOpenPlanWeek={onOpenPlanWeek} />
+      ) : null}
 
       {!viewModel.isUnplanned ? (
         <WeekSchedule

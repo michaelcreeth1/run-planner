@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { fetchJson } from "../../lib/api";
 import type { GoalRace } from "../../types/domain";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
+import { GoalImpactSection } from "./GoalImpactSection";
 
 const raceDistanceLabels: Record<GoalRace["distance"], string> = {
   "5k": "5K",
@@ -33,10 +34,12 @@ function formatRaceDateParts(dateString: string) {
 
 export function GoalsView({
   writesBlocked,
-  onManageRaces
+  onManageRaces,
+  onSelectWeek
 }: {
   writesBlocked: boolean;
   onManageRaces: () => void;
+  onSelectWeek: (weekStartDate: string) => void;
 }) {
   const [races, setRaces] = useState<GoalRace[]>([]);
   const [racesError, setRacesError] = useState<string | null>(null);
@@ -63,6 +66,8 @@ export function GoalsView({
           <span>Manage races</span>
         </button>
       </header>
+
+      <GoalImpactSection onSelectWeek={onSelectWeek} />
 
       <div className="goals-layout">
         <DefaultGoalsCard writesBlocked={writesBlocked} />
