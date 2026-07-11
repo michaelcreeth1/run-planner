@@ -1,14 +1,11 @@
 import {
-  Activity,
-  BarChart3,
   CalendarDays,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
   Route,
-  Settings,
   ShieldAlert,
-  Target,
+  TrendingUp,
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -17,10 +14,8 @@ import { AppHeader } from "./components/AppHeader";
 import { LoginView } from "./components/LoginView";
 import { Placeholder } from "./components/shared/Placeholder";
 import { StatusBanner } from "./components/shared/StatusBanner";
-import { ActivitiesView } from "./features/activities/ActivitiesView";
-import { AnalyticsView } from "./features/analytics/AnalyticsView";
-import { GoalsView } from "./features/goals/GoalsView";
-import { PlansView } from "./features/plans/PlansView";
+import { PlanningWorkspace } from "./features/planning/PlanningWorkspace";
+import { ProgressView } from "./features/progress/ProgressView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
@@ -55,16 +50,13 @@ const FRONTEND_VERSION = "0.1.1";
 const WEEK_STACK_RADIUS = 3;
 const WEEK_STACK_LOAD_BATCH = 6;
 
-const tabs = [
+const primaryTabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
-  { id: "goals", label: "Goals", icon: Target },
-  { id: "activities", label: "Activities", icon: Activity },
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
-  { id: "settings", label: "Settings", icon: Settings }
+  { id: "progress", label: "Progress", icon: TrendingUp }
 ] as const;
 
-type TabId = (typeof tabs)[number]["id"];
+type TabId = (typeof primaryTabs)[number]["id"] | "settings";
 type Theme = "light" | "dark";
 
 function getInitialTheme(): Theme {
@@ -709,7 +701,7 @@ function App() {
           </button>
         </div>
         <nav className="nav-tabs" aria-label="Primary navigation">
-          {tabs.map((tab) => {
+          {primaryTabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -733,7 +725,7 @@ function App() {
           isSwitchingProfile={isSwitchingProfile}
           profiles={session.profiles}
           theme={theme}
-          title={tabs.find((tab) => tab.id === activeTab)?.label}
+          title={activeTab === "settings" ? "Settings" : primaryTabs.find((tab) => tab.id === activeTab)?.label}
           user={session.user}
           onLogout={logout}
           onOpenSettings={() => setActiveTab("settings")}
@@ -785,7 +777,7 @@ function App() {
           />
         ) : null}
         {activeTab === "plan" ? (
-          <PlansView
+          <PlanningWorkspace
             writesBlocked={staleFrontend}
             onPlanApplied={() => {
               refreshVisibleWeeks();
@@ -799,19 +791,9 @@ function App() {
             }}
           />
         ) : null}
-        {activeTab === "goals" ? (
-          <GoalsView
-            writesBlocked={staleFrontend}
-            onManageRaces={() => setActiveTab("plan")}
-            onSelectWeek={(start) => {
-              setActiveTab("week");
-              selectWeek(start, "time-rail");
-            }}
-          />
-        ) : null}
-        {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}
-        {activeTab === "analytics" ? (
-          <AnalyticsView
+        {activeTab === "progress" ? (
+          <ProgressView
+            activities={activities}
             analytics={analyticsPlanning}
             futureWeeks={analyticsFutureWeeks}
             isLoading={analyticsLoading}

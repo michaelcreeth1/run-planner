@@ -4560,6 +4560,59 @@ button.goal-impact-cell:focus-visible {
   gap: 16px;
 }
 
+.workspace-view {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-tabs {
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  box-shadow: var(--shadow-xs);
+  display: inline-flex;
+  gap: 4px;
+  justify-self: start;
+  padding: 4px;
+}
+
+.workspace-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 12px;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.workspace-tabs button:hover,
+.workspace-tabs button:focus-visible {
+  color: var(--text-primary);
+}
+
+.workspace-tabs button.active {
+  background: var(--primary);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-on-primary);
+}
+
+.workspace-tabs small {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
 .activity-table {
   display: grid;
 }
@@ -5728,7 +5781,7 @@ button.goal-impact-cell:focus-visible {
 
   .nav-tabs {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .nav-tabs button {
@@ -6092,6 +6145,18 @@ button.goal-impact-cell:focus-visible {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .workspace-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-self: stretch;
+  }
+
+  .workspace-tabs button {
+    justify-content: center;
   }
 }
 
