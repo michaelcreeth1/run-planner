@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.planning import AthleteAccount, UserAccount
+from app.services import planning
 
 PASSWORD_ITERATIONS = 210_000
 PASSWORD_SCHEME = "pbkdf2_sha256"
@@ -75,13 +76,14 @@ def ensure_bootstrap_admin(db: Session) -> UserAccount | None:
         for athlete in athletes:
             athlete.owner_user_id = admin.id
     else:
-        db.add(
-            AthleteAccount(
-                owner_user_id=admin.id,
-                display_name=settings.app_username,
-                timezone="America/Denver",
-            )
+        athlete = AthleteAccount(
+            owner_user_id=admin.id,
+            display_name=settings.app_username,
+            timezone="America/Denver",
         )
+        db.add(athlete)
+        db.flush()
+        planning.seed_default_goals(db, athlete.id)
     db.commit()
     db.refresh(admin)
     return admin
@@ -148,6 +150,8 @@ def create_profile(
         timezone=timezone.strip() or "America/Denver",
     )
     db.add(profile)
+    db.flush()
+    planning.seed_default_goals(db, profile.id)
     if commit:
         db.commit()
         db.refresh(profile)

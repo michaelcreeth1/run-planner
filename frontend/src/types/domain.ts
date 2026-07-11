@@ -62,9 +62,14 @@ export type WeekGoalStatus =
   | "missed"
   | "exceeded"
   | "waived";
-export type WeekGoalSource = "manual" | "derived_from_plan" | "template" | "ai_suggested";
+export type WeekGoalSource = "manual" | "plan" | "workouts" | "default";
 export type GoalSeverity = "info" | "success" | "warning" | "danger";
 export type WeekState = "past" | "current" | "future";
+export type FieldSource = "manual" | "plan";
+export type RaceDistance = "5k" | "10k" | "half_marathon" | "marathon" | "other";
+export type RacePriority = "A" | "B" | "C";
+export type PlanStatus = "active" | "completed" | "archived";
+export type MesocyclePhase = "base" | "build" | "specific" | "taper" | "race" | "recovery" | "maintenance";
 
 export type WeekGoal = {
   id: string;
@@ -113,7 +118,14 @@ export type TrainingWeek = {
   actualMileage: number;
   plannedTime: number | null;
   actualTime: number | null;
+  mesocycleId: string | null;
+  purpose: WeekPurposeId | string;
+  purposeSource: FieldSource;
+  targetMileage: number | null;
+  targetMileageSource: FieldSource;
   targetLongRunDistance: number | null;
+  targetLongRunSource: FieldSource;
+  isDownWeek: boolean;
   notes: string;
   workouts: Workout[];
   actualActivities: ActualActivity[];
@@ -353,6 +365,107 @@ export type PlanWeekDraft = {
   goals: PlanWeekGoalDraft[];
   hasExistingPlan: boolean;
   mismatchAcknowledged: boolean;
+};
+
+export type GoalRace = {
+  id: string;
+  athleteAccountId: string;
+  name: string;
+  raceDate: string;
+  distance: RaceDistance;
+  distanceMiles: number | null;
+  targetTime: number | null;
+  priority: RacePriority;
+  location: string;
+  altitudeContext: string;
+  notes: string;
+  targetPaceSecondsPerMile: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Mesocycle = {
+  id: string;
+  trainingPlanId: string;
+  athleteAccountId: string;
+  orderIndex: number;
+  name: string;
+  phase: MesocyclePhase;
+  startDate: string;
+  endDate: string;
+  targetMileageStart: number | null;
+  targetMileageEnd: number | null;
+  longRunStart: number | null;
+  longRunEnd: number | null;
+  downWeekCadence: number | null;
+  downWeekReductionPct: number;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecurringGoal = {
+  id: string;
+  trainingPlanId: string | null;
+  athleteAccountId: string;
+  category: WeekGoalCategory;
+  goalType: WeekGoalType;
+  label: string;
+  description: string;
+  targetValue: number | null;
+  minAcceptable: number | null;
+  maxAcceptable: number | null;
+  unit: WeekGoalUnit;
+  evaluationMode: WeekGoalEvaluationMode;
+  priority: WeekGoalPriority;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlanWeekSummary = {
+  weekStartDate: string;
+  weekEndDate: string;
+  mesocycleId: string | null;
+  mesocycleName: string | null;
+  mesocyclePhase: MesocyclePhase | null;
+  weekIndexInMesocycle: number | null;
+  mesocycleWeekCount: number | null;
+  plannedMileage: number;
+  actualMileage: number;
+  targetMileage: number | null;
+  targetLongRunDistance: number | null;
+  purpose: WeekPurposeId | string;
+  purposeSource: FieldSource;
+  targetMileageSource: FieldSource;
+  targetLongRunSource: FieldSource;
+  isDownWeek: boolean;
+  hasManualOverride: boolean;
+  warning: string | null;
+};
+
+export type TrainingPlanSummary = {
+  id: string;
+  athleteAccountId: string;
+  name: string;
+  description: string;
+  goalRaceId: string | null;
+  goalRaceName: string | null;
+  startDate: string;
+  endDate: string;
+  status: PlanStatus;
+  notes: string;
+  isCurrent: boolean;
+  isUpcoming: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingPlan = TrainingPlanSummary & {
+  goalRace: GoalRace | null;
+  mesocycles: Mesocycle[];
+  recurringGoals: RecurringGoal[];
+  weekSummaries: PlanWeekSummary[];
 };
 
 export type ProposedLoad = {

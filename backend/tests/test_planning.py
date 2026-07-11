@@ -11,10 +11,12 @@ from app.main import app
 from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek
 from app.schemas.planning import (
     PlannedWorkoutCreate,
+    PlannedWorkoutUpdate,
     PlanWeekGoal,
     PlanWeekSave,
     PlanWeekWorkout,
     WeekGoalCreate,
+    WeekGoalUpdate,
 )
 from app.services import planning
 
@@ -549,6 +551,149 @@ def test_current_week_mileage_projection_does_not_double_count_completed_today()
         db.close()
 
 
+def test_current_week_quality_goal_counts_run_on_planned_quality_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        week_start = date(2026, 6, 29)
+        quality_day = date(2026, 7, 1)
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 3),
+        )
+        planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=quality_day,
+                title="LT intervals",
+                workout_type="threshold",
+                intensity_category="workout",
+                planned_distance=6,
+            ),
+            athlete.id,
+        )
+        week = planning.get_or_create_week(db, week_start, athlete.id)
+        db.add(
+            StravaActivity(
+                strava_activity_id="activity-current-quality",
+                athlete_account_id=athlete.id,
+                name="Morning Run",
+                sport_type="Run",
+                start_date=datetime(2026, 7, 1, 13, 0, 0),
+                start_date_local=datetime(2026, 7, 1, 7, 0, 0),
+                distance=1609.344 * 6,
+                raw_payload_json={},
+            )
+        )
+        db.commit()
+        week = planning.get_week_by_id(db, week.id, athlete.id)
+
+        serialized = planning.serialize_week(week, db)
+
+        quality_goal = next(
+            goal
+            for goal in serialized["goals"]
+            if goal["category"] == "quality" and goal["goal_type"] == "achievement"
+        )
+        quality_evaluation = next(
+            evaluation
+            for evaluation in serialized["goal_evaluations"]
+            if evaluation["goal_id"] == quality_goal["id"]
+        )
+        assert quality_evaluation["status"] == "on_track"
+        assert quality_evaluation["actual_value"] == 1
+        assert quality_evaluation["remaining_planned_value"] == 0
+    finally:
+        db.close()
+
+
+def test_workout_distance_update_refreshes_workout_derived_mileage_goal() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 8, 4),
+                title="Easy 10",
+                planned_distance=10,
+            ),
+        )
+        week = planning.get_or_create_week(db, date(2099, 8, 3))
+        planning.derive_week_goals(db, week.id)
+
+        planning.update_workout(
+            db,
+            workout.id,
+            PlannedWorkoutUpdate(planned_distance=12),
+        )
+        refreshed = planning.load_week(db, date(2099, 8, 3))
+        mileage_goals = [
+            goal
+            for goal in refreshed.goals
+            if goal.category == "mileage" and goal.goal_type == "achievement"
+        ]
+
+        assert len(mileage_goals) == 1
+        assert mileage_goals[0].source == "workouts"
+        assert mileage_goals[0].label == "Run 12 miles"
+        assert mileage_goals[0].target_value == 12
+        assert mileage_goals[0].min_acceptable == 11.3
+        assert mileage_goals[0].max_acceptable == 12.7
+    finally:
+        db.close()
+
+
+def test_workout_update_preserves_manual_mileage_goal() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 8, 11),
+                title="Easy 10",
+                planned_distance=10,
+            ),
+        )
+        week = planning.get_or_create_week(db, date(2099, 8, 10))
+        derived_week = planning.derive_week_goals(db, week.id)
+        mileage_goal = next(goal for goal in derived_week.goals if goal.category == "mileage")
+        planning.update_week_goal(
+            db,
+            mileage_goal.id,
+            WeekGoalUpdate(
+                label="Manual mileage cap",
+                target_value=8,
+                min_acceptable=7,
+                max_acceptable=9,
+            ),
+        )
+
+        planning.update_workout(
+            db,
+            workout.id,
+            PlannedWorkoutUpdate(planned_distance=12),
+        )
+        refreshed = planning.load_week(db, date(2099, 8, 10))
+        mileage_goals = [
+            goal
+            for goal in refreshed.goals
+            if goal.category == "mileage" and goal.goal_type == "achievement"
+        ]
+
+        assert len(mileage_goals) == 1
+        assert mileage_goals[0].source == "manual"
+        assert mileage_goals[0].label == "Manual mileage cap"
+        assert mileage_goals[0].target_value == 8
+        assert mileage_goals[0].min_acceptable == 7
+        assert mileage_goals[0].max_acceptable == 9
+    finally:
+        db.close()
+
+
 def test_copy_prior_week_copies_goals_forward() -> None:
     db = make_session()
     try:
@@ -645,10 +790,27 @@ def test_save_week_plan_replaces_purpose_workouts_and_goals() -> None:
             ),
         )
 
-        assert saved_week.notes == "Aerobic build"
+        assert saved_week.purpose == "aerobic_build"
+        assert saved_week.notes == ""
         assert saved_week.target_long_run_distance == 8
         assert saved_week.planned_mileage == 14
         assert [workout.title for workout in saved_week.workouts] == ["Easy 6", "Long 8"]
         assert [goal.label for goal in saved_week.goals] == ["Run 14 miles"]
+    finally:
+        db.close()
+
+
+def test_save_week_plan_persists_custom_purpose_text() -> None:
+    db = make_session()
+    try:
+        week = planning.get_or_create_week(db, date(2099, 8, 3))
+        saved_week = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(purpose="custom", custom_purpose="Altitude camp shakeout"),
+        )
+
+        assert saved_week.purpose == "custom"
+        assert saved_week.notes == "Altitude camp shakeout"
     finally:
         db.close()

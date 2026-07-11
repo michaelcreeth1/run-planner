@@ -1,11 +1,14 @@
-import { ChevronRight, Copy, Edit3, ExternalLink, Plus, Trash2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
+import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
+import { WeekContextStrip } from "../../components/week/WeekContextStrip";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
+import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
-import type { ActualActivity, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
+import type { ActualActivity, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
 import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
 import {
   formatCompactWeekRange,
@@ -27,16 +30,20 @@ import {
 } from "../../lib/formatters";
 
 export function WeekView({
+  activePlan,
   canLoadNewerWeeks,
   canLoadOlderWeeks,
+  currentWeekStart,
   isLoading,
   onJumpToThisWeek,
   onLoadNewerWeeks,
   onLoadOlderWeeks,
+  onOpenPlan,
   onSelectTimeWeek,
   onSelectWeek,
   selectedWeekStart,
   timelineIndex,
+  today,
   week,
   weekStack,
   weekStarts,
@@ -52,16 +59,20 @@ export function WeekView({
   onSync,
   copyingPriorWeekId
 }: {
+  activePlan: TrainingPlan | null;
   canLoadNewerWeeks: boolean;
   canLoadOlderWeeks: boolean;
+  currentWeekStart: string;
   isLoading: boolean;
   onJumpToThisWeek: () => void;
   onLoadNewerWeeks: () => void;
   onLoadOlderWeeks: () => void;
+  onOpenPlan: () => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
   timelineIndex: TrainingTimelineIndex;
+  today: string;
   week: TrainingWeek | null;
   weekStack: Record<string, TrainingWeek>;
   weekStarts: string[];
@@ -79,6 +90,12 @@ export function WeekView({
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const contextStrip = buildWeekContextStrip({
+    plan: activePlan,
+    currentWeek: weekStack[currentWeekStart] ?? null,
+    currentWeekStart,
+    today
+  });
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
@@ -129,14 +146,17 @@ export function WeekView({
   }, [canLoadNewerWeeks, onLoadNewerWeeks]);
 
   return (
-    <section className="week-stack-layout" aria-busy={isLoading}>
-      <section className="week-timeline" aria-label="Training week timeline">
+    <>
+      <WeekContextStrip viewModel={contextStrip} onOpenPlan={onOpenPlan} onJumpToToday={onJumpToThisWeek} />
+      <section className="week-stack-layout" aria-busy={isLoading}>
+        <section className="week-timeline" aria-label="Training week timeline">
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
             key={start}
             isExpanded={start === selectedWeekStart}
             isLoading={isLoading && start === selectedWeekStart}
+            contextState={contextStrip?.kind ?? "loading"}
             onCreate={onCreate}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -156,18 +176,20 @@ export function WeekView({
           />
         ))}
         <div className="week-stack-sentinel" aria-hidden="true" ref={newerWeeksSentinelRef} />
-      </section>
+        </section>
 
-      <TrainingTimeRail
-        index={timelineIndex}
-        onJumpToThisWeek={onJumpToThisWeek}
-        onSelectWeek={onSelectTimeWeek}
-      />
-    </section>
+        <TrainingTimeRail
+          index={timelineIndex}
+          onJumpToThisWeek={onJumpToThisWeek}
+          onSelectWeek={onSelectTimeWeek}
+        />
+      </section>
+    </>
   );
 }
 
 function WeekRow({
+  contextState,
   isExpanded,
   isLoading,
   onCreate,
@@ -187,6 +209,7 @@ function WeekRow({
   week,
   weekStart
 }: {
+  contextState: "active" | "onboarding" | "loading";
   isExpanded: boolean;
   isLoading: boolean;
   onCreate: (plannedDate: string) => void;
@@ -206,42 +229,10 @@ function WeekRow({
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const previousHeight = useRef<number | null>(null);
+  const hasWeek = Boolean(week);
   const isPast = weekStart < selectedWeekStart;
-
-  useLayoutEffect(() => {
-    const frame = frameRef.current;
-    const content = contentRef.current;
-    if (!frame || !content) {
-      return;
-    }
-
-    const nextHeight = content.getBoundingClientRect().height;
-    const startHeight = previousHeight.current;
-    const reduceMotion = prefersReducedMotion();
-
-    if (startHeight !== null && Math.abs(startHeight - nextHeight) > 1 && !reduceMotion) {
-      frame.style.height = `${startHeight}px`;
-      frame.style.overflow = "hidden";
-      window.requestAnimationFrame(() => {
-        frame.style.height = `${nextHeight}px`;
-      });
-
-      const finish = window.setTimeout(() => {
-        frame.style.height = "auto";
-        frame.style.overflow = "visible";
-      }, 240);
-
-      previousHeight.current = nextHeight;
-      return () => window.clearTimeout(finish);
-    }
-
-    frame.style.height = "auto";
-    frame.style.overflow = "visible";
-    previousHeight.current = nextHeight;
-  }, [isExpanded, isLoading, week]);
+  const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
 
   useEffect(() => {
     if (!isExpanded || !frameRef.current) {
@@ -254,7 +245,7 @@ function WeekRow({
     });
 
     return () => window.cancelAnimationFrame(scrollFrame);
-  }, [isExpanded, weekStart]);
+  }, [contextState, hasWeek, isExpanded, weekStart]);
 
   return (
     <div
@@ -263,7 +254,7 @@ function WeekRow({
       data-testid="week-row"
       ref={frameRef}
     >
-      <div className="week-row-content" ref={contentRef}>
+      <div className="week-row-content">
         {isExpanded ? (
           <ExpandedWeekBoard
             days={Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))}
@@ -286,7 +277,7 @@ function WeekRow({
           <CollapsedWeekCard
             onSelectWeek={onSelectWeek}
             previousWeek={previousWeek}
-            tone={isPast ? "past" : "future"}
+            tone={tone}
             week={week ?? undefined}
             weekStart={weekStart}
           />
@@ -295,6 +286,8 @@ function WeekRow({
     </div>
   );
 }
+
+type CollapsedWeekTone = "past" | "current" | "future";
 
 function CollapsedWeekCard({
   onSelectWeek,
@@ -305,7 +298,7 @@ function CollapsedWeekCard({
 }: {
   onSelectWeek: (weekStart: string) => void;
   previousWeek?: TrainingWeek;
-  tone: "past" | "future";
+  tone: CollapsedWeekTone;
   week?: TrainingWeek;
   weekStart: string;
 }) {
@@ -389,9 +382,11 @@ function ExpandedWeekBoard({
         <section className="week-command-center" aria-label="Loading week command center">
           <header className="week-command-header">
             <div className="week-command-title">
-              <p className="eyebrow">Training week</p>
+              <div className="week-command-meta">
+                <p className="eyebrow">Training week</p>
+                <span className="week-command-mode">Loading week</span>
+              </div>
               <h1>{formatWeekRangeFromStart(weekStart)}</h1>
-              <span>Loading week</span>
             </div>
           </header>
           <ExpandedWeekSkeletonOverview />
@@ -476,13 +471,11 @@ function WeekSlate({
             week
           })
         }
-        onEditGoal={(goalId) => {
-          const goal = week.goals.find((candidate) => candidate.id === goalId);
-          if (goal) {
-            onOpenPlanWeek(week);
-          }
-        }}
       />
+
+      {!viewModel.isUnplanned ? (
+        <WeekChecksCard week={week} onEditWorkout={onEdit} onOpenPlanWeek={onOpenPlanWeek} />
+      ) : null}
 
       {!viewModel.isUnplanned ? (
         <WeekSchedule
@@ -531,11 +524,24 @@ function WeekSchedule({
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
           const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
+          const isToday = dateValue === today;
+          const isCompactDay =
+            !isToday &&
+            dayActuals.length === 0 &&
+            dayWorkouts.every(
+              (workout) => workout.sport === "rest" || workout.intensityCategory === "rest"
+            );
+          const entries = buildDayEntries(dayWorkouts, dayActuals);
           return (
-            <article className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty)}`} key={dateValue}>
+            <article
+              className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}${
+                isCompactDay ? " day-column--compact" : ""
+              }`}
+              key={dateValue}
+            >
               <header>
                 <div>
-                  <span>{formatWeekdayShort(dateValue)}</span>
+                  <span>{isToday ? "Today" : formatWeekdayShort(dateValue)}</span>
                   <strong>{formatDayNumber(dateValue)}</strong>
                 </div>
                 <button type="button" title="Add workout" onClick={() => onCreate(dateValue)}>
@@ -543,18 +549,21 @@ function WeekSchedule({
                 </button>
               </header>
               <div className="workout-stack">
-                {dayActuals.map((activity) => (
-                  <ActualActivityItem activity={activity} key={activity.id} />
-                ))}
-                {dayWorkouts.map((workout) => (
-                  <WorkoutItem
-                    key={workout.id}
-                    workout={workout}
-                    onDelete={onDelete}
-                    onDuplicate={onDuplicate}
-                    onEdit={onEdit}
-                  />
-                ))}
+                {entries.map((entry) =>
+                  entry.kind === "unplanned" ? (
+                    <ActualActivityItem activity={entry.actual} key={`actual-${entry.actual.id}`} />
+                  ) : (
+                    <WorkoutItem
+                      key={entry.workout.id}
+                      workout={entry.workout}
+                      actual={entry.actual}
+                      today={today}
+                      onDelete={onDelete}
+                      onDuplicate={onDuplicate}
+                      onEdit={onEdit}
+                    />
+                  )
+                )}
                 {isEmpty && dateValue < today ? (
                   <span className="empty-day-action empty-day-action--static">Rest</span>
                 ) : null}
@@ -652,15 +661,81 @@ function ExpandedWeekSkeleton({ days }: { days: string[] }) {
   );
 }
 
+type DayEntry =
+  | { kind: "planned"; workout: Workout; actual: ActualActivity | null }
+  | { kind: "unplanned"; actual: ActualActivity };
+
+function buildDayEntries(dayWorkouts: Workout[], dayActuals: ActualActivity[]): DayEntry[] {
+  const matches = new Map<string, ActualActivity>();
+  const unmatched: ActualActivity[] = [];
+  for (const activity of dayActuals) {
+    const isRun = activity.sportType.toLowerCase().includes("run");
+    const best = dayWorkouts
+      .filter((workout) => isRun && workout.sport === "run" && !matches.has(workout.id))
+      .map((workout) => ({
+        workout,
+        gap:
+          workout.plannedDistance === null
+            ? Number.MAX_SAFE_INTEGER
+            : Math.abs(workout.plannedDistance - activity.distanceMiles)
+      }))
+      .sort((left, right) => left.gap - right.gap)[0];
+    if (best) {
+      matches.set(best.workout.id, activity);
+    } else {
+      unmatched.push(activity);
+    }
+  }
+  return [
+    ...unmatched.map((actual) => ({ kind: "unplanned" as const, actual })),
+    ...dayWorkouts.map((workout) => ({
+      kind: "planned" as const,
+      workout,
+      actual: matches.get(workout.id) ?? null
+    }))
+  ];
+}
+
+type WorkoutState = "done" | "planned" | "missed";
+
+function workoutState(workout: Workout, actual: ActualActivity | null, today: string): WorkoutState {
+  if (actual || workout.status.startsWith("completed") || workout.status === "partial") {
+    return "done";
+  }
+  if (workout.sport === "rest" || workout.intensityCategory === "rest") {
+    return "planned";
+  }
+  if (workout.plannedDate < today || workout.status === "missed" || workout.status === "skipped_intentionally") {
+    return "missed";
+  }
+  return "planned";
+}
+
+function actualStatsLabel(activity: ActualActivity) {
+  const pace = formatPace(activity.movingTime, activity.distanceMiles);
+  const pieces = [`${formatNumber(activity.distanceMiles)} mi`];
+  if (pace !== "-") {
+    pieces.push(pace);
+  }
+  return pieces.join(" · ");
+}
+
 function ActualActivityItem({ activity }: { activity: ActualActivity }) {
+  const detail = [
+    "unplanned",
+    activity.averageHeartrate ? `${Math.round(activity.averageHeartrate)} bpm` : formatTime(activity.startDateLocal)
+  ].join(" · ");
   return (
     <div className="actual-item">
-      <span className="workout-kind">Actual</span>
-      <strong>{activity.name}</strong>
-      <p className="workout-meta">
-        {formatNumber(activity.distanceMiles)} mi · {formatPace(activity.movingTime, activity.distanceMiles)}
+      <div className="workout-title-row">
+        <span className="workout-type-dot" title="Strava activity" aria-hidden="true" />
+        <strong>{activity.name}</strong>
+      </div>
+      <p className="workout-status-line workout-status-line--done">
+        <Check size={12} strokeWidth={2.75} aria-hidden="true" />
+        <span>{actualStatsLabel(activity)}</span>
       </p>
-      <small>{activity.averageHeartrate ? `${Math.round(activity.averageHeartrate)} bpm` : formatTime(activity.startDateLocal)}</small>
+      <small>{detail}</small>
       <div className="activity-controls">
         <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activity)}>
           <ExternalLink size={15} />
@@ -672,39 +747,70 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
 
 function WorkoutItem({
   workout,
+  actual,
+  today,
   onEdit,
   onDelete,
   onDuplicate
 }: {
   workout: Workout;
+  actual: ActualActivity | null;
+  today: string;
   onEdit: (workout: Workout) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
 }) {
+  const state = workoutState(workout, actual, today);
+  const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
+  const plannedMeta = formatWorkoutMeta(workout);
+  const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
+
+  let statusLine: string;
+  if (actual) {
+    statusLine = actualStatsLabel(actual);
+  } else if (state === "done") {
+    statusLine = hasPlannedMetrics ? plannedMeta : "done";
+  } else if (state === "missed") {
+    statusLine = workout.status === "skipped_intentionally" ? "skipped" : "missed";
+  } else {
+    statusLine = plannedMeta;
+  }
+
+  const detailPieces: string[] = [];
+  if ((actual || state === "missed") && hasPlannedMetrics) {
+    detailPieces.push(`plan ${plannedMeta}`);
+  }
+  if (actual?.averageHeartrate) {
+    detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
+  }
+  const detail = detailPieces.join(" · ");
+
+  const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
+
   return (
-    <div
-      className={`workout-item ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}
-      onClick={() => onEdit(workout)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onEdit(workout);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="workout-title-row">
-        <span className="workout-kind">{labelForWorkoutType(workout.workoutType)}</span>
-        <strong>{workout.title}</strong>
-      </div>
-      <p className="workout-meta">{formatWorkoutMeta(workout)}</p>
-      <small>{workout.status.replaceAll("_", " ")}</small>
-      <div
-        className="workout-controls"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
+    <div className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
+      <button
+        type="button"
+        className="workout-primary-action"
+        aria-label={`Edit ${workout.title}`}
+        onClick={() => onEdit(workout)}
       >
+        <span className="workout-title-row">
+          <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
+          <strong>{workout.title}</strong>
+        </span>
+        <span className={`workout-status-line workout-status-line--${state}`}>
+          {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+          <span>{statusLine}</span>
+        </span>
+        {detail ? <small>{detail}</small> : null}
+      </button>
+      <div className="workout-controls">
+        {actual ? (
+          <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
+            <ExternalLink size={15} />
+          </button>
+        ) : null}
         <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
           <Edit3 size={15} />
         </button>
@@ -730,15 +836,20 @@ function sumActualDistance(activities: ActualActivity[]) {
   return activities.reduce((sum, activity) => sum + activity.distanceMiles, 0);
 }
 
-function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmpty: boolean) {
-  if (activities.length > 0) {
-    return "day-column--actual";
+function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmpty: boolean, isToday: boolean) {
+  const classes: string[] = [];
+  if (isToday) {
+    classes.push("day-column--today");
   }
   const firstWorkout = workouts.find((workout) => workout.sport !== "rest") ?? workouts[0];
-  if (!firstWorkout) {
-    return isEmpty ? "day-column--empty day-column--rest" : "";
+  if (firstWorkout) {
+    classes.push(`day-column--${firstWorkout.intensityCategory}`, firstWorkout.workoutType.replaceAll("_", "-"));
+  } else if (activities.length > 0) {
+    classes.push("day-column--actual");
+  } else if (isEmpty) {
+    classes.push("day-column--empty", "day-column--rest");
   }
-  return `day-column--${firstWorkout.intensityCategory} ${firstWorkout.workoutType.replaceAll("_", "-")}`;
+  return classes.join(" ");
 }
 
 function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {
@@ -787,7 +898,7 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
   });
 }
 
-function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: "past" | "future") {
+function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: CollapsedWeekTone) {
   if (!week) {
     return "loading";
   }
@@ -811,7 +922,7 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
   return tone === "future" ? "not planned" : "no plan";
 }
 
-function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: "past" | "future") {
+function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: CollapsedWeekTone) {
   if (!week) {
     return "loading";
   }
@@ -843,11 +954,25 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
 
   const rect = element.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
-  const targetTop = container.scrollTop + rect.top - containerRect.top;
+  const header = container.querySelector<HTMLElement>(":scope > .app-header");
+  const context = container.querySelector<HTMLElement>(":scope > .week-context-strip");
+  const isMobile = window.matchMedia("(max-width: 860px)").matches;
+  const stickyOffset = (header?.offsetHeight ?? 0) + (isMobile ? 62 : context?.offsetHeight ?? 0) + 14;
+  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+
+  if (isMobile) {
+    window.scrollTo({
+      top: Math.max(0, window.scrollY + rect.top - stickyOffset),
+      behavior
+    });
+    return;
+  }
+
+  const targetTop = container.scrollTop + rect.top - containerRect.top - stickyOffset;
 
   container.scrollTo({
     top: Math.max(0, targetTop),
-    behavior: prefersReducedMotion() ? "auto" : "smooth"
+    behavior
   });
 }
 

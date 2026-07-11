@@ -1,5 +1,6 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
+import { weekPurposes } from "../../lib/options";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -54,6 +55,7 @@ export type CompactWeekStatViewModel = {
   value: string;
   detail?: string;
   severity?: DisplaySeverity;
+  outcome?: "hit" | "missed";
 };
 
 export type WeekCommandCenterViewModel = {
@@ -181,7 +183,13 @@ function buildGoalCards({
 }
 
 function isUnplannedWeek(week: TrainingWeek, mode: WeekMode) {
-  return mode === "planning" && !hasWeekWork(week) && !week.notes.trim() && week.goals.length === 0;
+  return (
+    mode === "planning" &&
+    !hasWeekWork(week) &&
+    !week.notes.trim() &&
+    !hasStructuredPlanContext(week) &&
+    week.goals.length === 0
+  );
 }
 
 function hasWeekWork(week: TrainingWeek) {
@@ -364,17 +372,16 @@ function buildCompactStats(
     ];
   }
 
-  if (mode === "execution") {
-    const actual = mileage?.actualValue ?? week.actualMileage;
-    const target = mileage?.targetValue ?? projectedTargetMiles(week, mileage);
-    const projected = mileage?.projectedValue ?? actual;
-    return [
-      {
-        label: "Mileage",
-        value: target > 0 ? `${formatNumber(actual)} / ${formatNumber(target)}` : `${formatNumber(actual)} mi`,
-        detail: target > 0 ? `${formatNumber(projected)} projected` : undefined,
-        severity: mileage?.severity
-      },
+	  if (mode === "execution") {
+	    const actual = mileage?.actualValue ?? week.actualMileage;
+	    const projected = mileage?.projectedValue ?? actual;
+	    return [
+	      {
+	        label: "Mileage",
+	        value: `${formatNumber(projected)} mi projected`,
+	        detail: `${formatNumber(actual)} mi completed`,
+	        severity: mileage?.severity
+	      },
       {
         label: "Quality",
         value: quality?.statusLabel ?? `${plannedHardDayCount(week)} hard planned`,
@@ -399,32 +406,45 @@ function buildCompactStats(
   return [
     {
       label: "Mileage",
-      value: `${formatNumber(week.actualMileage)} mi`
+      value: mileage?.primaryValue ?? `${formatNumber(week.actualMileage)} mi`,
+      detail: mileage ? `${mileage.statusLabel}: ${mileage.explanation}` : undefined,
+      severity: mileage?.severity,
+      outcome: reviewOutcomeForGoal(mileage)
     },
     {
       label: "Quality",
       value: quality?.primaryValue ?? `${actualHardDayCount(week)} hard days`,
       detail: quality ? `${quality.statusLabel}: ${quality.explanation}` : undefined,
-      severity: quality?.severity
+      severity: quality?.severity,
+      outcome: reviewOutcomeForGoal(quality)
     },
     {
       label: "Long run",
       value: longRun?.primaryValue ?? deriveLongRun(week, mode, today).summary,
       detail: longRun ? `${longRun.statusLabel}: ${longRun.explanation}` : undefined,
-      severity: longRun?.severity
+      severity: longRun?.severity,
+      outcome: reviewOutcomeForGoal(longRun)
     },
     {
       label: "Recovery",
       value: recovery?.primaryValue ?? formatRestDays(actualRestDays(week), "completed"),
       detail: recovery ? `${recovery.statusLabel}: ${recovery.explanation}` : undefined,
-      severity: recovery?.severity
+      severity: recovery?.severity,
+      outcome: reviewOutcomeForGoal(recovery)
     }
   ];
+}
+
+function reviewOutcomeForGoal(goal: GoalCardViewModel | undefined): CompactWeekStatViewModel["outcome"] {
+  return goal && ["achieved", "on_track"].includes(goal.status) ? "hit" : "missed";
 }
 
 function buildPurposeTag(week: TrainingWeek, mode: WeekMode, isUnplanned: boolean) {
   if (isUnplanned) {
     return "Unplanned week";
+  }
+  if (typeof week.purpose === "string" && week.purpose.length > 0) {
+    return purposeLabel(week);
   }
   if (week.notes.trim()) {
     return "Custom";
@@ -463,6 +483,18 @@ function buildNarrative(
     return week.notes.trim();
   }
 
+  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
+    if (week.targetMileage === null) {
+      return "";
+    }
+
+    const pieces = [`${purposeLabel(week)} week around ${formatNumber(week.targetMileage)} miles.`];
+    if (week.targetLongRunDistance !== null) {
+      pieces.push(`Long run near ${formatNumber(week.targetLongRunDistance)} miles.`);
+    }
+    return pieces.join(" ");
+  }
+
   const qualityCount = plannedHardDayCount(week);
   const qualitySentence =
     qualityCount === 0
@@ -494,6 +526,10 @@ function buildNarrative(
 }
 
 function buildPurpose(week: TrainingWeek, goalCards: GoalCardViewModel[]) {
+  if (hasStructuredPlanContext(week) && week.purpose !== "custom") {
+    return `${purposeLabel(week)} week${week.targetMileage ? ` around ${formatNumber(week.targetMileage)} planned miles` : ""}.`;
+  }
+
   if (week.notes.trim()) {
     return week.notes.trim();
   }
@@ -550,7 +586,11 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "planning") {
-    const hasSavedPlan = week.workouts.length > 0 || week.goals.length > 0 || week.notes.trim().length > 0;
+    const hasSavedPlan =
+      week.workouts.length > 0 ||
+      week.goals.length > 0 ||
+      week.notes.trim().length > 0 ||
+      hasStructuredPlanContext(week);
     return [
       {
         id: hasSavedPlan ? "edit_plan" : "plan_week",
@@ -568,17 +608,17 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
   }
 
   return [
-    { id: "review_week", label: "Review week", variant: "primary", icon: "check" },
-    {
-      id: "use_as_template",
-      label: "Use as template",
-      variant: "secondary",
-      icon: "copy",
-      disabled: true,
-      tooltip: "Template actions are coming next."
-    },
-    { id: "edit_goals", label: "Edit goals", variant: "ghost", icon: "target" }
+    { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
   ];
+}
+
+function hasStructuredPlanContext(week: TrainingWeek) {
+  return week.purposeSource === "plan" || week.targetMileage !== null || week.targetLongRunDistance !== null;
+}
+
+function purposeLabel(week: TrainingWeek) {
+  const purpose = typeof week.purpose === "string" ? week.purpose : "maintain";
+  return weekPurposes.find((option) => option.value === purpose)?.label ?? "Custom";
 }
 
 function primaryValueForGoal(

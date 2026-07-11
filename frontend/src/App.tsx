@@ -8,7 +8,7 @@ import {
   Route,
   Settings,
   ShieldAlert,
-  Sparkles,
+  Target,
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
@@ -19,6 +19,8 @@ import { Placeholder } from "./components/shared/Placeholder";
 import { StatusBanner } from "./components/shared/StatusBanner";
 import { ActivitiesView } from "./features/activities/ActivitiesView";
 import { AnalyticsView } from "./features/analytics/AnalyticsView";
+import { GoalsView } from "./features/goals/GoalsView";
+import { PlansView } from "./features/plans/PlansView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
@@ -39,6 +41,8 @@ import type {
   StravaActivity,
   StravaStatus,
   SyncJob,
+  TrainingPlan,
+  TrainingPlanSummary,
   TrainingWeek,
   WeekGoal,
   WeekGoalForm,
@@ -54,6 +58,7 @@ const WEEK_STACK_LOAD_BATCH = 6;
 const tabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
+  { id: "goals", label: "Goals", icon: Target },
   { id: "activities", label: "Activities", icon: Activity },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Settings", icon: Settings }
@@ -92,6 +97,7 @@ function App() {
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
+  const [activePlan, setActivePlan] = useState<TrainingPlan | null>(null);
   const [analyticsPlanning, setAnalyticsPlanning] = useState<AnalyticsPlanning | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
@@ -173,6 +179,7 @@ function App() {
     setVisibleWeekStarts(starts);
     loadWeeks(starts, { force: true });
     loadTrainingTimeline();
+    loadActivePlan();
     loadStravaStatus();
     loadActivities();
   }, [session?.activeAthleteAccountId, session?.authenticated]);
@@ -214,6 +221,7 @@ function App() {
   function clearAppData() {
     setWeekStack({});
     setTimelineSummary(null);
+    setActivePlan(null);
     setAnalyticsPlanning(null);
     setActivities([]);
     setStravaStatus(null);
@@ -592,6 +600,26 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
+  function loadActivePlan() {
+    fetchJson<TrainingPlanSummary[]>("/api/plans")
+      .then((plans) => {
+        const primary =
+          plans.find((plan) => plan.isCurrent) ??
+          plans.find((plan) => plan.isUpcoming) ??
+          plans[0] ??
+          null;
+        if (!primary) {
+          setActivePlan(null);
+          return null;
+        }
+        return fetchJson<TrainingPlan>(`/api/plans/${primary.id}`).then((plan) => {
+          setActivePlan(plan);
+          return plan;
+        });
+      })
+      .catch((error: Error) => setApiError(error.message));
+  }
+
   function loadAnalyticsPlanning() {
     setAnalyticsLoading(true);
     const params = new URLSearchParams({
@@ -726,16 +754,20 @@ function App() {
 
         {activeTab === "week" ? (
           <WeekView
+            activePlan={activePlan}
             canLoadNewerWeeks={canLoadNewerWeeks}
             canLoadOlderWeeks={canLoadOlderWeeks}
+            currentWeekStart={currentWeekStart}
             isLoading={isLoadingWeek}
             onJumpToThisWeek={jumpToThisWeek}
             onLoadNewerWeeks={appendNewerWeeks}
             onLoadOlderWeeks={prependOlderWeeks}
+            onOpenPlan={() => setActiveTab("plan")}
             onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
             onSelectWeek={(start) => selectWeek(start, "week-stack")}
             selectedWeekStart={weekStart}
             timelineIndex={timelineIndex}
+            today={todayDateString()}
             week={week}
             weekStack={weekStack}
             weekStarts={visibleWeekStarts}
@@ -753,10 +785,28 @@ function App() {
           />
         ) : null}
         {activeTab === "plan" ? (
-          <Placeholder
-            title="Plan"
-            detail="Long-range training plans are coming soon. For now, plan week by week from the Week view."
-            icon={<Sparkles size={22} />}
+          <PlansView
+            writesBlocked={staleFrontend}
+            onPlanApplied={() => {
+              refreshVisibleWeeks();
+              loadTrainingTimeline();
+              loadActivePlan();
+              loadAnalyticsPlanning();
+            }}
+            onSelectWeek={(start) => {
+              setActiveTab("week");
+              selectWeek(start, "time-rail");
+            }}
+          />
+        ) : null}
+        {activeTab === "goals" ? (
+          <GoalsView
+            writesBlocked={staleFrontend}
+            onManageRaces={() => setActiveTab("plan")}
+            onSelectWeek={(start) => {
+              setActiveTab("week");
+              selectWeek(start, "time-rail");
+            }}
           />
         ) : null}
         {activeTab === "activities" ? <ActivitiesView activities={activities} /> : null}

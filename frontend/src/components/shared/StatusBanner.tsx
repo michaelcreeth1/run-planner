@@ -6,7 +6,7 @@ export function StatusBanner({
   title,
   detail
 }: {
-  tone: "warning" | "danger";
+  tone: "warning" | "danger" | "success";
   icon: ReactNode;
   title: string;
   detail: string;

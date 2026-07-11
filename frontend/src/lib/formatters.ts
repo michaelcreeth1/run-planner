@@ -100,7 +100,13 @@ export function getCollapsedMileageTrend(week: TrainingWeek | undefined, previou
     return null;
   }
 
-  return getMileageTrend(comparisonMileage(week), comparisonMileage(previousWeek));
+  const currentMileage = comparisonMileage(week);
+  const previousMileage = comparisonMileage(previousWeek);
+  if (currentMileage <= 0 || previousMileage <= 0) {
+    return null;
+  }
+
+  return getMileageTrend(currentMileage, previousMileage);
 }
 
 export function preferredMileage(week: TrainingWeek) {

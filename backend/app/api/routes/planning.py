@@ -13,6 +13,8 @@ from app.schemas.planning import (
     PlannedWorkoutRead,
     PlannedWorkoutUpdate,
     PlanWeekSave,
+    RecurringGoalRead,
+    RecurringGoalSpec,
     TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
@@ -30,11 +32,32 @@ CurrentProfile = Annotated[AthleteAccount, Depends(require_current_profile)]
 
 @router.get("/weeks", response_model=WeekListRead)
 def list_weeks(db: DbSession, profile: CurrentProfile) -> dict[str, list[dict]]:
+    default_goals = planning.list_default_goals(db, profile.id)
     weeks = [
-        planning.serialize_week(week, db)
+        planning.serialize_week(week, db, default_goals)
         for week in planning.list_weeks(db, profile.id)
     ]
     return {"weeks": weeks}
+
+
+@router.get("/default-goals", response_model=list[RecurringGoalRead])
+def list_default_goals(db: DbSession, profile: CurrentProfile) -> list[dict]:
+    return [
+        planning.serialize_recurring_goal(goal)
+        for goal in planning.list_default_goals(db, profile.id)
+    ]
+
+
+@router.put("/default-goals", response_model=list[RecurringGoalRead])
+def replace_default_goals(
+    payload: list[RecurringGoalSpec],
+    db: DbSession,
+    profile: CurrentProfile,
+) -> list[dict]:
+    return [
+        planning.serialize_recurring_goal(goal)
+        for goal in planning.replace_default_goals(db, profile.id, payload)
+    ]
 
 
 @router.get("/training-timeline", response_model=TrainingTimelineRead)
