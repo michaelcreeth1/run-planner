@@ -700,6 +700,7 @@ h1 {
   padding: 14px 28px;
   position: sticky;
   top: var(--app-header-height);
+  transition: padding 160ms ease, box-shadow 160ms ease;
   z-index: 5;
 }
 
@@ -745,6 +746,10 @@ h1 {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.week-context-segment-compact-value {
+  display: none;
 }
 
 .week-context-today {
@@ -2421,10 +2426,25 @@ dt {
   position: relative;
 }
 
-.workout-item:focus-visible {
+.workout-item:has(.workout-primary-action:focus-visible) {
   box-shadow:
     inset 0 0 0 1px var(--border-subtle),
     var(--focus-ring);
+  outline: 0;
+}
+
+.workout-primary-action {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.workout-primary-action:focus-visible {
   outline: 0;
 }
 
@@ -5738,6 +5758,98 @@ button.goal-impact-cell:focus-visible {
     padding: 12px 14px;
   }
 
+  .week-context-strip--compact {
+    background: var(--bg-app);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-height: 58px;
+    padding: 7px 14px;
+  }
+
+  .week-context-strip--compact .week-context-segments {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    gap: 14px;
+    overflow: hidden;
+  }
+
+  .week-context-strip--compact .week-context-segment {
+    flex: 0 1 auto;
+    gap: 1px;
+    overflow: hidden;
+  }
+
+  .week-context-strip--compact .week-context-segment[data-context-segment="race"] {
+    flex: 1 1 auto;
+  }
+
+  .week-context-strip--compact .week-context-segment[data-context-segment="phase"] {
+    display: none;
+  }
+
+  .week-context-strip--compact .week-context-segment + .week-context-segment::before {
+    height: 24px;
+    left: -7px;
+  }
+
+  .week-context-strip--compact .week-context-segment-label {
+    font-size: 0.58rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .week-context-strip--compact .week-context-segment-value {
+    display: none;
+  }
+
+  .week-context-strip--compact .week-context-segment-compact-value {
+    display: block;
+    font-size: 0.78rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .week-context-strip--compact .week-context-today {
+    border-radius: 999px;
+    box-shadow: none;
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 7px 10px;
+  }
+
+  .week-context-strip--compact .week-context-today-label {
+    font-size: 0.68rem;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .week-context-strip--compact .week-context-today-main,
+  .week-context-strip--compact .week-context-today > svg:last-child {
+    display: none;
+  }
+
+  .week-context-strip--compact.week-context-strip--onboarding {
+    border-color: var(--border-subtle);
+  }
+
+  .week-context-strip--compact .week-context-onboarding-copy span {
+    display: none;
+  }
+
+  .week-context-strip--compact .week-context-onboarding-copy strong {
+    font-size: 0.84rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .week-context-strip--compact .week-context-cta {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
   h1 {
     font-size: 1.3rem;
   }
@@ -5871,6 +5983,28 @@ button.goal-impact-cell:focus-visible {
     grid-template-rows: auto auto auto;
   }
 
+  .day-column--compact {
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-rows: minmax(56px, auto);
+    min-height: 56px;
+  }
+
+  .day-column--compact > header {
+    border-right: 1px solid var(--border-subtle);
+    min-height: 56px;
+    padding: 9px 12px;
+  }
+
+  .day-column--compact .workout-stack {
+    align-content: center;
+    min-height: 56px;
+    padding: 6px 12px;
+  }
+
+  .day-column--compact .empty-day-action {
+    min-height: 40px;
+  }
+
   .activity-table-head {
     display: none;
   }
@@ -5962,6 +6096,47 @@ button.goal-impact-cell:focus-visible {
 }
 
 @media (max-width: 560px) {
+  .week-checks-card {
+    padding: 12px;
+  }
+
+  .week-checks-header {
+    align-items: flex-start;
+  }
+
+  .week-checks-summary {
+    text-align: right;
+  }
+
+  .week-check-row {
+    align-items: start;
+    gap: 8px;
+    grid-template-columns: 8px minmax(0, 1fr) auto 24px;
+    padding: 7px 2px;
+  }
+
+  .week-check-dot {
+    margin-top: 4px;
+  }
+
+  .week-check-copy {
+    display: grid;
+    gap: 3px;
+  }
+
+  .week-check-copy strong {
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .week-check-copy span {
+    display: none;
+  }
+
+  .week-check-status {
+    line-height: 24px;
+  }
+
   .week-command-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

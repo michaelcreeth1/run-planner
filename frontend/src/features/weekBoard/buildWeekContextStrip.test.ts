@@ -32,11 +32,13 @@ describe("buildWeekContextStrip", () => {
       throw new Error("expected active strip");
     }
     expect(result.segments.find((segment) => segment.id === "race")?.value).toBe("8 weeks out · Sep 6");
+    expect(result.segments.find((segment) => segment.id === "race")?.compactValue).toBe("8 weeks out");
     expect(result.segments.find((segment) => segment.id === "phase")).toMatchObject({
       label: "Build",
       value: "Week 1 of 2"
     });
     expect(result.segments.find((segment) => segment.id === "mileage")?.value).toBe("17 mi planned");
+    expect(result.segments.find((segment) => segment.id === "mileage")?.compactValue).toBe("17 mi");
   });
 
   it("shows a plan-start hint when the current week precedes the plan", () => {

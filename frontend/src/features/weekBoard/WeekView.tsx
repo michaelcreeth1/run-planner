@@ -156,6 +156,7 @@ export function WeekView({
             key={start}
             isExpanded={start === selectedWeekStart}
             isLoading={isLoading && start === selectedWeekStart}
+            contextState={contextStrip?.kind ?? "loading"}
             onCreate={onCreate}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -188,6 +189,7 @@ export function WeekView({
 }
 
 function WeekRow({
+  contextState,
   isExpanded,
   isLoading,
   onCreate,
@@ -207,6 +209,7 @@ function WeekRow({
   week,
   weekStart
 }: {
+  contextState: "active" | "onboarding" | "loading";
   isExpanded: boolean;
   isLoading: boolean;
   onCreate: (plannedDate: string) => void;
@@ -227,6 +230,7 @@ function WeekRow({
   weekStart: string;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const hasWeek = Boolean(week);
   const isPast = weekStart < selectedWeekStart;
   const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
 
@@ -241,7 +245,7 @@ function WeekRow({
     });
 
     return () => window.cancelAnimationFrame(scrollFrame);
-  }, [isExpanded, weekStart]);
+  }, [contextState, hasWeek, isExpanded, weekStart]);
 
   return (
     <div
@@ -521,10 +525,18 @@ function WeekSchedule({
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
           const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
           const isToday = dateValue === today;
+          const isCompactDay =
+            !isToday &&
+            dayActuals.length === 0 &&
+            dayWorkouts.every(
+              (workout) => workout.sport === "rest" || workout.intensityCategory === "rest"
+            );
           const entries = buildDayEntries(dayWorkouts, dayActuals);
           return (
             <article
-              className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}`}
+              className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}${
+                isCompactDay ? " day-column--compact" : ""
+              }`}
               key={dateValue}
             >
               <header>
@@ -776,32 +788,24 @@ function WorkoutItem({
   const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
 
   return (
-    <div
-      className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}
-      onClick={() => onEdit(workout)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onEdit(workout);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="workout-title-row">
-        <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
-        <strong>{workout.title}</strong>
-      </div>
-      <p className={`workout-status-line workout-status-line--${state}`}>
-        {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
-        <span>{statusLine}</span>
-      </p>
-      {detail ? <small>{detail}</small> : null}
-      <div
-        className="workout-controls"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
+    <div className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
+      <button
+        type="button"
+        className="workout-primary-action"
+        aria-label={`Edit ${workout.title}`}
+        onClick={() => onEdit(workout)}
       >
+        <span className="workout-title-row">
+          <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
+          <strong>{workout.title}</strong>
+        </span>
+        <span className={`workout-status-line workout-status-line--${state}`}>
+          {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+          <span>{statusLine}</span>
+        </span>
+        {detail ? <small>{detail}</small> : null}
+      </button>
+      <div className="workout-controls">
         {actual ? (
           <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
             <ExternalLink size={15} />
@@ -950,11 +954,25 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
 
   const rect = element.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
-  const targetTop = container.scrollTop + rect.top - containerRect.top;
+  const header = container.querySelector<HTMLElement>(":scope > .app-header");
+  const context = container.querySelector<HTMLElement>(":scope > .week-context-strip");
+  const isMobile = window.matchMedia("(max-width: 860px)").matches;
+  const stickyOffset = (header?.offsetHeight ?? 0) + (isMobile ? 62 : context?.offsetHeight ?? 0) + 14;
+  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+
+  if (isMobile) {
+    window.scrollTo({
+      top: Math.max(0, window.scrollY + rect.top - stickyOffset),
+      behavior
+    });
+    return;
+  }
+
+  const targetTop = container.scrollTop + rect.top - containerRect.top - stickyOffset;
 
   container.scrollTo({
     top: Math.max(0, targetTop),
-    behavior: prefersReducedMotion() ? "auto" : "smooth"
+    behavior
   });
 }
 

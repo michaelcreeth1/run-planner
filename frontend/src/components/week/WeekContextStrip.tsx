@@ -1,4 +1,5 @@
 import { CalendarPlus, Check, ChevronRight, Circle, Moon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { WeekContextStripViewModel } from "../../features/weekBoard/buildWeekContextStrip";
 
 type WeekContextStripProps = {
@@ -8,13 +9,37 @@ type WeekContextStripProps = {
 };
 
 export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday }: WeekContextStripProps) {
+  const stripRef = useRef<HTMLElement | null>(null);
+  const [isCompact, setIsCompact] = useState(false);
+
+  useEffect(() => {
+    const main = stripRef.current?.closest("main");
+    const updateCompactState = () => {
+      setIsCompact(window.scrollY > 24 || (main instanceof HTMLElement && main.scrollTop > 24));
+    };
+
+    updateCompactState();
+    window.addEventListener("scroll", updateCompactState, { passive: true });
+    main?.addEventListener("scroll", updateCompactState, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", updateCompactState);
+      main?.removeEventListener("scroll", updateCompactState);
+    };
+  }, [viewModel?.kind]);
+
   if (!viewModel) {
     return null;
   }
 
+  const compactClassName = isCompact ? " week-context-strip--compact" : "";
+
   if (viewModel.kind === "onboarding") {
     return (
-      <section className="week-context-strip week-context-strip--onboarding" aria-label="Training context">
+      <section
+        className={`week-context-strip week-context-strip--onboarding${compactClassName}`}
+        aria-label="Training context"
+        ref={stripRef}
+      >
         <div className="week-context-onboarding-copy">
           <strong>{viewModel.headline}</strong>
           <span>{viewModel.detail}</span>
@@ -28,12 +53,15 @@ export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday }: WeekC
   }
 
   return (
-    <section className="week-context-strip" aria-label="Training context">
+    <section className={`week-context-strip${compactClassName}`} aria-label="Training context" ref={stripRef}>
       <div className="week-context-segments">
         {viewModel.segments.map((segment) => (
-          <div className="week-context-segment" key={segment.id}>
+          <div className="week-context-segment" data-context-segment={segment.id} key={segment.id}>
             <span className="week-context-segment-label">{segment.label}</span>
             <strong className="week-context-segment-value">{segment.value}</strong>
+            <strong className="week-context-segment-compact-value" aria-hidden="true">
+              {segment.compactValue}
+            </strong>
           </div>
         ))}
       </div>

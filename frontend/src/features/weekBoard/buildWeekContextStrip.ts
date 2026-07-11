@@ -6,6 +6,7 @@ export type WeekContextSegment = {
   id: "race" | "phase" | "mileage";
   label: string;
   value: string;
+  compactValue: string;
 };
 
 export type WeekContextTodaySession =
@@ -75,7 +76,8 @@ function buildRaceSegment(plan: TrainingPlan, today: string): WeekContextSegment
   return {
     id: "race",
     label: race.name,
-    value: `${countdown} · ${formatShortDate(race.raceDate)}`
+    value: `${countdown} · ${formatShortDate(race.raceDate)}`,
+    compactValue: countdown
   };
 }
 
@@ -99,35 +101,60 @@ function buildPhaseSegment(plan: TrainingPlan, currentWeekStart: string): WeekCo
   if (summary?.mesocyclePhase) {
     const label = capitalize(summary.mesocyclePhase);
     if (summary.weekIndexInMesocycle && summary.mesocycleWeekCount) {
-      return { id: "phase", label, value: `Week ${summary.weekIndexInMesocycle} of ${summary.mesocycleWeekCount}` };
+      return {
+        id: "phase",
+        label,
+        value: `Week ${summary.weekIndexInMesocycle} of ${summary.mesocycleWeekCount}`,
+        compactValue: `W${summary.weekIndexInMesocycle}/${summary.mesocycleWeekCount}`
+      };
     }
-    return { id: "phase", label: "Phase", value: label };
+    return { id: "phase", label: "Phase", value: label, compactValue: label };
   }
   if (currentWeekStart < plan.startDate) {
-    return { id: "phase", label: "Plan", value: `Starts ${formatShortDate(plan.startDate)}` };
+    return {
+      id: "phase",
+      label: "Plan",
+      value: `Starts ${formatShortDate(plan.startDate)}`,
+      compactValue: `Starts ${formatShortDate(plan.startDate)}`
+    };
   }
   if (currentWeekStart > plan.endDate) {
-    return { id: "phase", label: "Plan", value: "Complete" };
+    return { id: "phase", label: "Plan", value: "Complete", compactValue: "Complete" };
   }
   return null;
 }
 
 function buildMileageSegment(currentWeek: TrainingWeek | null): WeekContextSegment {
   if (!currentWeek) {
-    return { id: "mileage", label: "This week", value: "…" };
+    return { id: "mileage", label: "This week", value: "…", compactValue: "…" };
   }
   const planned = currentWeek.plannedMileage;
   const actual = currentWeek.actualMileage;
   if (planned <= 0 && actual <= 0) {
-    return { id: "mileage", label: "This week", value: "No plan" };
+    return { id: "mileage", label: "This week", value: "No plan", compactValue: "No plan" };
   }
   if (actual > 0 && planned > 0) {
-    return { id: "mileage", label: "This week", value: `${formatNumber(actual)} / ${formatNumber(planned)} mi` };
+    return {
+      id: "mileage",
+      label: "This week",
+      value: `${formatNumber(actual)} / ${formatNumber(planned)} mi`,
+      compactValue: `${formatNumber(actual)}/${formatNumber(planned)} mi`
+    };
   }
   if (planned > 0) {
-    return { id: "mileage", label: "This week", value: `${formatNumber(planned)} mi planned` };
+    return {
+      id: "mileage",
+      label: "This week",
+      value: `${formatNumber(planned)} mi planned`,
+      compactValue: `${formatNumber(planned)} mi`
+    };
   }
-  return { id: "mileage", label: "This week", value: `${formatNumber(actual)} mi` };
+  return {
+    id: "mileage",
+    label: "This week",
+    value: `${formatNumber(actual)} mi`,
+    compactValue: `${formatNumber(actual)} mi`
+  };
 }
 
 function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContextTodaySession {
