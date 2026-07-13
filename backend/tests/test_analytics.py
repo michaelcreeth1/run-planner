@@ -49,9 +49,16 @@ def test_analytics_endpoint_is_read_only() -> None:
         assert after == before
 
 
-def test_analytics_aggregates_load_flags_and_excludes_deleted_activities() -> None:
+def test_analytics_aggregates_load_flags_and_excludes_deleted_activities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = make_session()
     try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         anchor = date(2026, 6, 29)
         future = anchor + timedelta(days=7)

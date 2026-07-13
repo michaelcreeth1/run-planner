@@ -59,6 +59,39 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+## Verification
+
+After installing the backend development dependencies and frontend packages, run the full
+local verification suite from the repository root:
+
+```sh
+make check
+```
+
+This runs backend and frontend linting, isolated SQLite API tests, pure frontend tests,
+rendered React/jsdom tests with mocked HTTP, TypeScript checking, and the production frontend
+build. To run both suites with their enforced coverage floors and generate local HTML reports,
+use:
+
+```sh
+make coverage
+```
+
+Backend tests use a temporary SQLite database and clear application data before every test.
+To run the entire backend suite against the production database dialect, point
+`TEST_DATABASE_URL` at a disposable PostgreSQL database:
+
+```sh
+TEST_DATABASE_URL=postgresql+psycopg://runner:password@localhost:5432/run_planner_test \
+  make test-postgres
+```
+
+The PostgreSQL suite truncates all application tables between tests. It only accepts a database
+name ending in `_test`, and `make test-postgres` supplies the explicit destructive-test opt-in;
+never point it at a development or production database. Pull requests and pushes to `master` run
+the SQLite and PostgreSQL suites, frontend component tests, coverage gates, and production build
+in GitHub Actions.
+
 ## Docker Compose
 
 ```sh
@@ -78,6 +111,12 @@ local `.env` as the deploy configuration, then runs the host-side Compose deploy
 scripts/deploy-remote.sh
 ```
 
+Before syncing anything, the script runs `make check` locally. A lint, test,
+type-check, or production-build failure stops the deployment and leaves the
+remote bundle untouched. `--dry-run` only previews the archive and does not run
+the verification gate. Local databases, coverage reports, development-only env
+files, and editor/agent configuration are excluded from the remote archive.
+
 Remote deploy refuses local-only database URLs such as `localhost` or `127.0.0.1`;
 the local `.env` must use the same Docker-network or remote-reachable database host
 that the deployed containers will use.
@@ -94,6 +133,16 @@ Pass options through to the host-side deploy script after `--`:
 scripts/deploy-remote.sh -- --skip-build
 scripts/deploy-remote.sh -- --no-wait
 ```
+
+If the exact checkout has already passed verification, the gate can be bypassed
+explicitly:
+
+```sh
+scripts/deploy-remote.sh --skip-checks
+```
+
+Use the bypass sparingly; it removes the release safety check but does not skip
+environment validation or the remote health check.
 
 The host-side script is still available for repeatable Docker-based deploys
 from the synced server bundle:

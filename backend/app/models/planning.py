@@ -75,6 +75,7 @@ class TrainingWeek(Base):
     target_long_run_source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
     is_down_week: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -6,7 +6,6 @@ import type {
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
   TrainingWeek,
-  WeekPurposeId,
   Workout
 } from "../../types/domain";
 import {
@@ -269,6 +268,7 @@ function makeWeek(
     targetLongRunSource: "manual",
     isDownWeek: false,
     notes: "",
+    reviewedAt: null,
     workouts,
     actualActivities,
     goals: [],
@@ -339,7 +339,6 @@ function makeDraft(overrides: Partial<PlanWeekDraft> = {}): PlanWeekDraft {
     workouts: [],
     goals: [],
     hasExistingPlan: false,
-    mismatchAcknowledged: false,
     ...overrides
   };
 }

@@ -5,6 +5,8 @@ import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
 import { WeekContextStrip } from "../../components/week/WeekContextStrip";
+import { WeekNextUpCard } from "../../components/week/WeekNextUpCard";
+import { WeekReviewHandoff } from "../../components/week/WeekReviewHandoff";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
 import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
@@ -38,10 +40,14 @@ export function WeekView({
   onJumpToThisWeek,
   onLoadNewerWeeks,
   onLoadOlderWeeks,
+  onDismissReviewHandoff,
   onOpenPlan,
+  onOpenProgress,
+  onPlanNextWeek,
   onSelectTimeWeek,
   onSelectWeek,
   selectedWeekStart,
+  reviewHandoff,
   timelineIndex,
   today,
   week,
@@ -67,10 +73,14 @@ export function WeekView({
   onJumpToThisWeek: () => void;
   onLoadNewerWeeks: () => void;
   onLoadOlderWeeks: () => void;
+  onDismissReviewHandoff: () => void;
   onOpenPlan: () => void;
+  onOpenProgress: () => void;
+  onPlanNextWeek: (weekStartDate: string) => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
+  reviewHandoff: { nextWeekStart: string; reviewedWeekStart: string } | null;
   timelineIndex: TrainingTimelineIndex;
   today: string;
   week: TrainingWeek | null;
@@ -148,6 +158,22 @@ export function WeekView({
   return (
     <>
       <WeekContextStrip viewModel={contextStrip} onOpenPlan={onOpenPlan} onJumpToToday={onJumpToThisWeek} />
+      {reviewHandoff && reviewHandoff.reviewedWeekStart === week?.weekStartDate ? (
+        <WeekReviewHandoff
+          nextWeekStart={reviewHandoff.nextWeekStart}
+          onDismiss={onDismissReviewHandoff}
+          onPlanNextWeek={onPlanNextWeek}
+        />
+      ) : week ? (
+        <WeekNextUpCard
+          onEditWorkout={onEdit}
+          onOpenPlan={onOpenPlan}
+          onOpenPlanWeek={onOpenPlanWeek}
+          onOpenProgress={onOpenProgress}
+          today={today}
+          week={week}
+        />
+      ) : null}
       <section className="week-stack-layout" aria-busy={isLoading}>
         <section className="week-timeline" aria-label="Training week timeline">
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />

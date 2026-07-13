@@ -607,9 +607,9 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
     ];
   }
 
-  return [
-    { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
-  ];
+  return week.reviewedAt
+    ? []
+    : [{ id: "review_week", label: "Review week", variant: "primary", icon: "check" }];
 }
 
 function hasStructuredPlanContext(week: TrainingWeek) {

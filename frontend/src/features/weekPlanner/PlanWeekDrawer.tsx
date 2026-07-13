@@ -31,6 +31,7 @@ export function PlanWeekDrawer({
   draft,
   isSaving,
   onClose,
+  onCompleteReview,
   onSave,
   setDraft,
   weekStack
@@ -38,6 +39,7 @@ export function PlanWeekDrawer({
   draft: PlanWeekDraft;
   isSaving: boolean;
   onClose: () => void;
+  onCompleteReview: (weekId: string) => void;
   onSave: (draft: PlanWeekDraft) => void;
   setDraft: Dispatch<SetStateAction<PlanWeekDraft | null>>;
   weekStack: Record<string, TrainingWeek>;
@@ -58,7 +60,19 @@ export function PlanWeekDrawer({
       : draft.hasExistingPlan
       ? "Edit plan"
       : "Plan week";
-  const canSave = !mismatches.length || draft.mismatchAcknowledged;
+
+  if (draft.weekState === "past") {
+    return (
+      <PastWeekReviewDrawer
+        isSaving={isSaving}
+        onClose={onClose}
+        onComplete={() => onCompleteReview(draft.weekId)}
+        week={weekStack[draft.weekStartDate]}
+        weekEndDate={draft.weekEndDate}
+        weekStartDate={draft.weekStartDate}
+      />
+    );
+  }
 
   function updateDraft(updater: (current: PlanWeekDraft) => PlanWeekDraft) {
     setDraft((current) => (current ? updater(current) : current));
@@ -74,8 +88,7 @@ export function PlanWeekDrawer({
       return {
         ...current,
         purpose: purposeValue,
-        load: nextLoad,
-        mismatchAcknowledged: false
+        load: nextLoad
       };
     });
   }
@@ -87,8 +100,7 @@ export function PlanWeekDrawer({
         goal.draftId === goalDraftId
           ? { ...goal, ...updates, manuallyEdited: true, source: "manual", sourceLabel: "Edited" }
           : goal
-      ),
-      mismatchAcknowledged: false
+      )
     }));
   }
 
@@ -97,16 +109,14 @@ export function PlanWeekDrawer({
       ...current,
       workouts: current.workouts.map((workout) =>
         workout.draftId === workoutDraftId ? { ...workout, ...updates } : workout
-      ),
-      mismatchAcknowledged: false
+      )
     }));
   }
 
   function removeWorkout(workoutDraftId: string) {
     updateDraft((current) => ({
       ...current,
-      workouts: current.workouts.filter((workout) => workout.draftId !== workoutDraftId),
-      mismatchAcknowledged: false
+      workouts: current.workouts.filter((workout) => workout.draftId !== workoutDraftId)
     }));
   }
 
@@ -116,16 +126,14 @@ export function PlanWeekDrawer({
       workouts: [
         ...current.workouts.filter((workout) => workout.plannedDate !== dateValue),
         restWorkoutDraft(dateValue)
-      ].sort(sortDraftWorkouts),
-      mismatchAcknowledged: false
+      ].sort(sortDraftWorkouts)
     }));
   }
 
   function regenerateGoalsFromSchedule() {
     updateDraft((current) => ({
       ...current,
-      goals: deriveGoalDraftsFromSchedule(current, "Schedule"),
-      mismatchAcknowledged: false
+      goals: deriveGoalDraftsFromSchedule(current, "Schedule")
     }));
   }
 
@@ -136,8 +144,7 @@ export function PlanWeekDrawer({
       const nextDraft = {
         ...current,
         load: nextLoad,
-        workouts: adjustedWorkouts.sort(sortDraftWorkouts),
-        mismatchAcknowledged: false
+        workouts: adjustedWorkouts.sort(sortDraftWorkouts)
       };
       return {
         ...nextDraft,
@@ -205,8 +212,7 @@ export function PlanWeekDrawer({
                   onChange={(event) =>
                     updateDraft((current) => ({
                       ...current,
-                      customPurpose: event.target.value,
-                      mismatchAcknowledged: false
+                      customPurpose: event.target.value
                     }))
                   }
                 />
@@ -335,6 +341,7 @@ export function PlanWeekDrawer({
               <strong>{mismatches.length ? `${mismatches.length} mismatch${mismatches.length === 1 ? "" : "es"}` : "Plan aligned"}</strong>
               <span>{alignment.length} checks</span>
             </div>
+            <p className="plan-week-note">These checks are advisory and never prevent you from saving the plan.</p>
             <div className="alignment-list">
               {alignment.map((item) => (
                 <div className={`alignment-item alignment-item--${item.status}`} key={item.id}>
@@ -354,9 +361,6 @@ export function PlanWeekDrawer({
                 <button disabled type="button" title="Automatic plan adjustment is not ready yet.">
                   Adjust plan to match goals
                 </button>
-                <button type="button" onClick={() => updateDraft((current) => ({ ...current, mismatchAcknowledged: true }))}>
-                  Save with mismatch
-                </button>
               </div>
             ) : null}
           </section>
@@ -367,9 +371,104 @@ export function PlanWeekDrawer({
             <X size={17} />
             <span>Cancel</span>
           </button>
-          <button className="primary" disabled={isSaving || !canSave} type="button" onClick={() => onSave(draft)}>
+          <button className="primary" disabled={isSaving} type="button" onClick={() => onSave(draft)}>
             <Save size={17} />
             <span>{isSaving ? "Saving" : "Save plan"}</span>
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function PastWeekReviewDrawer({
+  isSaving,
+  onClose,
+  onComplete,
+  week,
+  weekEndDate,
+  weekStartDate
+}: {
+  isSaving: boolean;
+  onClose: () => void;
+  onComplete: () => void;
+  week: TrainingWeek | undefined;
+  weekEndDate: string;
+  weekStartDate: string;
+}) {
+  const completedWorkouts = week?.workouts.filter((workout) => workout.status.startsWith("completed")).length ?? 0;
+  const goalOutcomes = week?.goalEvaluations ?? [];
+
+  return (
+    <div className="editor-backdrop">
+      <aside className="editor-panel plan-week-panel" aria-label="Review week">
+        <header>
+          <div>
+            <h2>Review week</h2>
+            <span>{formatCompactWeekRange(weekStartDate, weekEndDate)}</span>
+          </div>
+          <button type="button" title="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="plan-week-body">
+          <section className="plan-week-section">
+            <div className="section-heading">
+              <span>1</span>
+              <h3>Week outcomes</h3>
+            </div>
+            <p className="plan-week-note">
+              This review is read-only. Completing it records the review without changing historical sessions, goals, or workout details.
+            </p>
+            <div className="proposed-load">
+              <div>
+                <span>Planned mileage</span>
+                <strong>{formatNumber(week?.plannedMileage ?? 0)} mi</strong>
+              </div>
+              <div>
+                <span>Actual mileage</span>
+                <strong>{formatNumber(week?.actualMileage ?? 0)} mi</strong>
+              </div>
+              <div>
+                <span>Completed sessions</span>
+                <strong>{completedWorkouts}</strong>
+                <small>{week?.workouts.length ?? 0} scheduled</small>
+              </div>
+            </div>
+          </section>
+
+          <section className="plan-week-section">
+            <div className="section-heading">
+              <span>2</span>
+              <h3>Goal outcomes</h3>
+            </div>
+            {goalOutcomes.length ? (
+              <div className="alignment-list">
+                {goalOutcomes.map((evaluation) => (
+                  <div className={`alignment-item alignment-item--${evaluation.status === "achieved" ? "aligned" : "mismatch"}`} key={evaluation.goalId}>
+                    {evaluation.status === "achieved" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                    <div>
+                      <strong>{evaluation.summary}</strong>
+                      {evaluation.detail ? <span>{evaluation.detail}</span> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="plan-week-note">No weekly goals were set. Review the activity totals before planning the next week.</p>
+            )}
+          </section>
+        </div>
+
+        <div className="editor-actions plan-week-actions">
+          <button type="button" onClick={onClose}>
+            <X size={17} />
+            <span>Close</span>
+          </button>
+          <button className="primary" disabled={isSaving} type="button" onClick={onComplete}>
+            <CheckCircle2 size={17} />
+            <span>{isSaving ? "Saving" : "Complete review"}</span>
           </button>
         </div>
       </aside>

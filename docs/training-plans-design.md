@@ -340,7 +340,7 @@ Plan tab
 
 Smart defaults throughout so "next–next–next" yields a sane plan.
 
-1. **Goal** — segmented control: *Race plan* / *Date-range plan*. Race path: pick an existing goal race or inline-create one (name, date, distance, target time). Date path: start + end pickers.
+1. **Goal** — segmented control: *Race plan* / *Date-range plan*. Race path: pick an existing goal race created through the separate goal-race workflow. Date path: start + end pickers.
 2. **Structure** — suggested split computed backward from race date: race week 1; taper 2 weeks for marathon/half, 1 for ≤10k; specific ≈ 4; build ≈ 4–6; base absorbs the remainder (min 2; under 8 total weeks phases compress with a warning, FR-8). Editable ordered list with per-phase week steppers (must tile the range) and per-mesocycle down-week cadence (default every 4th; none in taper/race).
 3. **Load** — baseline weekly mileage prefilled from recent actual weeks (reuse the comparison-mileage logic behind `suggestLoad`), peak weekly mileage, peak long run. The wizard distributes start/end targets per mesocycle: base ends ~80% of peak, build/specific reach peak, taper descends to ~50–60%.
 4. **Goals** — checkbox list of plan goals derived from earlier steps (race time, peak mileage, mileage progression, long-run peak), all editable.

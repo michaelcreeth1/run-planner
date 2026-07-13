@@ -13,11 +13,13 @@ Options:
   --host HOST          SSH host for the Docker server. Default: docker
   --remote-dir PATH   Server-side app bundle path. Default: /home/mike/compose/run-planner
   --dry-run           Show what would be archived and do not deploy
+  --skip-checks       Skip the local make check pre-deploy gate
   -h, --help          Show this help text
 
 Examples:
   scripts/deploy-remote.sh
   scripts/deploy-remote.sh --dry-run
+  scripts/deploy-remote.sh --skip-checks
   scripts/deploy-remote.sh -- --skip-build
   scripts/deploy-remote.sh --host docker --remote-dir /home/mike/compose/run-planner
 
@@ -88,6 +90,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REMOTE_HOST="${DEPLOY_REMOTE_HOST:-docker}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/home/mike/compose/run-planner}"
 DRY_RUN=0
+SKIP_CHECKS=0
 DEPLOY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -102,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --skip-checks)
+      SKIP_CHECKS=1
       shift
       ;;
     --)
@@ -140,6 +147,7 @@ fail_on_extra_env_files
 
 TAR_EXCLUDES=(
   --exclude "./.git"
+  --exclude "./.claude"
   --exclude "./.DS_Store"
   --exclude "./._*"
   --exclude "*/._*"
@@ -147,6 +155,10 @@ TAR_EXCLUDES=(
   --exclude "./*.py[cod]"
   --exclude "./.pytest_cache"
   --exclude "./.ruff_cache"
+  --exclude "./.coverage"
+  --exclude "./htmlcov"
+  --exclude "./backend/.coverage"
+  --exclude "./backend/htmlcov"
   --exclude "./.venv"
   --exclude "./*.egg-info"
   --exclude "./backend/data"
@@ -154,8 +166,12 @@ TAR_EXCLUDES=(
   --exclude "./dist"
   --exclude "./frontend/dist"
   --exclude "./frontend/.vite"
+  --exclude "./frontend/.env.local"
+  --exclude "./frontend/coverage"
   --exclude "./data/*.db"
   --exclude "./data/*.db-*"
+  --exclude "./data/*.sqlite"
+  --exclude "./data/*.sqlite-*"
   --exclude "./backups"
 )
 
@@ -181,6 +197,17 @@ if (( DRY_RUN == 1 )); then
   echo "Dry run complete. Remote deploy command would be:"
   echo "ssh $REMOTE_HOST $(shell_quote "$REMOTE_DEPLOY_COMMAND")"
   exit 0
+fi
+
+if (( SKIP_CHECKS == 1 )); then
+  echo
+  echo "WARNING: Skipping local pre-deploy verification (--skip-checks)."
+else
+  require_command make
+  echo
+  echo "Running local pre-deploy verification..."
+  (cd "$ROOT_DIR" && make check)
+  echo "Local pre-deploy verification passed."
 fi
 
 REMOTE_SYNC_SCRIPT="

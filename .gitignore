@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 .venv/
 *.egg-info/
 backend/data/
@@ -15,6 +17,7 @@ node_modules/
 dist/
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 
 data/*.db
 data/*.db-*

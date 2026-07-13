@@ -53,8 +53,7 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
     load,
     workouts: [],
     goals: [],
-    hasExistingPlan,
-    mismatchAcknowledged: false
+    hasExistingPlan
   };
   return rebuildPlanWeekDraftForStartingPoint(baseDraft, startingPoint, weekStack, week);
 }
@@ -92,8 +91,7 @@ export function rebuildPlanWeekDraftForStartingPoint(
     priorWeekStartDate: priorWeek?.weekStartDate ?? null,
     noPriorUsableWeek: !priorWeek && startingPoint !== "existing",
     load: nextLoad,
-    workouts: adjustedWorkouts.sort(sortDraftWorkouts),
-    mismatchAcknowledged: false
+    workouts: adjustedWorkouts.sort(sortDraftWorkouts)
   };
 
   const existingWeek = startingPoint === "existing" ? currentWeek ?? weekStack[draft.weekStartDate] : null;

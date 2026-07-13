@@ -202,6 +202,7 @@ function makeWeek(overrides: Partial<TrainingWeek> = {}): TrainingWeek {
     targetLongRunSource: "manual",
     isDownWeek: false,
     notes: "",
+    reviewedAt: null,
     workouts: [],
     actualActivities: [],
     goals: [],

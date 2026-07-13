@@ -1,11 +1,9 @@
 import { Activity, BarChart3 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
-import { useState } from "react";
+import type { ProgressSection } from "../../lib/navigation";
 import type { AnalyticsPlanning, StravaActivity } from "../../types/domain";
 import { ActivitiesView } from "../activities/ActivitiesView";
 import { AnalyticsView } from "../analytics/AnalyticsView";
-
-type ProgressSection = "trends" | "activities";
 
 export function ProgressView({
   activities,
@@ -13,6 +11,9 @@ export function ProgressView({
   futureWeeks,
   isLoading,
   lookbackWeeks,
+  onChangeSection,
+  onSelectWeek,
+  section,
   setFutureWeeks,
   setLookbackWeeks
 }: {
@@ -21,11 +22,12 @@ export function ProgressView({
   futureWeeks: number;
   isLoading: boolean;
   lookbackWeeks: number;
+  onChangeSection: (section: ProgressSection) => void;
+  onSelectWeek: (weekStartDate: string) => void;
+  section: ProgressSection;
   setFutureWeeks: Dispatch<SetStateAction<number>>;
   setLookbackWeeks: Dispatch<SetStateAction<number>>;
 }) {
-  const [section, setSection] = useState<ProgressSection>("trends");
-
   return (
     <section className="workspace-view" aria-label="Progress workspace">
       <nav className="workspace-tabs" aria-label="Progress sections">
@@ -33,7 +35,7 @@ export function ProgressView({
           type="button"
           className={section === "trends" ? "active" : ""}
           aria-pressed={section === "trends"}
-          onClick={() => setSection("trends")}
+          onClick={() => onChangeSection("trends")}
         >
           <BarChart3 size={16} aria-hidden="true" />
           <span>Trends</span>
@@ -42,7 +44,7 @@ export function ProgressView({
           type="button"
           className={section === "activities" ? "active" : ""}
           aria-pressed={section === "activities"}
-          onClick={() => setSection("activities")}
+          onClick={() => onChangeSection("activities")}
         >
           <Activity size={16} aria-hidden="true" />
           <span>Activities</span>
@@ -56,11 +58,12 @@ export function ProgressView({
           futureWeeks={futureWeeks}
           isLoading={isLoading}
           lookbackWeeks={lookbackWeeks}
+          onSelectWeek={onSelectWeek}
           setFutureWeeks={setFutureWeeks}
           setLookbackWeeks={setLookbackWeeks}
         />
       ) : (
-        <ActivitiesView activities={activities} />
+        <ActivitiesView activities={activities} onSelectWeek={onSelectWeek} />
       )}
     </section>
   );

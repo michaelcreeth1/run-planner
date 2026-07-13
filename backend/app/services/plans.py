@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.planning import GoalRace, Mesocycle, RecurringGoal, TrainingPlan, TrainingWeek
@@ -65,7 +65,9 @@ def list_goal_races(db: Session, athlete_account_id: str) -> list[dict[str, Any]
     return [serialize_goal_race(race) for race in races]
 
 
-def create_goal_race(db: Session, payload: GoalRaceCreate, athlete_account_id: str) -> dict[str, Any]:
+def create_goal_race(
+    db: Session, payload: GoalRaceCreate, athlete_account_id: str
+) -> dict[str, Any]:
     race = GoalRace(athlete_account_id=athlete_account_id, **validated_goal_race_data(payload))
     db.add(race)
     db.commit()
@@ -103,9 +105,7 @@ def update_goal_race(
 
 def delete_goal_race(db: Session, goal_race_id: str, athlete_account_id: str) -> None:
     race = get_goal_race_model(db, goal_race_id, athlete_account_id)
-    for plan in db.scalars(
-        select(TrainingPlan).where(TrainingPlan.goal_race_id == race.id)
-    ).all():
+    for plan in db.scalars(select(TrainingPlan).where(TrainingPlan.goal_race_id == race.id)).all():
         plan.goal_race_id = None
         db.add(plan)
     db.delete(race)
@@ -128,7 +128,9 @@ def preview_plan(
     athlete_account_id: str,
     existing_plan_id: str | None = None,
 ) -> dict[str, Any]:
-    normalized = normalize_plan_spec(db, payload, athlete_account_id, existing_plan_id=existing_plan_id)
+    normalized = normalize_plan_spec(
+        db, payload, athlete_account_id, existing_plan_id=existing_plan_id
+    )
     existing_weeks = weeks_for_preview(
         db,
         athlete_account_id,
@@ -180,7 +182,9 @@ def get_plan(db: Session, plan_id: str, athlete_account_id: str) -> dict[str, An
     return serialize_plan(plan)
 
 
-def replace_plan(db: Session, plan_id: str, payload: TrainingPlanSpec, athlete_account_id: str) -> dict[str, Any]:
+def replace_plan(
+    db: Session, plan_id: str, payload: TrainingPlanSpec, athlete_account_id: str
+) -> dict[str, Any]:
     plan = get_plan_model(db, plan_id, athlete_account_id)
     normalized = normalize_plan_spec(db, payload, athlete_account_id, existing_plan_id=plan_id)
     old_linked = linked_weeks_by_start(db, plan_id, athlete_account_id)
@@ -265,7 +269,9 @@ def get_plan_model(db: Session, plan_id: str, athlete_account_id: str) -> Traini
         .options(*PLAN_RELATIONSHIPS)
     ).first()
     if not plan:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training plan not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Training plan not found."
+        )
     return plan
 
 
@@ -320,7 +326,9 @@ def normalize_plan_spec(
         existing_plan_id=existing_plan_id,
         incoming_status=data["status"],
     )
-    data["mesocycles"] = normalize_mesocycles(payload.mesocycles, data["start_date"], data["end_date"])
+    data["mesocycles"] = normalize_mesocycles(
+        payload.mesocycles, data["start_date"], data["end_date"]
+    )
     data["recurring_goals"] = [goal.model_dump() for goal in payload.recurring_goals]
     return data
 
@@ -343,7 +351,10 @@ def normalize_mesocycles(
             detail="A training plan requires at least one mesocycle.",
         )
 
-    if normalized[0]["start_date"] != plan_start_date or normalized[-1]["end_date"] != plan_end_date:
+    if (
+        normalized[0]["start_date"] != plan_start_date
+        or normalized[-1]["end_date"] != plan_end_date
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Mesocycles must tile the plan date range exactly.",
@@ -404,7 +415,9 @@ def validate_no_overlap(
         )
 
 
-def resolve_goal_race_id(db: Session, normalized: dict[str, Any], athlete_account_id: str) -> str | None:
+def resolve_goal_race_id(
+    db: Session, normalized: dict[str, Any], athlete_account_id: str
+) -> str | None:
     if normalized["goal_race_id"]:
         return normalized["goal_race_id"]
     goal_race_payload = normalized.get("goal_race")
@@ -433,11 +446,7 @@ def replace_plan_children(
         plan.mesocycles.append(
             Mesocycle(
                 athlete_account_id=athlete_account_id,
-                **{
-                    key: value
-                    for key, value in mesocycle_data.items()
-                    if key != "id"
-                },
+                **{key: value for key, value in mesocycle_data.items() if key != "id"},
             )
         )
     db.flush()
@@ -452,11 +461,7 @@ def replace_plan_children(
         plan.recurring_goals.append(
             RecurringGoal(
                 athlete_account_id=athlete_account_id,
-                **{
-                    key: value
-                    for key, value in goal_data.items()
-                    if key != "id"
-                },
+                **{key: value for key, value in goal_data.items() if key != "id"},
             )
         )
     db.flush()
@@ -475,7 +480,9 @@ def weeks_for_preview(
         TrainingWeek.week_start_date >= start_date,
         TrainingWeek.week_start_date <= end_date,
     ]
-    linked = linked_weeks_by_start(db, existing_plan_id, athlete_account_id) if existing_plan_id else {}
+    linked = (
+        linked_weeks_by_start(db, existing_plan_id, athlete_account_id) if existing_plan_id else {}
+    )
     weeks = db.scalars(select(TrainingWeek).where(*conditions)).all()
     result = {week.week_start_date: week for week in weeks}
     result.update(linked)
@@ -547,7 +554,9 @@ def scaffold_weeks(
         if purpose_action["changed"]:
             change_list.append(change("purpose", purpose_action["from"], scheduled.purpose))
             if bool(existing.is_down_week) != scheduled.is_down_week:
-                change_list.append(change("isDownWeek", bool(existing.is_down_week), scheduled.is_down_week))
+                change_list.append(
+                    change("isDownWeek", bool(existing.is_down_week), scheduled.is_down_week)
+                )
             if apply_changes:
                 existing.is_down_week = int(scheduled.is_down_week)
         elif purpose_action["blocked"]:
@@ -563,7 +572,10 @@ def scaffold_weeks(
             empty_value=None,
             apply_changes=apply_changes,
         )
-        if target_mileage_action["changed"] and target_mileage_action["from"] != scheduled.target_mileage:
+        if (
+            target_mileage_action["changed"]
+            and target_mileage_action["from"] != scheduled.target_mileage
+        ):
             change_list.append(
                 change("targetMileage", target_mileage_action["from"], scheduled.target_mileage)
             )
@@ -580,7 +592,10 @@ def scaffold_weeks(
             empty_value=None,
             apply_changes=apply_changes,
         )
-        if long_run_action["changed"] and long_run_action["from"] != scheduled.target_long_run_distance:
+        if (
+            long_run_action["changed"]
+            and long_run_action["from"] != scheduled.target_long_run_distance
+        ):
             change_list.append(
                 change(
                     "targetLongRunDistance",
@@ -597,7 +612,13 @@ def scaffold_weeks(
             planning.sync_plan_sourced_goals(existing, recurring_goals or [])
 
         if action != "create":
-            action = "skip_overridden" if manual_override and not change_list else "update" if change_list else "annotate"
+            action = (
+                "skip_overridden"
+                if manual_override and not change_list
+                else "update"
+                if change_list
+                else "annotate"
+            )
 
         diffs.append(
             {
@@ -611,7 +632,10 @@ def scaffold_weeks(
     for week_start_date, week in linked_weeks_by_start.items():
         if week_start_date in scheduled_by_start:
             continue
-        unlink_changes = [change("mesocycleId", week.mesocycle_id, None), *plan_owned_reset_changes(week)]
+        unlink_changes = [
+            change("mesocycleId", week.mesocycle_id, None),
+            *plan_owned_reset_changes(week),
+        ]
         if apply_changes:
             week.mesocycle_id = None
             clear_plan_owned_fields(week)
@@ -638,7 +662,8 @@ def materialize_scaffold_weeks(mesocycles: list[dict[str, Any]]) -> list[Scaffol
         if not week_starts:
             continue
         down_week_flags = [
-            bool(mesocycle["down_week_cadence"]) and ((index + 1) % mesocycle["down_week_cadence"] == 0)
+            bool(mesocycle["down_week_cadence"])
+            and ((index + 1) % mesocycle["down_week_cadence"] == 0)
             for index in range(len(week_starts))
         ]
         target_mileages = interpolate_targets(
@@ -696,7 +721,9 @@ def interpolate_targets(
     assert baseline is not None and peak is not None
 
     values: list[float | None] = [None for _ in down_week_flags]
-    non_down_indices = [index for index, is_down_week in enumerate(down_week_flags) if not is_down_week]
+    non_down_indices = [
+        index for index, is_down_week in enumerate(down_week_flags) if not is_down_week
+    ]
     if not non_down_indices:
         non_down_indices = list(range(len(down_week_flags)))
 
@@ -710,7 +737,9 @@ def interpolate_targets(
             prior_reference = values[index]
             continue
         reference = prior_reference if prior_reference is not None else values[non_down_indices[0]]
-        values[index] = round(reference * reduction_multiplier, 1) if reference is not None else None
+        values[index] = (
+            round(reference * reduction_multiplier, 1) if reference is not None else None
+        )
     return values
 
 
@@ -763,7 +792,8 @@ def scaffold_week_warnings(existing: TrainingWeek | None, scheduled: ScaffoldWee
         and existing.planned_mileage > scheduled.target_mileage
     ):
         warnings.append(
-            f"Week has {existing.planned_mileage:.1f} planned miles; plan target is {scheduled.target_mileage:.1f}."
+            f"Week has {existing.planned_mileage:.1f} planned miles; "
+            f"plan target is {scheduled.target_mileage:.1f}."
         )
     return warnings
 
@@ -815,7 +845,9 @@ def blank_scaffold_week(athlete_account_id: str, scheduled: ScaffoldWeek) -> Tra
 
 def serialize_goal_race(race: GoalRace) -> dict[str, Any]:
     distance_miles = goal_race_distance_miles(race.distance, race.distance_miles)
-    target_pace = round(race.target_time / distance_miles, 1) if race.target_time and distance_miles else None
+    target_pace = (
+        round(race.target_time / distance_miles, 1) if race.target_time and distance_miles else None
+    )
     return {
         "id": race.id,
         "athlete_account_id": race.athlete_account_id,
@@ -894,7 +926,9 @@ def serialize_recurring_goal(goal: RecurringGoal) -> dict[str, Any]:
 
 
 def serialize_plan_week_summaries(plan: TrainingPlan) -> list[dict[str, Any]]:
-    weeks_by_start = {week.week_start_date: week for mesocycle in plan.mesocycles for week in mesocycle.weeks}
+    weeks_by_start = {
+        week.week_start_date: week for mesocycle in plan.mesocycles for week in mesocycle.weeks
+    }
     scaffold_weeks = materialize_scaffold_weeks(
         [
             {
@@ -923,12 +957,21 @@ def serialize_plan_week_summaries(plan: TrainingPlan) -> list[dict[str, Any]]:
                 or week.target_mileage_source == "manual"
                 or week.target_long_run_source == "manual"
             )
-            and (week.purpose or week.target_mileage is not None or week.target_long_run_distance is not None)
+            and (
+                week.purpose
+                or week.target_mileage is not None
+                or week.target_long_run_distance is not None
+            )
         )
         warning = None
-        if week and scheduled.target_mileage is not None and week.planned_mileage > scheduled.target_mileage:
+        if (
+            week
+            and scheduled.target_mileage is not None
+            and week.planned_mileage > scheduled.target_mileage
+        ):
             warning = (
-                f"{week.planned_mileage:.1f} planned miles against a {scheduled.target_mileage:.1f} target."
+                f"{week.planned_mileage:.1f} planned miles against a "
+                f"{scheduled.target_mileage:.1f} target."
             )
         summaries.append(
             {

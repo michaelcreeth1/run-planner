@@ -70,12 +70,16 @@ def get_plan(plan_id: str, db: DbSession, profile: CurrentProfile) -> dict:
 
 
 @router.post("/plans/{plan_id}/preview", response_model=ScaffoldPreviewRead)
-def preview_plan_edit(plan_id: str, payload: TrainingPlanSpec, db: DbSession, profile: CurrentProfile) -> dict:
+def preview_plan_edit(
+    plan_id: str, payload: TrainingPlanSpec, db: DbSession, profile: CurrentProfile
+) -> dict:
     return plans.preview_plan(db, payload, profile.id, existing_plan_id=plan_id)
 
 
 @router.put("/plans/{plan_id}", response_model=TrainingPlanRead)
-def replace_plan(plan_id: str, payload: TrainingPlanSpec, db: DbSession, profile: CurrentProfile) -> dict:
+def replace_plan(
+    plan_id: str, payload: TrainingPlanSpec, db: DbSession, profile: CurrentProfile
+) -> dict:
     return plans.replace_plan(db, plan_id, payload, profile.id)
 
 

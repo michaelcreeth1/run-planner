@@ -9,7 +9,7 @@ import {
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { LoginView } from "./components/LoginView";
 import { Placeholder } from "./components/shared/Placeholder";
@@ -27,6 +27,8 @@ import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 import { fetchJson } from "./lib/api";
 import { addDays, parseDate, startOfWeek, todayDateString } from "./lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "./lib/forms";
+import { appRoutePath, parseAppRoute } from "./lib/navigation";
+import type { AppRoute, AppTab, PlanningSection, ProgressSection } from "./lib/navigation";
 import type {
   AnalyticsPlanning,
   ApiVersion,
@@ -56,8 +58,8 @@ const primaryTabs = [
   { id: "progress", label: "Progress", icon: TrendingUp }
 ] as const;
 
-type TabId = (typeof primaryTabs)[number]["id"] | "settings";
 type Theme = "light" | "dark";
+type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string };
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("theme");
@@ -68,7 +70,11 @@ function getInitialTheme(): Theme {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("week");
+  const [initialRoute] = useState(getInitialAppRoute);
+  const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
+  const [planningSection, setPlanningSection] = useState<PlanningSection>(initialRoute.planningSection);
+  const [progressSection, setProgressSection] = useState<ProgressSection>(initialRoute.progressSection);
+  const [selectedPlanRouteId, setSelectedPlanRouteId] = useState<string | null>(initialRoute.planId);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
@@ -84,8 +90,8 @@ function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSwitchingProfile, setIsSwitchingProfile] = useState(false);
-  const [weekStart, setWeekStart] = useState(getInitialWeekStart);
-  const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(getInitialWeekStart()));
+  const [weekStart, setWeekStart] = useState(initialRoute.weekStart);
+  const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(initialRoute.weekStart));
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
@@ -104,11 +110,15 @@ function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [copyingPriorWeekId, setCopyingPriorWeekId] = useState<string | null>(null);
   const [isSavingPlanWeek, setIsSavingPlanWeek] = useState(false);
+  const [pendingPlanWeekStart, setPendingPlanWeekStart] = useState<string | null>(null);
+  const [weekReviewHandoff, setWeekReviewHandoff] = useState<WeekReviewHandoff | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const pendingPrependScroll = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const isPrependingWeeks = useRef(false);
   const isAppendingWeeks = useRef(false);
   const didApplyInitialTimelineRange = useRef(false);
+  const weekStackRef = useRef(weekStack);
+  const weekStartRef = useRef(weekStart);
 
   const staleFrontend = apiVersion
     ? apiVersion.forceReload || compareVersions(FRONTEND_VERSION, apiVersion.frontendMinVersion) < 0
@@ -132,6 +142,59 @@ function App() {
     ).length > 0;
   const activeProfile =
     session?.profiles.find((profile) => profile.id === session.activeAthleteAccountId) ?? null;
+
+  useEffect(() => {
+    weekStackRef.current = weekStack;
+  }, [weekStack]);
+
+  useEffect(() => {
+    weekStartRef.current = weekStart;
+  }, [weekStart]);
+
+  const loadWeeks = useCallback((starts: string[], options: { force?: boolean } = {}) => {
+    const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
+    const startsToFetch = options.force
+      ? uniqueStarts
+      : uniqueStarts.filter((start) => !weekStackRef.current[start]);
+    if (!startsToFetch.length) {
+      return;
+    }
+
+    setLoadingWeekStarts((current) => mergeLoadingStarts(current, startsToFetch));
+    Promise.all(startsToFetch.map((weekDate) => fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`)))
+      .then((weeks) => {
+        setWeekStack((current) => ({
+          ...current,
+          ...Object.fromEntries(weeks.map((loadedWeek) => [loadedWeek.weekStartDate, loadedWeek]))
+        }));
+        setApiError(null);
+      })
+      .catch((error: Error) => setApiError(error.message))
+      .finally(() => {
+        setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
+      });
+  }, []);
+
+  const loadAnalyticsPlanning = useCallback(() => {
+    setAnalyticsLoading(true);
+    const params = new URLSearchParams({
+      lookbackWeeks: String(analyticsLookbackWeeks),
+      futureWeeks: String(analyticsFutureWeeks)
+    });
+    fetchJson<AnalyticsPlanning>(`/api/analytics/planning?${params.toString()}`)
+      .then((body) => {
+        setAnalyticsPlanning(body);
+        setApiError(null);
+      })
+      .catch((error: Error) => setApiError(error.message))
+      .finally(() => setAnalyticsLoading(false));
+  }, [analyticsFutureWeeks, analyticsLookbackWeeks]);
+
+  const recenterVisibleWeeks = useCallback((start: string, summary: TrainingTimelineSummary | null) => {
+    const starts = boundedWeekRangeAround(start, summary);
+    setVisibleWeekStarts(starts);
+    loadWeeks(starts);
+  }, [loadWeeks]);
 
   useEffect(() => {
     fetchJson<ApiVersion>("/api/version")
@@ -167,26 +230,21 @@ function App() {
       return;
     }
     clearAppData();
-    const starts = weekRangeAround(getInitialWeekStart());
+    const starts = weekRangeAround(weekStartRef.current);
     setVisibleWeekStarts(starts);
     loadWeeks(starts, { force: true });
     loadTrainingTimeline();
     loadActivePlan();
     loadStravaStatus();
     loadActivities();
-  }, [session?.activeAthleteAccountId, session?.authenticated]);
+  }, [loadWeeks, session?.activeAthleteAccountId, session?.authenticated]);
 
   useEffect(() => {
     if (!session?.authenticated || !session.activeAthleteAccountId) {
       return;
     }
     loadAnalyticsPlanning();
-  }, [
-    analyticsFutureWeeks,
-    analyticsLookbackWeeks,
-    session?.activeAthleteAccountId,
-    session?.authenticated
-  ]);
+  }, [loadAnalyticsPlanning, session?.activeAthleteAccountId, session?.authenticated]);
 
   useEffect(() => {
     if (!timelineSummary || didApplyInitialTimelineRange.current) {
@@ -195,20 +253,47 @@ function App() {
 
     didApplyInitialTimelineRange.current = true;
     recenterVisibleWeeks(weekStart, timelineSummary);
-  }, [timelineSummary]);
+  }, [recenterVisibleWeeks, timelineSummary, weekStart]);
+
+  useEffect(() => {
+    if (!pendingPlanWeekStart) {
+      return;
+    }
+    const pendingWeek = weekStack[pendingPlanWeekStart];
+    if (!pendingWeek) {
+      return;
+    }
+    setPlanWeekDraft(buildPlanWeekDraft(pendingWeek, weekStack));
+    setPendingPlanWeekStart(null);
+  }, [pendingPlanWeekStart, weekStack]);
 
   useEffect(() => {
     function handlePopState() {
-      const nextWeekStart = getWeekStartFromLocation();
-      setVisibleWeekStarts(boundedWeekRangeAround(nextWeekStart, timelineSummary));
-      loadWeeks(boundedWeekRangeAround(nextWeekStart, timelineSummary));
-      setWeekStart(nextWeekStart);
+      const route = getInitialAppRoute();
+      setActiveTab(route.tab);
+      if (route.tab === "plan") {
+        setPlanningSection(route.planningSection);
+        setSelectedPlanRouteId(route.planId);
+      }
+      if (route.tab === "progress") {
+        setProgressSection(route.progressSection);
+      }
+      if (route.tab === "week") {
+        const starts = boundedWeekRangeAround(route.weekStart, timelineSummary);
+        setVisibleWeekStarts(starts);
+        loadWeeks(starts);
+        setWeekStart(route.weekStart);
+      }
     }
 
-    ensureWeekRoute(weekStart);
+    const route = getInitialAppRoute();
+    const canonicalPath = appRoutePath(route);
+    if (window.location.pathname !== canonicalPath || window.location.search) {
+      window.history.replaceState(route, "", canonicalPath);
+    }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [timelineSummary]);
+  }, [loadWeeks, timelineSummary]);
 
   function clearAppData() {
     setWeekStack({});
@@ -221,6 +306,8 @@ function App() {
     setEditor(null);
     setGoalEditor(null);
     setPlanWeekDraft(null);
+    setPendingPlanWeekStart(null);
+    setWeekReviewHandoff(null);
     setLoadingWeekStarts(new Set());
     didApplyInitialTimelineRange.current = false;
   }
@@ -291,55 +378,75 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
-  function loadWeeks(starts: string[], options: { force?: boolean } = {}) {
-    const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
-    const startsToFetch = options.force ? uniqueStarts : uniqueStarts.filter((start) => !weekStack[start]);
-    if (!startsToFetch.length) {
-      return;
-    }
-
-    setLoadingWeekStarts((current) => mergeLoadingStarts(current, startsToFetch));
-    Promise.all(startsToFetch.map((weekDate) => fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`)))
-      .then((weeks) => {
-        setWeekStack((current) => ({
-          ...current,
-          ...Object.fromEntries(weeks.map((loadedWeek) => [loadedWeek.weekStartDate, loadedWeek]))
-        }));
-        setApiError(null);
-      })
-      .catch((error: Error) => setApiError(error.message))
-      .finally(() => {
-        setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
-      });
-  }
-
   function refreshVisibleWeeks() {
     loadWeeks(mergeWeekStarts([...visibleWeekStarts, ...weekRangeAround(weekStart)]), { force: true });
   }
 
   function selectWeek(start: string, _source: WeekSelectSource = "week-stack") {
     const normalizedStart = startOfWeek(parseDate(start));
-    if (normalizedStart === weekStart) {
+    if (normalizedStart === weekStart && activeTab === "week") {
       return;
     }
-    if (_source === "week-stack") {
-      setVisibleWeekStarts((current) => mergeWeekStarts([...current, normalizedStart]));
-      loadWeeks([normalizedStart]);
-    } else {
-      recenterVisibleWeeks(normalizedStart, timelineSummary);
+    if (normalizedStart !== weekStart) {
+      if (_source === "week-stack") {
+        setVisibleWeekStarts((current) => mergeWeekStarts([...current, normalizedStart]));
+        loadWeeks([normalizedStart]);
+      } else {
+        recenterVisibleWeeks(normalizedStart, timelineSummary);
+      }
     }
-    window.history.pushState({ weekStart: normalizedStart }, "", weekPath(normalizedStart));
+    const route = currentRoute({ tab: "week", weekStart: normalizedStart });
+    window.history.pushState(route, "", appRoutePath(route));
+    setActiveTab("week");
     setWeekStart(normalizedStart);
+  }
+
+  function navigateToTab(tab: AppTab) {
+    if (tab === "week") {
+      selectWeek(currentWeekStart, "time-rail");
+      return;
+    }
+
+    const route = currentRoute({ tab });
+    window.history.pushState(route, "", appRoutePath(route));
+    setActiveTab(tab);
+  }
+
+  function navigatePlanningSection(section: PlanningSection) {
+    const route = currentRoute({ tab: "plan", planningSection: section });
+    window.history.pushState(route, "", appRoutePath(route));
+    setPlanningSection(section);
+    setActiveTab("plan");
+  }
+
+  function navigateProgressSection(section: ProgressSection) {
+    const route = currentRoute({ tab: "progress", progressSection: section });
+    window.history.pushState(route, "", appRoutePath(route));
+    setProgressSection(section);
+    setActiveTab("progress");
+  }
+
+  function navigatePlan(planId: string | null) {
+    const route = currentRoute({ tab: "plan", planId, planningSection: "overview" });
+    window.history.pushState(route, "", appRoutePath(route));
+    setSelectedPlanRouteId(planId);
+    setPlanningSection("overview");
+    setActiveTab("plan");
+  }
+
+  function currentRoute(overrides: Partial<AppRoute> = {}): AppRoute {
+    return {
+      planId: selectedPlanRouteId,
+      planningSection,
+      progressSection,
+      tab: activeTab,
+      weekStart,
+      ...overrides
+    };
   }
 
   function jumpToThisWeek() {
     selectWeek(currentWeekStart, "time-rail");
-  }
-
-  function recenterVisibleWeeks(start: string, summary: TrainingTimelineSummary | null) {
-    const starts = boundedWeekRangeAround(start, summary);
-    setVisibleWeekStarts(starts);
-    loadWeeks(starts);
   }
 
   function prependOlderWeeks() {
@@ -442,6 +549,10 @@ function App() {
     if (blockStaleWrite("saving the week plan")) {
       return;
     }
+    if (draft.weekState === "past") {
+      setApiError("Past weeks can only be completed through the read-only review flow.");
+      return;
+    }
     setIsSavingPlanWeek(true);
     try {
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${draft.weekId}/plan`, {
@@ -460,6 +571,44 @@ function App() {
       setApiError(error instanceof Error ? error.message : "Could not save the week plan.");
     } finally {
       setIsSavingPlanWeek(false);
+    }
+  }
+
+  async function completeWeekReview(weekId: string) {
+    if (blockStaleWrite("completing the week review")) {
+      return;
+    }
+    setIsSavingPlanWeek(true);
+    try {
+      const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${weekId}/review`, {
+        method: "POST"
+      });
+      setWeekStack((current) => ({
+        ...current,
+        [savedWeek.weekStartDate]: savedWeek
+      }));
+      setPlanWeekDraft(null);
+      setWeekReviewHandoff({
+        reviewedWeekStart: savedWeek.weekStartDate,
+        nextWeekStart: addDays(savedWeek.weekStartDate, 7)
+      });
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Could not complete the week review.");
+    } finally {
+      setIsSavingPlanWeek(false);
+    }
+  }
+
+  function planNextWeek(nextWeekStart: string) {
+    setWeekReviewHandoff(null);
+    setPendingPlanWeekStart(nextWeekStart);
+    selectWeek(nextWeekStart, "time-rail");
+    if (weekStack[nextWeekStart]) {
+      setPlanWeekDraft(buildPlanWeekDraft(weekStack[nextWeekStart], weekStack));
+      setPendingPlanWeekStart(null);
     }
   }
 
@@ -612,21 +761,6 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
-  function loadAnalyticsPlanning() {
-    setAnalyticsLoading(true);
-    const params = new URLSearchParams({
-      lookbackWeeks: String(analyticsLookbackWeeks),
-      futureWeeks: String(analyticsFutureWeeks)
-    });
-    fetchJson<AnalyticsPlanning>(`/api/analytics/planning?${params.toString()}`)
-      .then((body) => {
-        setAnalyticsPlanning(body);
-        setApiError(null);
-      })
-      .catch((error: Error) => setApiError(error.message))
-      .finally(() => setAnalyticsLoading(false));
-  }
-
   function loadStravaStatus() {
     fetchJson<StravaStatus>("/api/auth/strava/status")
       .then(setStravaStatus)
@@ -708,7 +842,7 @@ function App() {
                 key={tab.id}
                 className={activeTab === tab.id ? "active" : ""}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => navigateToTab(tab.id)}
                 title={tab.label}
               >
                 <Icon size={19} aria-hidden="true" />
@@ -728,7 +862,7 @@ function App() {
           title={activeTab === "settings" ? "Settings" : primaryTabs.find((tab) => tab.id === activeTab)?.label}
           user={session.user}
           onLogout={logout}
-          onOpenSettings={() => setActiveTab("settings")}
+          onOpenSettings={() => navigateToTab("settings")}
           onSwitchProfile={switchProfile}
           onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
         />
@@ -754,13 +888,17 @@ function App() {
             onJumpToThisWeek={jumpToThisWeek}
             onLoadNewerWeeks={appendNewerWeeks}
             onLoadOlderWeeks={prependOlderWeeks}
-            onOpenPlan={() => setActiveTab("plan")}
+            onDismissReviewHandoff={() => setWeekReviewHandoff(null)}
+            onOpenPlan={() => navigateToTab("plan")}
+            onOpenProgress={() => navigateToTab("progress")}
+            onPlanNextWeek={planNextWeek}
             onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
             onSelectWeek={(start) => selectWeek(start, "week-stack")}
             selectedWeekStart={weekStart}
             timelineIndex={timelineIndex}
             today={todayDateString()}
             week={week}
+            reviewHandoff={weekReviewHandoff}
             weekStack={weekStack}
             weekStarts={visibleWeekStarts}
             onCreate={openCreate}
@@ -778,7 +916,11 @@ function App() {
         ) : null}
         {activeTab === "plan" ? (
           <PlanningWorkspace
+            onChangeSection={navigatePlanningSection}
             writesBlocked={staleFrontend}
+            section={planningSection}
+            selectedPlanId={selectedPlanRouteId}
+            onSelectPlan={navigatePlan}
             onPlanApplied={() => {
               refreshVisibleWeeks();
               loadTrainingTimeline();
@@ -786,7 +928,6 @@ function App() {
               loadAnalyticsPlanning();
             }}
             onSelectWeek={(start) => {
-              setActiveTab("week");
               selectWeek(start, "time-rail");
             }}
           />
@@ -800,6 +941,11 @@ function App() {
             lookbackWeeks={analyticsLookbackWeeks}
             setFutureWeeks={setAnalyticsFutureWeeks}
             setLookbackWeeks={setAnalyticsLookbackWeeks}
+            onSelectWeek={(start) => {
+              selectWeek(start, "time-rail");
+            }}
+            onChangeSection={navigateProgressSection}
+            section={progressSection}
           />
         ) : null}
         {activeTab === "settings" ? (
@@ -842,6 +988,7 @@ function App() {
           setDraft={setPlanWeekDraft}
           weekStack={weekStack}
           onClose={() => setPlanWeekDraft(null)}
+          onCompleteReview={completeWeekReview}
           onSave={savePlanWeek}
         />
       ) : null}
@@ -849,33 +996,9 @@ function App() {
   );
 }
 
-function getInitialWeekStart() {
-  return getWeekStartFromLocation();
-}
-
-function getWeekStartFromLocation() {
-  const pathMatch = window.location.pathname.match(/^\/week\/(\d{4}-\d{2}-\d{2})\/?$/);
-  const weekParam = pathMatch?.[1] ?? new URLSearchParams(window.location.search).get("week");
-  if (!weekParam) {
-    return startOfWeek(new Date());
-  }
-
-  const parsed = parseDate(weekParam);
-  if (Number.isNaN(parsed.getTime())) {
-    return startOfWeek(new Date());
-  }
-  return startOfWeek(parsed);
-}
-
-function ensureWeekRoute(weekStart: string) {
-  if (window.location.pathname === weekPath(weekStart)) {
-    return;
-  }
-  window.history.replaceState({ weekStart }, "", weekPath(weekStart));
-}
-
-function weekPath(weekStart: string) {
-  return `/week/${weekStart}`;
+function getInitialAppRoute() {
+  const fallbackWeekStart = startOfWeek(new Date());
+  return parseAppRoute(window.location.pathname, window.location.search, fallbackWeekStart);
 }
 
 function weekRangeAround(weekStart: string) {

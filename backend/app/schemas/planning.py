@@ -267,6 +267,7 @@ class TrainingWeekRead(ApiModel):
     target_long_run_source: FieldSource
     is_down_week: bool
     notes: str
+    reviewed_at: str | None = None
     workouts: list[PlannedWorkoutRead]
     actual_activities: list[ActualActivityRead]
     goals: list[WeekGoalRead]

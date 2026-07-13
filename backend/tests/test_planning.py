@@ -182,6 +182,79 @@ def test_save_week_plan_with_virtual_week_id_creates_real_week() -> None:
             assert persisted_week is not None
 
 
+def test_complete_past_week_review_preserves_historical_plan_details() -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2020-01-06",
+                "title": "Completed long run",
+                "plannedDistance": 12,
+                "plannedElevation": 750,
+                "plannedTss": 98,
+                "status": "completed_as_planned",
+            },
+        )
+        assert workout_response.status_code == 201
+        workout = workout_response.json()
+
+        week = client.get("/api/weeks/2020-01-06").json()
+        goal_response = client.post(
+            f"/api/weeks/{week['id']}/goals",
+            json={"label": "Finish the long run", "status": "achieved"},
+        )
+        assert goal_response.status_code == 201
+        goal = goal_response.json()
+
+        blocked_plan_save = client.put(
+            f"/api/weeks/{week['id']}/plan",
+            json={"purpose": "maintain", "workouts": [], "goals": []},
+        )
+        assert blocked_plan_save.status_code == 409
+
+        with SessionLocal() as db:
+            db.add(
+                PlannedWorkoutStep(
+                    planned_workout_id=workout["id"],
+                    step_order=1,
+                    label="Cool down",
+                    duration=600,
+                    notes="Easy jog",
+                )
+            )
+            db.commit()
+
+        review_response = client.post(f"/api/weeks/{week['id']}/review")
+
+    assert review_response.status_code == 200
+    reviewed_week = review_response.json()
+    assert reviewed_week["reviewedAt"]
+    assert reviewed_week["workouts"] == [
+        {
+            **workout,
+            "steps": [
+                {
+                    "id": reviewed_week["workouts"][0]["steps"][0]["id"],
+                    "stepOrder": 1,
+                    "label": "Cool down",
+                    "duration": 600,
+                    "distance": None,
+                    "targetPaceMin": None,
+                    "targetPaceMax": None,
+                    "targetHrMin": None,
+                    "targetHrMax": None,
+                    "targetRpe": None,
+                    "repetitionGroup": None,
+                    "notes": "Easy jog",
+                }
+            ],
+        }
+    ]
+    preserved_goal = next(item for item in reviewed_week["goals"] if item["id"] == goal["id"])
+    assert preserved_goal["status"] == "achieved"
+
+
 def test_training_timeline_has_no_bounds_without_real_data() -> None:
     db = make_session()
     try:

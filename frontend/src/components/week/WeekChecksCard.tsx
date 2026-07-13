@@ -103,7 +103,7 @@ function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOp
           type="button"
           className="week-check-action"
           title={`Fix "${evaluation.ruleLabel}"`}
-          aria-label={`Open the plan to fix "${evaluation.ruleLabel}"`}
+          aria-label={`Fix "${evaluation.ruleLabel}" in this week`}
           onClick={onOpen}
         >
           <ChevronRight size={15} />

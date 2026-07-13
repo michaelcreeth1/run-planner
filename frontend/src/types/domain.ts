@@ -127,6 +127,7 @@ export type TrainingWeek = {
   targetLongRunSource: FieldSource;
   isDownWeek: boolean;
   notes: string;
+  reviewedAt: string | null;
   workouts: Workout[];
   actualActivities: ActualActivity[];
   goals: WeekGoal[];
@@ -364,7 +365,6 @@ export type PlanWeekDraft = {
   workouts: PlanWeekWorkoutDraft[];
   goals: PlanWeekGoalDraft[];
   hasExistingPlan: boolean;
-  mismatchAcknowledged: boolean;
 };
 
 export type GoalRace = {

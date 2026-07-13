@@ -19,7 +19,9 @@ scripts/deploy-remote.sh
 
 That syncs the local checkout to `/home/mike/compose/run-planner` on the Docker
 host, including the local `.env` as the deploy configuration, then runs
-`scripts/deploy.sh` there.
+`scripts/deploy.sh` there. Before the sync, it runs the repository's local
+`make check` verification gate; a failure leaves the remote bundle unchanged.
+Use `--skip-checks` only when the same checkout has already passed verification.
 
 The local `.env` is the deploy source of truth. For remote deploys, use a
 Docker-network or remote-reachable database host rather than `localhost`.

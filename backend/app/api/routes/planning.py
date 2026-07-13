@@ -111,6 +111,12 @@ def save_week_plan(
     return planning.serialize_week(week, db)
 
 
+@router.post("/weeks/{week_id}/review", response_model=TrainingWeekRead)
+def complete_week_review(week_id: str, db: DbSession, profile: CurrentProfile) -> dict:
+    week = planning.complete_week_review(db, week_id, profile.id)
+    return planning.serialize_week(week, db)
+
+
 @router.post(
     "/weeks/{week_id}/goals", response_model=WeekGoalRead, status_code=status.HTTP_201_CREATED
 )
