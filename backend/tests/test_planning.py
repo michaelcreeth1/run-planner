@@ -61,12 +61,14 @@ def test_current_week_and_workout_crud() -> None:
                 "intensityCategory": "easy",
                 "plannedDistance": 6,
                 "plannedDuration": 2700,
+                "plannedPace": 450,
                 "purpose": "Aerobic maintenance",
             },
         )
         assert create_response.status_code == 201
         workout = create_response.json()
         assert workout["title"] == "Easy 6"
+        assert workout["plannedPace"] == 450
 
         refreshed_week = client.get(f"/api/weeks/{planned_date}").json()
         assert refreshed_week["plannedMileage"] == starting_mileage + 6

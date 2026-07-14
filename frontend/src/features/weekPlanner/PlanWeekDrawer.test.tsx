@@ -90,6 +90,7 @@ function mismatchedDraft(): PlanWeekDraft {
         intensityCategory: "easy",
         plannedDistance: "5",
         plannedDuration: "",
+        plannedPace: "",
         purpose: "Aerobic maintenance",
         instructions: "",
         notes: "",

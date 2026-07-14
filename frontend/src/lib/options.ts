@@ -7,6 +7,83 @@ import type {
   Workout
 } from "../types/domain";
 
+export type SessionTypeOption = {
+  value: string;
+  label: string;
+  sport: Workout["sport"];
+  workoutType: Workout["workoutType"];
+  intensityCategory: Workout["intensityCategory"];
+};
+
+export type SessionTypeGroup = {
+  label: string;
+  options: SessionTypeOption[];
+};
+
+export const sessionTypeGroups: SessionTypeGroup[] = [
+  {
+    label: "Running — easy & aerobic",
+    options: [
+      { value: "run:recovery", label: "Recovery run", sport: "run", workoutType: "recovery", intensityCategory: "easy" },
+      { value: "run:easy", label: "Easy run", sport: "run", workoutType: "easy", intensityCategory: "easy" },
+      { value: "run:long_run", label: "Long run", sport: "run", workoutType: "long_run", intensityCategory: "moderate" },
+      { value: "run:medium_long", label: "Medium-long run", sport: "run", workoutType: "medium_long", intensityCategory: "moderate" }
+    ]
+  },
+  {
+    label: "Running — quality",
+    options: [
+      { value: "run:progression", label: "Progression run", sport: "run", workoutType: "progression", intensityCategory: "workout" },
+      { value: "run:tempo", label: "Tempo run", sport: "run", workoutType: "tempo", intensityCategory: "workout" },
+      { value: "run:threshold", label: "Threshold workout", sport: "run", workoutType: "threshold", intensityCategory: "workout" },
+      { value: "run:interval", label: "Intervals", sport: "run", workoutType: "interval", intensityCategory: "workout" },
+      { value: "run:hill", label: "Hill workout", sport: "run", workoutType: "hill", intensityCategory: "workout" },
+      { value: "run:strides", label: "Strides", sport: "run", workoutType: "strides", intensityCategory: "workout" }
+    ]
+  },
+  {
+    label: "Running — event",
+    options: [
+      { value: "run:race", label: "Race", sport: "run", workoutType: "race", intensityCategory: "race" },
+      { value: "run:time_trial", label: "Time trial", sport: "run", workoutType: "time_trial", intensityCategory: "race" },
+      { value: "run:other", label: "Other run", sport: "run", workoutType: "other", intensityCategory: "moderate" }
+    ]
+  },
+  {
+    label: "Other sessions",
+    options: [
+      { value: "strength:strength", label: "Strength", sport: "strength", workoutType: "strength", intensityCategory: "strength" },
+      { value: "mobility:mobility", label: "Mobility", sport: "mobility", workoutType: "mobility", intensityCategory: "easy" },
+      { value: "cross_training:other", label: "Cross-training", sport: "cross_training", workoutType: "other", intensityCategory: "moderate" },
+      { value: "rest:rest", label: "Rest", sport: "rest", workoutType: "rest", intensityCategory: "rest" },
+      { value: "other:other", label: "Other", sport: "other", workoutType: "other", intensityCategory: "moderate" }
+    ]
+  }
+];
+
+export const sessionTypes = sessionTypeGroups.flatMap((group) => group.options);
+
+export function sessionTypeForWorkout(
+  workout: Pick<Workout, "sport" | "workoutType">
+): SessionTypeOption {
+  const exact = sessionTypes.find(
+    (option) => option.sport === workout.sport && option.workoutType === workout.workoutType
+  );
+  if (exact) {
+    return exact;
+  }
+
+  if (["strength", "mobility", "rest"].includes(workout.workoutType)) {
+    return sessionTypes.find((option) => option.workoutType === workout.workoutType)!;
+  }
+
+  return (
+    sessionTypes.find((option) => option.sport === workout.sport) ??
+    sessionTypes.find((option) => option.workoutType === workout.workoutType) ??
+    sessionTypes.find((option) => option.value === "other:other")!
+  );
+}
+
 export const workoutTypes: Array<{ value: Workout["workoutType"]; label: string }> = [
   { value: "easy", label: "Easy" },
   { value: "recovery", label: "Recovery" },
@@ -16,18 +93,14 @@ export const workoutTypes: Array<{ value: Workout["workoutType"]; label: string 
   { value: "threshold", label: "Threshold" },
   { value: "interval", label: "Interval" },
   { value: "hill", label: "Hill" },
+  { value: "race", label: "Race" },
+  { value: "time_trial", label: "Time trial" },
+  { value: "progression", label: "Progression" },
+  { value: "strides", label: "Strides" },
   { value: "strength", label: "Strength" },
+  { value: "mobility", label: "Mobility" },
   { value: "rest", label: "Rest" },
   { value: "other", label: "Other" }
-];
-
-export const intensities: Array<{ value: Workout["intensityCategory"]; label: string }> = [
-  { value: "rest", label: "Rest" },
-  { value: "easy", label: "Easy" },
-  { value: "moderate", label: "Moderate" },
-  { value: "workout", label: "Workout" },
-  { value: "race", label: "Race" },
-  { value: "strength", label: "Strength" }
 ];
 
 export const goalCategories: Array<{ value: WeekGoalCategory; label: string }> = [

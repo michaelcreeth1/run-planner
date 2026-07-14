@@ -883,6 +883,7 @@ def clone_workout(
         intensity_category=source.intensity_category,
         planned_distance=source.planned_distance,
         planned_duration=source.planned_duration,
+        planned_pace=source.planned_pace,
         planned_elevation=source.planned_elevation,
         planned_tss=source.planned_tss,
         purpose=source.purpose,

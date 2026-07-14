@@ -9,7 +9,9 @@ import {
   WifiOff
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
 import { AppHeader } from "./components/AppHeader";
 import { LoginView } from "./components/LoginView";
 import { Placeholder } from "./components/shared/Placeholder";
@@ -27,8 +29,11 @@ import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 import { fetchJson } from "./lib/api";
 import { addDays, parseDate, startOfWeek, todayDateString } from "./lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "./lib/forms";
+import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
 import { appRoutePath, parseAppRoute } from "./lib/navigation";
 import type { AppRoute, AppTab, PlanningSection, ProgressSection } from "./lib/navigation";
+import { selectPrimaryPlan, usePlanQuery, usePlansQuery } from "./lib/queries";
+import { ProfileProvider } from "./lib/profile";
 import type {
   AnalyticsPlanning,
   ApiVersion,
@@ -38,8 +43,6 @@ import type {
   StravaActivity,
   StravaStatus,
   SyncJob,
-  TrainingPlan,
-  TrainingPlanSummary,
   TrainingWeek,
   WeekGoal,
   WeekGoalForm,
@@ -69,12 +72,15 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function App() {
-  const [initialRoute] = useState(getInitialAppRoute);
-  const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
-  const [planningSection, setPlanningSection] = useState<PlanningSection>(initialRoute.planningSection);
-  const [progressSection, setProgressSection] = useState<ProgressSection>(initialRoute.progressSection);
-  const [selectedPlanRouteId, setSelectedPlanRouteId] = useState<string | null>(initialRoute.planId);
+function AppShell() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const fallbackWeekStart = startOfWeek(new Date());
+  const route = useMemo(
+    () => parseAppRoute(location.pathname, location.search, fallbackWeekStart),
+    [fallbackWeekStart, location.pathname, location.search]
+  );
+  const { planId: selectedPlanRouteId, planningSection, progressSection, tab: activeTab, weekStart } = route;
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
@@ -90,12 +96,10 @@ function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSwitchingProfile, setIsSwitchingProfile] = useState(false);
-  const [weekStart, setWeekStart] = useState(initialRoute.weekStart);
-  const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(initialRoute.weekStart));
+  const [visibleWeekStarts, setVisibleWeekStarts] = useState(() => weekRangeAround(route.weekStart));
   const [loadingWeekStarts, setLoadingWeekStarts] = useState<Set<string>>(new Set());
   const [weekStack, setWeekStack] = useState<Record<string, TrainingWeek>>({});
   const [timelineSummary, setTimelineSummary] = useState<TrainingTimelineSummary | null>(null);
-  const [activePlan, setActivePlan] = useState<TrainingPlan | null>(null);
   const [analyticsPlanning, setAnalyticsPlanning] = useState<AnalyticsPlanning | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
@@ -142,6 +146,13 @@ function App() {
     ).length > 0;
   const activeProfile =
     session?.profiles.find((profile) => profile.id === session.activeAthleteAccountId) ?? null;
+  const plansQuery = usePlansQuery(session?.authenticated ? session.activeAthleteAccountId : null);
+  const activePlanSummary = selectPrimaryPlan(plansQuery.data ?? []);
+  const activePlanQuery = usePlanQuery(
+    session?.activeAthleteAccountId ?? "anonymous",
+    activePlanSummary?.id ?? null
+  );
+  const activePlan = activePlanQuery.data ?? null;
 
   useEffect(() => {
     weekStackRef.current = weekStack;
@@ -234,7 +245,6 @@ function App() {
     setVisibleWeekStarts(starts);
     loadWeeks(starts, { force: true });
     loadTrainingTimeline();
-    loadActivePlan();
     loadStravaStatus();
     loadActivities();
   }, [loadWeeks, session?.activeAthleteAccountId, session?.authenticated]);
@@ -268,37 +278,24 @@ function App() {
   }, [pendingPlanWeekStart, weekStack]);
 
   useEffect(() => {
-    function handlePopState() {
-      const route = getInitialAppRoute();
-      setActiveTab(route.tab);
-      if (route.tab === "plan") {
-        setPlanningSection(route.planningSection);
-        setSelectedPlanRouteId(route.planId);
-      }
-      if (route.tab === "progress") {
-        setProgressSection(route.progressSection);
-      }
-      if (route.tab === "week") {
-        const starts = boundedWeekRangeAround(route.weekStart, timelineSummary);
-        setVisibleWeekStarts(starts);
-        loadWeeks(starts);
-        setWeekStart(route.weekStart);
-      }
-    }
-
-    const route = getInitialAppRoute();
     const canonicalPath = appRoutePath(route);
-    if (window.location.pathname !== canonicalPath || window.location.search) {
-      window.history.replaceState(route, "", canonicalPath);
+    if (location.pathname !== canonicalPath || location.search) {
+      navigate(canonicalPath, { replace: true });
     }
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [loadWeeks, timelineSummary]);
+  }, [location.pathname, location.search, navigate, route]);
+
+  useEffect(() => {
+    if (activeTab !== "week" || !session?.authenticated || !session.activeAthleteAccountId) {
+      return;
+    }
+    const starts = boundedWeekRangeAround(weekStart, timelineSummary);
+    setVisibleWeekStarts(starts);
+    loadWeeks(starts);
+  }, [activeTab, loadWeeks, session?.activeAthleteAccountId, session?.authenticated, timelineSummary, weekStart]);
 
   function clearAppData() {
     setWeekStack({});
     setTimelineSummary(null);
-    setActivePlan(null);
     setAnalyticsPlanning(null);
     setActivities([]);
     setStravaStatus(null);
@@ -382,6 +379,10 @@ function App() {
     loadWeeks(mergeWeekStarts([...visibleWeekStarts, ...weekRangeAround(weekStart)]), { force: true });
   }
 
+  function navigateRoute(overrides: Partial<AppRoute>, replace = false) {
+    navigate(appRoutePath({ ...route, ...overrides }), { replace });
+  }
+
   function selectWeek(start: string, _source: WeekSelectSource = "week-stack") {
     const normalizedStart = startOfWeek(parseDate(start));
     if (normalizedStart === weekStart && activeTab === "week") {
@@ -395,10 +396,7 @@ function App() {
         recenterVisibleWeeks(normalizedStart, timelineSummary);
       }
     }
-    const route = currentRoute({ tab: "week", weekStart: normalizedStart });
-    window.history.pushState(route, "", appRoutePath(route));
-    setActiveTab("week");
-    setWeekStart(normalizedStart);
+    navigateRoute({ tab: "week", weekStart: normalizedStart });
   }
 
   function navigateToTab(tab: AppTab) {
@@ -407,42 +405,19 @@ function App() {
       return;
     }
 
-    const route = currentRoute({ tab });
-    window.history.pushState(route, "", appRoutePath(route));
-    setActiveTab(tab);
+    navigateRoute({ tab });
   }
 
   function navigatePlanningSection(section: PlanningSection) {
-    const route = currentRoute({ tab: "plan", planningSection: section });
-    window.history.pushState(route, "", appRoutePath(route));
-    setPlanningSection(section);
-    setActiveTab("plan");
+    navigateRoute({ tab: "plan", planningSection: section });
   }
 
   function navigateProgressSection(section: ProgressSection) {
-    const route = currentRoute({ tab: "progress", progressSection: section });
-    window.history.pushState(route, "", appRoutePath(route));
-    setProgressSection(section);
-    setActiveTab("progress");
+    navigateRoute({ tab: "progress", progressSection: section });
   }
 
   function navigatePlan(planId: string | null) {
-    const route = currentRoute({ tab: "plan", planId, planningSection: "overview" });
-    window.history.pushState(route, "", appRoutePath(route));
-    setSelectedPlanRouteId(planId);
-    setPlanningSection("overview");
-    setActiveTab("plan");
-  }
-
-  function currentRoute(overrides: Partial<AppRoute> = {}): AppRoute {
-    return {
-      planId: selectedPlanRouteId,
-      planningSection,
-      progressSection,
-      tab: activeTab,
-      weekStart,
-      ...overrides
-    };
+    navigateRoute({ tab: "plan", planId, planningSection: "overview" }, planId === null);
   }
 
   function jumpToThisWeek() {
@@ -502,7 +477,12 @@ function App() {
       workoutType: workout.workoutType,
       intensityCategory: workout.intensityCategory,
       plannedDistance: workout.plannedDistance?.toString() ?? "",
-      plannedDuration: workout.plannedDuration ? String(Math.round(workout.plannedDuration / 60)) : "",
+      plannedDuration: workout.plannedDuration ? formatDurationSeconds(workout.plannedDuration) : "",
+      plannedPace: paceInputFromMetrics(
+        workout.plannedDuration,
+        workout.plannedDistance,
+        workout.plannedPace
+      ),
       purpose: workout.purpose,
       instructions: workout.instructions,
       notes: workout.notes,
@@ -741,26 +721,6 @@ function App() {
       .catch((error: Error) => setApiError(error.message));
   }
 
-  function loadActivePlan() {
-    fetchJson<TrainingPlanSummary[]>("/api/plans")
-      .then((plans) => {
-        const primary =
-          plans.find((plan) => plan.isCurrent) ??
-          plans.find((plan) => plan.isUpcoming) ??
-          plans[0] ??
-          null;
-        if (!primary) {
-          setActivePlan(null);
-          return null;
-        }
-        return fetchJson<TrainingPlan>(`/api/plans/${primary.id}`).then((plan) => {
-          setActivePlan(plan);
-          return plan;
-        });
-      })
-      .catch((error: Error) => setApiError(error.message));
-  }
-
   function loadStravaStatus() {
     fetchJson<StravaStatus>("/api/auth/strava/status")
       .then(setStravaStatus)
@@ -812,193 +772,193 @@ function App() {
     );
   }
 
+  if (!session.activeAthleteAccountId) {
+    return <Placeholder title="Profile unavailable" detail="Choose a profile and try again." icon={<RefreshCw size={22} />} />;
+  }
+
   return (
-    <div className={`app-shell ${isSidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
-      <aside className={`sidebar ${isSidebarCollapsed ? "sidebar--collapsed" : ""}`}>
-        <div className="sidebar-top">
-          <div className="brand">
-            <img src="/icons/icon.svg" alt="" />
-            <div className="brand-copy">
-              <strong>Running Planner</strong>
-              <span>v{FRONTEND_VERSION}</span>
+    <ProfileProvider profileId={session.activeAthleteAccountId}>
+      <div className={`app-shell ${isSidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
+        <aside className={`sidebar ${isSidebarCollapsed ? "sidebar--collapsed" : ""}`}>
+          <div className="sidebar-top">
+            <div className="brand">
+              <img src="/icons/icon.svg" alt="" />
+              <div className="brand-copy">
+                <strong>Running Planner</strong>
+                <span>v{FRONTEND_VERSION}</span>
+              </div>
             </div>
+            <button
+              className="sidebar-toggle"
+              type="button"
+              title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-pressed={isSidebarCollapsed}
+              onClick={() => setIsSidebarCollapsed((current) => !current)}
+            >
+              {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
           </div>
-          <button
-            className="sidebar-toggle"
-            type="button"
-            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-pressed={isSidebarCollapsed}
-            onClick={() => setIsSidebarCollapsed((current) => !current)}
-          >
-            {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          </button>
-        </div>
-        <nav className="nav-tabs" aria-label="Primary navigation">
-          {primaryTabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                className={activeTab === tab.id ? "active" : ""}
-                type="button"
-                onClick={() => navigateToTab(tab.id)}
-                title={tab.label}
-              >
-                <Icon size={19} aria-hidden="true" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
+          <nav className="nav-tabs" aria-label="Primary navigation">
+            {primaryTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  className={activeTab === tab.id ? "active" : ""}
+                  type="button"
+                  onClick={() => navigateToTab(tab.id)}
+                  title={tab.label}
+                >
+                  <Icon size={19} aria-hidden="true" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-      <main ref={mainRef}>
-        <AppHeader
-          activeProfile={activeProfile}
-          isSwitchingProfile={isSwitchingProfile}
-          profiles={session.profiles}
-          theme={theme}
-          title={activeTab === "settings" ? "Settings" : primaryTabs.find((tab) => tab.id === activeTab)?.label}
-          user={session.user}
-          onLogout={logout}
-          onOpenSettings={() => navigateToTab("settings")}
-          onSwitchProfile={switchProfile}
-          onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-        />
-        {apiError ? (
-          <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
-        ) : null}
-        {staleFrontend ? (
-          <StatusBanner
-            tone="danger"
-            icon={<ShieldAlert size={18} />}
-            title="Reload required"
-            detail="The backend requires a newer frontend before writes are allowed."
+        <main ref={mainRef}>
+          <AppHeader
+            activeProfile={activeProfile}
+            isSwitchingProfile={isSwitchingProfile}
+            profiles={session.profiles}
+            theme={theme}
+            title={activeTab === "settings" ? "Settings" : primaryTabs.find((tab) => tab.id === activeTab)?.label}
+            user={session.user}
+            onLogout={logout}
+            onOpenSettings={() => navigateToTab("settings")}
+            onSwitchProfile={switchProfile}
+            onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          />
+          {apiError ? (
+            <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
+          ) : null}
+          {staleFrontend ? (
+            <StatusBanner
+              tone="danger"
+              icon={<ShieldAlert size={18} />}
+              title="Reload required"
+              detail="The backend requires a newer frontend before writes are allowed."
+            />
+          ) : null}
+
+          {activeTab === "week" ? (
+            <WeekView
+              activePlan={activePlan}
+              canLoadNewerWeeks={canLoadNewerWeeks}
+              canLoadOlderWeeks={canLoadOlderWeeks}
+              currentWeekStart={currentWeekStart}
+              isLoading={isLoadingWeek}
+              onJumpToThisWeek={jumpToThisWeek}
+              onLoadNewerWeeks={appendNewerWeeks}
+              onLoadOlderWeeks={prependOlderWeeks}
+              onDismissReviewHandoff={() => setWeekReviewHandoff(null)}
+              onOpenPlan={() => navigateToTab("plan")}
+              onOpenProgress={() => navigateToTab("progress")}
+              onPlanNextWeek={planNextWeek}
+              onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
+              onSelectWeek={(start) => selectWeek(start, "week-stack")}
+              selectedWeekStart={weekStart}
+              timelineIndex={timelineIndex}
+              today={todayDateString()}
+              week={week}
+              reviewHandoff={weekReviewHandoff}
+              weekStack={weekStack}
+              weekStarts={visibleWeekStarts}
+              onCreate={openCreate}
+              onEdit={openEdit}
+              onDelete={deleteWorkout}
+              onDuplicate={duplicateWorkout}
+              onCreateGoal={openCreateGoal}
+              onCopyPriorWeek={copyPriorWeek}
+              onDeriveWeekGoals={deriveWeekGoals}
+              onEditGoal={openEditGoal}
+              onOpenPlanWeek={openPlanWeek}
+              onSync={runBackfill}
+              copyingPriorWeekId={copyingPriorWeekId}
+            />
+          ) : null}
+          {activeTab === "plan" ? (
+            <PlanningWorkspace
+              onChangeSection={navigatePlanningSection}
+              writesBlocked={staleFrontend}
+              section={planningSection}
+              selectedPlanId={selectedPlanRouteId}
+              onSelectPlan={navigatePlan}
+              onPlanApplied={() => {
+                refreshVisibleWeeks();
+                loadTrainingTimeline();
+                loadAnalyticsPlanning();
+              }}
+              onSelectWeek={(start) => {
+                selectWeek(start, "time-rail");
+              }}
+            />
+          ) : null}
+          {activeTab === "progress" ? (
+            <ProgressView
+              activities={activities}
+              analytics={analyticsPlanning}
+              futureWeeks={analyticsFutureWeeks}
+              isLoading={analyticsLoading}
+              lookbackWeeks={analyticsLookbackWeeks}
+              setFutureWeeks={setAnalyticsFutureWeeks}
+              setLookbackWeeks={setAnalyticsLookbackWeeks}
+              onSelectWeek={(start) => {
+                selectWeek(start, "time-rail");
+              }}
+              onChangeSection={navigateProgressSection}
+              section={progressSection}
+            />
+          ) : null}
+          {activeTab === "settings" ? (
+            <SettingsView
+              apiVersion={apiVersion}
+              isSyncing={isSyncing}
+              lastSyncJob={lastSyncJob}
+              onBackfill={runBackfill}
+              onRefreshActivities={loadActivities}
+              onRefreshStatus={loadStravaStatus}
+              onRefreshSession={refreshSession}
+              stravaStatus={stravaStatus}
+              session={session}
+              writesBlocked={staleFrontend}
+              frontendVersion={FRONTEND_VERSION}
+            />
+          ) : null}
+        </main>
+
+        {editor ? (
+          <WorkoutEditor
+            editor={editor}
+            setEditor={setEditor}
+            onSubmit={saveWorkout}
+            onClose={() => setEditor(null)}
           />
         ) : null}
-
-        {activeTab === "week" ? (
-          <WeekView
-            activePlan={activePlan}
-            canLoadNewerWeeks={canLoadNewerWeeks}
-            canLoadOlderWeeks={canLoadOlderWeeks}
-            currentWeekStart={currentWeekStart}
-            isLoading={isLoadingWeek}
-            onJumpToThisWeek={jumpToThisWeek}
-            onLoadNewerWeeks={appendNewerWeeks}
-            onLoadOlderWeeks={prependOlderWeeks}
-            onDismissReviewHandoff={() => setWeekReviewHandoff(null)}
-            onOpenPlan={() => navigateToTab("plan")}
-            onOpenProgress={() => navigateToTab("progress")}
-            onPlanNextWeek={planNextWeek}
-            onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
-            onSelectWeek={(start) => selectWeek(start, "week-stack")}
-            selectedWeekStart={weekStart}
-            timelineIndex={timelineIndex}
-            today={todayDateString()}
-            week={week}
-            reviewHandoff={weekReviewHandoff}
+        {goalEditor ? (
+          <WeekGoalEditor
+            editor={goalEditor}
+            setEditor={setGoalEditor}
+            onSubmit={saveGoal}
+            onClose={() => setGoalEditor(null)}
+          />
+        ) : null}
+        {planWeekDraft ? (
+          <PlanWeekDrawer
+            draft={planWeekDraft}
+            isSaving={isSavingPlanWeek}
+            setDraft={setPlanWeekDraft}
             weekStack={weekStack}
-            weekStarts={visibleWeekStarts}
-            onCreate={openCreate}
-            onEdit={openEdit}
-            onDelete={deleteWorkout}
-            onDuplicate={duplicateWorkout}
-            onCreateGoal={openCreateGoal}
-            onCopyPriorWeek={copyPriorWeek}
-            onDeriveWeekGoals={deriveWeekGoals}
-            onEditGoal={openEditGoal}
-            onOpenPlanWeek={openPlanWeek}
-            onSync={runBackfill}
-            copyingPriorWeekId={copyingPriorWeekId}
+            onClose={() => setPlanWeekDraft(null)}
+            onCompleteReview={completeWeekReview}
+            onSave={savePlanWeek}
           />
         ) : null}
-        {activeTab === "plan" ? (
-          <PlanningWorkspace
-            onChangeSection={navigatePlanningSection}
-            writesBlocked={staleFrontend}
-            section={planningSection}
-            selectedPlanId={selectedPlanRouteId}
-            onSelectPlan={navigatePlan}
-            onPlanApplied={() => {
-              refreshVisibleWeeks();
-              loadTrainingTimeline();
-              loadActivePlan();
-              loadAnalyticsPlanning();
-            }}
-            onSelectWeek={(start) => {
-              selectWeek(start, "time-rail");
-            }}
-          />
-        ) : null}
-        {activeTab === "progress" ? (
-          <ProgressView
-            activities={activities}
-            analytics={analyticsPlanning}
-            futureWeeks={analyticsFutureWeeks}
-            isLoading={analyticsLoading}
-            lookbackWeeks={analyticsLookbackWeeks}
-            setFutureWeeks={setAnalyticsFutureWeeks}
-            setLookbackWeeks={setAnalyticsLookbackWeeks}
-            onSelectWeek={(start) => {
-              selectWeek(start, "time-rail");
-            }}
-            onChangeSection={navigateProgressSection}
-            section={progressSection}
-          />
-        ) : null}
-        {activeTab === "settings" ? (
-          <SettingsView
-            apiVersion={apiVersion}
-            isSyncing={isSyncing}
-            lastSyncJob={lastSyncJob}
-            onBackfill={runBackfill}
-            onRefreshActivities={loadActivities}
-            onRefreshStatus={loadStravaStatus}
-            onRefreshSession={refreshSession}
-            stravaStatus={stravaStatus}
-            session={session}
-            writesBlocked={staleFrontend}
-            frontendVersion={FRONTEND_VERSION}
-          />
-        ) : null}
-      </main>
-
-      {editor ? (
-        <WorkoutEditor
-          editor={editor}
-          setEditor={setEditor}
-          onSubmit={saveWorkout}
-          onClose={() => setEditor(null)}
-        />
-      ) : null}
-      {goalEditor ? (
-        <WeekGoalEditor
-          editor={goalEditor}
-          setEditor={setGoalEditor}
-          onSubmit={saveGoal}
-          onClose={() => setGoalEditor(null)}
-        />
-      ) : null}
-      {planWeekDraft ? (
-        <PlanWeekDrawer
-          draft={planWeekDraft}
-          isSaving={isSavingPlanWeek}
-          setDraft={setPlanWeekDraft}
-          weekStack={weekStack}
-          onClose={() => setPlanWeekDraft(null)}
-          onCompleteReview={completeWeekReview}
-          onSave={savePlanWeek}
-        />
-      ) : null}
-    </div>
+      </div>
+    </ProfileProvider>
   );
-}
-
-function getInitialAppRoute() {
-  const fallbackWeekStart = startOfWeek(new Date());
-  return parseAppRoute(window.location.pathname, window.location.search, fallbackWeekStart);
 }
 
 function weekRangeAround(weekStart: string) {
@@ -1086,6 +1046,20 @@ function compareVersions(left: string, right: string) {
     }
   }
   return 0;
+}
+
+function App() {
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } })
+  );
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppShell />
+      </BrowserRouter>
+    </QueryClientProvider>
+  );
 }
 
 export default App;

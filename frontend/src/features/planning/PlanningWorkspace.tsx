@@ -43,7 +43,7 @@ export function PlanningWorkspace({
         </button>
       </nav>
 
-      {section === "overview" ? (
+      <div hidden={section !== "overview"}>
         <PlansView
           onSelectPlan={onSelectPlan}
           writesBlocked={writesBlocked}
@@ -51,12 +51,13 @@ export function PlanningWorkspace({
           onSelectWeek={onSelectWeek}
           requestedPlanId={selectedPlanId}
         />
-      ) : (
+      </div>
+      <div hidden={section !== "goals"}>
         <GoalsView
           writesBlocked={writesBlocked}
           onSelectWeek={onSelectWeek}
         />
-      )}
+      </div>
     </section>
   );
 }

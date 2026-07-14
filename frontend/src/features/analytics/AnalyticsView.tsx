@@ -142,10 +142,20 @@ function MileageLineChart({
   const yMax = Math.ceil(maxMileage / 10) * 10;
   const actualPoints = weeks
     .filter((week) => week.weekStartDate <= anchorWeekStartDate && week.actualMileage > 0)
-    .map((week) => chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding));
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.actualMileage
+    }));
   const plannedPoints = weeks
     .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0)
-    .map((week) => chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding));
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.plannedMileage
+    }));
+  const interactivePoints = [
+    ...actualPoints.map((point) => ({ ...point, kind: "actual" as const })),
+    ...plannedPoints.map((point) => ({ ...point, kind: "planned" as const }))
+  ];
   const anchorIndex = Math.max(0, weeks.findIndex((week) => week.weekStartDate === anchorWeekStartDate));
   const anchorX = padding.left + (weeks.length <= 1 ? 0 : (anchorIndex / (weeks.length - 1)) * chartWidth);
   const yTicks = [0, yMax / 2, yMax];
@@ -178,8 +188,9 @@ function MileageLineChart({
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Line chart of weekly actual and planned mileage">
-        <rect className="mileage-chart-plot" x={padding.left} y={padding.top} width={chartWidth} height={chartHeight} rx="8" />
+      <div className="mileage-chart-graphic">
+        <svg aria-hidden="true" focusable="false" viewBox={`0 0 ${width} ${height}`}>
+          <rect className="mileage-chart-plot" x={padding.left} y={padding.top} width={chartWidth} height={chartHeight} rx="8" />
         {yTicks.map((tick) => {
           const y = mileageY(tick, yMax, chartHeight, padding);
           return (
@@ -202,10 +213,10 @@ function MileageLineChart({
         <polyline className="mileage-line mileage-line--actual" points={pointsAttribute(actualPoints)} />
         <polyline className="mileage-line mileage-line--planned" points={pointsAttribute(plannedPoints)} />
         {actualPoints.map((point) => (
-          <ChartPoint key={`actual-${point.weekStartDate}`} kind="actual" onSelectWeek={onSelectWeek} point={point} />
+          <ChartPoint key={`actual-${point.weekStartDate}`} kind="actual" point={point} />
         ))}
         {plannedPoints.map((point) => (
-          <ChartPoint key={`planned-${point.weekStartDate}`} kind="planned" onSelectWeek={onSelectWeek} point={point} />
+          <ChartPoint key={`planned-${point.weekStartDate}`} kind="planned" point={point} />
         ))}
         {xTicks.map((week) => {
           const point = chartPoint(week.weekStartDate, 0, weeks, yMax, chartWidth, chartHeight, padding);
@@ -215,7 +226,18 @@ function MileageLineChart({
             </text>
           );
         })}
-      </svg>
+        </svg>
+        {interactivePoints.map((point) => (
+          <button
+            aria-label={`Open ${point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
+            className={`mileage-point-control mileage-point-control--${point.kind}`}
+            key={`${point.kind}-${point.weekStartDate}`}
+            onClick={() => onSelectWeek(point.weekStartDate)}
+            style={{ left: `${(point.x / width) * 100}%`, top: `${(point.y / height) * 100}%` }}
+            type="button"
+          />
+        ))}
+      </div>
 
       <div className="mileage-chart-legend" aria-label="Mileage chart legend">
         <span><i className="actual" /> Actual</span>
@@ -228,28 +250,13 @@ function MileageLineChart({
 
 function ChartPoint({
   kind,
-  onSelectWeek,
   point
 }: {
   kind: "actual" | "planned";
-  onSelectWeek: (weekStartDate: string) => void;
   point: { weekStartDate: string; x: number; y: number };
 }) {
   return (
-    <g
-      className="mileage-point-link"
-      role="button"
-      tabIndex={0}
-      aria-label={`Open week of ${formatShortDate(point.weekStartDate)}`}
-      onClick={() => onSelectWeek(point.weekStartDate)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelectWeek(point.weekStartDate);
-        }
-      }}
-    >
-      <circle className="mileage-point-hit-area" cx={point.x} cy={point.y} r="13" />
+    <g>
       <circle className={`mileage-point mileage-point--${kind}`} cx={point.x} cy={point.y} r="4" />
     </g>
   );

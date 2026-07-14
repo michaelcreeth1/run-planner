@@ -1,12 +1,14 @@
 import { CalendarDays, Flag, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "../../lib/api";
 import { toDateInputValue } from "../../lib/dates";
+import { queryKeys, useGoalRacesQuery } from "../../lib/queries";
+import { useProfileId } from "../../lib/profileContext";
 import type { GoalRace, RaceDistance } from "../../types/domain";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
 import { GoalImpactSection } from "./GoalImpactSection";
-import { invalidateRuleContext } from "./useRuleContext";
 
 const raceDistanceLabels: Record<GoalRace["distance"], string> = {
   "5k": "5K",
@@ -63,27 +65,23 @@ export function GoalsView({
   writesBlocked: boolean;
   onSelectWeek: (weekStartDate: string) => void;
 }) {
-  const [races, setRaces] = useState<GoalRace[]>([]);
+  const profileId = useProfileId();
+  const queryClient = useQueryClient();
+  const racesQuery = useGoalRacesQuery(profileId);
+  const races = racesQuery.data ?? [];
   const [racesError, setRacesError] = useState<string | null>(null);
   const [raceSuccess, setRaceSuccess] = useState<string | null>(null);
   const [raceForm, setRaceForm] = useState<GoalRaceFormState | null>(null);
   const [isSavingRace, setIsSavingRace] = useState(false);
-  const [ruleContextRefreshKey, setRuleContextRefreshKey] = useState(0);
-
-  useEffect(() => {
-    fetchJson<GoalRace[]>("/api/goal-races")
-      .then(setRaces)
-      .catch((error) =>
-        setRacesError(error instanceof Error ? error.message : "Could not load goal races.")
-      );
-  }, []);
-
   const sortedRaces = [...races].sort((left, right) => left.raceDate.localeCompare(right.raceDate));
 
-  const refreshRuleContext = useCallback(() => {
-    invalidateRuleContext();
-    setRuleContextRefreshKey((current) => current + 1);
-  }, []);
+  function invalidateDependentProfileData() {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.plans(profileId) }),
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.profile(profileId), "plan"] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.defaultGoals(profileId) })
+    ]);
+  }
 
   function openCreateRace() {
     setRacesError(null);
@@ -117,7 +115,10 @@ export function GoalsView({
           body: JSON.stringify(goalRacePayload(raceForm))
         }
       );
-      setRaces((current) => upsertGoalRace(current, savedRace));
+      queryClient.setQueryData<GoalRace[]>(queryKeys.goalRaces(profileId), (current = []) =>
+        upsertGoalRace(current, savedRace)
+      );
+      await invalidateDependentProfileData();
       setRaceForm(null);
       setRacesError(null);
       setRaceSuccess(`${savedRace.name} was ${isEditing ? "updated" : "created"}.`);
@@ -141,7 +142,10 @@ export function GoalsView({
     setIsSavingRace(true);
     try {
       await fetchJson(`/api/goal-races/${race.id}`, { method: "DELETE" });
-      setRaces((current) => current.filter((candidate) => candidate.id !== race.id));
+      queryClient.setQueryData<GoalRace[]>(queryKeys.goalRaces(profileId), (current = []) =>
+        current.filter((candidate) => candidate.id !== race.id)
+      );
+      await invalidateDependentProfileData();
       setRaceForm(null);
       setRacesError(null);
       setRaceSuccess(`${race.name} was deleted.`);
@@ -288,10 +292,10 @@ export function GoalsView({
 
       {raceSuccess ? <div className="settings-note">{raceSuccess}</div> : null}
 
-      <GoalImpactSection contextRefreshKey={ruleContextRefreshKey} onSelectWeek={onSelectWeek} />
+      <GoalImpactSection onSelectWeek={onSelectWeek} />
 
       <div className="goals-layout">
-        <DefaultGoalsCard onRulesSaved={refreshRuleContext} writesBlocked={writesBlocked} />
+        <DefaultGoalsCard onRulesSaved={invalidateDependentProfileData} writesBlocked={writesBlocked} />
 
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">
@@ -303,7 +307,7 @@ export function GoalsView({
               Add
             </button>
           </header>
-          {racesError ? <div className="settings-note settings-note--danger">{racesError}</div> : null}
+          {racesError || racesQuery.error ? <div className="settings-note settings-note--danger">{racesError ?? "Could not load goal races."}</div> : null}
           {!racesError && sortedRaces.length === 0 ? (
             <div className="goals-empty-state">
               <Flag size={18} />

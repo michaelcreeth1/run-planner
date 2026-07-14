@@ -111,6 +111,7 @@ class PlannedWorkoutBase(ApiModel):
     intensity_category: IntensityCategory = "easy"
     planned_distance: float | None = Field(default=None, ge=0)
     planned_duration: int | None = Field(default=None, ge=0)
+    planned_pace: int | None = Field(default=None, ge=0)
     planned_elevation: float | None = Field(default=None, ge=0)
     planned_tss: float | None = Field(default=None, ge=0)
     purpose: str = ""
@@ -131,6 +132,7 @@ class PlannedWorkoutUpdate(ApiModel):
     intensity_category: IntensityCategory | None = None
     planned_distance: float | None = Field(default=None, ge=0)
     planned_duration: int | None = Field(default=None, ge=0)
+    planned_pace: int | None = Field(default=None, ge=0)
     planned_elevation: float | None = Field(default=None, ge=0)
     planned_tss: float | None = Field(default=None, ge=0)
     purpose: str | None = None

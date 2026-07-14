@@ -1,7 +1,8 @@
 import { Save, X } from "lucide-react";
 import type { FormEvent } from "react";
-import type { Workout, WorkoutForm } from "../../types/domain";
-import { intensities, workoutTypes } from "../../lib/options";
+import type { WorkoutForm } from "../../types/domain";
+import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
+import { recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
 
 export function WorkoutEditor({
   editor,
@@ -14,6 +15,12 @@ export function WorkoutEditor({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
+  const selectedSessionType = sessionTypeForWorkout(editor);
+
+  function setMetric(field: WorkoutMetricField, value: string) {
+    setEditor(recalculateWorkoutMetrics({ ...editor, [field]: value }, field));
+  }
+
   return (
     <div className="editor-backdrop">
       <aside className="editor-panel" aria-label="Workout editor">
@@ -40,42 +47,34 @@ export function WorkoutEditor({
               onChange={(event) => setEditor({ ...editor, title: event.target.value })}
             />
           </label>
-          <div className="form-grid">
-            <label>
-              <span>Type</span>
-              <select
-                value={editor.workoutType}
-                onChange={(event) =>
-                  setEditor({ ...editor, workoutType: event.target.value as Workout["workoutType"] })
-                }
-              >
-                {workoutTypes.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Intensity</span>
-              <select
-                value={editor.intensityCategory}
-                onChange={(event) =>
+          <label>
+            <span>Session type</span>
+            <select
+              value={selectedSessionType.value}
+              onChange={(event) => {
+                const sessionType = sessionTypes.find((option) => option.value === event.target.value);
+                if (sessionType) {
                   setEditor({
                     ...editor,
-                    intensityCategory: event.target.value as Workout["intensityCategory"]
-                  })
+                    sport: sessionType.sport,
+                    workoutType: sessionType.workoutType,
+                    intensityCategory: sessionType.intensityCategory
+                  });
                 }
-              >
-                {intensities.map((intensity) => (
-                  <option key={intensity.value} value={intensity.value}>
-                    {intensity.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="form-grid">
+              }}
+            >
+              {sessionTypeGroups.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <div className="form-grid form-grid--three workout-metrics-grid">
             <label>
               <span>Miles</span>
               <input
@@ -83,20 +82,32 @@ export function WorkoutEditor({
                 step="0.1"
                 type="number"
                 value={editor.plannedDistance}
-                onChange={(event) => setEditor({ ...editor, plannedDistance: event.target.value })}
+                onChange={(event) => setMetric("plannedDistance", event.target.value)}
               />
             </label>
             <label>
-              <span>Minutes</span>
+              <span>Time (H:MM:SS)</span>
               <input
-                min="0"
-                step="1"
-                type="number"
+                inputMode="numeric"
+                pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]"
+                placeholder="0:45:00"
+                title="Enter time as hours:minutes:seconds"
                 value={editor.plannedDuration}
-                onChange={(event) => setEditor({ ...editor, plannedDuration: event.target.value })}
+                onChange={(event) => setMetric("plannedDuration", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Pace (/mi)</span>
+              <input
+                pattern="[0-9]+(:[0-5][0-9])?"
+                placeholder="8:30"
+                title="Enter pace as minutes:seconds per mile"
+                value={editor.plannedPace}
+                onChange={(event) => setMetric("plannedPace", event.target.value)}
               />
             </label>
           </div>
+          <p className="field-help">Enter any two; the third is calculated automatically. Time uses H:MM:SS.</p>
           <label>
             <span>Purpose</span>
             <input

@@ -228,6 +228,7 @@ function makeWorkout(overrides: Partial<TrainingWeek["workouts"][number]> = {}):
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "",

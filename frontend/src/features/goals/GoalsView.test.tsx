@@ -1,9 +1,11 @@
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { GoalsView } from "./GoalsView";
+import { ProfileProvider } from "../../lib/profile";
 
 vi.mock("./DefaultGoalsCard", () => ({
   DefaultGoalsCard: () => <div>Weekly defaults</div>
@@ -38,7 +40,13 @@ describe("GoalsView race management", () => {
       })
     );
 
-    render(<GoalsView writesBlocked={false} onSelectWeek={vi.fn()} />);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="profile-1">
+          <GoalsView writesBlocked={false} onSelectWeek={vi.fn()} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
 
     await screen.findByText("No races yet");
     await user.click(screen.getByRole("button", { name: "Add race" }));

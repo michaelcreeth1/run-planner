@@ -3474,6 +3474,22 @@ dt {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.workout-metrics-grid > label {
+  min-width: 0;
+}
+
+.workout-metrics-grid input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+
+.editor-panel .field-help {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  margin: -8px 0 0;
+}
+
 .editor-panel label.checkbox-row,
 .settings-form label.checkbox-row {
   align-items: center;
@@ -5553,7 +5569,11 @@ button.goal-impact-cell:focus-visible {
   margin-top: 4px;
 }
 
-.mileage-line-chart svg {
+.mileage-chart-graphic {
+  position: relative;
+}
+
+.mileage-chart-graphic svg {
   background: var(--bg-subtle);
   border-radius: var(--radius-md);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
@@ -5613,19 +5633,23 @@ button.goal-impact-cell:focus-visible {
   stroke: var(--planned);
 }
 
-.mileage-point-link {
+.mileage-point-control {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
   cursor: pointer;
+  height: 26px;
+  padding: 0;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 26px;
+}
+
+.mileage-point-control:hover,
+.mileage-point-control:focus-visible {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: var(--focus-ring);
   outline: 0;
-}
-
-.mileage-point-hit-area {
-  fill: transparent;
-}
-
-.mileage-point-link:hover .mileage-point,
-.mileage-point-link:focus .mileage-point {
-  fill: var(--primary);
-  stroke-width: 4;
 }
 
 .mileage-chart-y-label,
@@ -6555,7 +6579,7 @@ button.goal-impact-cell:focus-visible {
     border-top: 1px solid var(--border-subtle);
   }
 
-  .mileage-line-chart svg {
+  .mileage-chart-graphic svg {
     min-height: 240px;
   }
 
@@ -6945,6 +6969,7 @@ button.goal-impact-cell:focus-visible {
   cursor: pointer;
   overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  transition: bottom 140ms ease, box-shadow 140ms ease, top 140ms ease;
 }
 
 .mesocycle-timeline-bar.first {
@@ -6972,8 +6997,18 @@ button.goal-impact-cell:focus-visible {
 }
 
 .mesocycle-timeline-bar.selected {
-  box-shadow: inset 0 0 0 2px var(--tint-info), 0 10px 24px rgba(15, 23, 42, 0.12);
-  z-index: 1;
+  top: 0.85rem;
+  bottom: 0.85rem;
+  box-shadow:
+    inset 0 0 0 3px var(--tint-info-text),
+    0 10px 24px rgba(15, 23, 42, 0.2);
+  z-index: 2;
+}
+
+.mesocycle-timeline-bar:focus-visible {
+  outline: 3px solid var(--text-primary);
+  outline-offset: 2px;
+  z-index: 3;
 }
 
 .mesocycle-timeline-bar--base {
@@ -7047,22 +7082,23 @@ button.goal-impact-cell:focus-visible {
 
 .mesocycle-boundary-handle:hover::before,
 .mesocycle-boundary-handle.dragging::before {
-  background: var(--tint-info);
+  background: var(--tint-info-text);
 }
 
 .mesocycle-boundary-handle:hover::after,
 .mesocycle-boundary-handle.dragging::after {
-  border-color: var(--tint-info);
+  border-color: var(--tint-info-text);
   box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.16), 0 7px 16px rgba(15, 23, 42, 0.18);
 }
 
 .mesocycle-inspector {
   display: grid;
   gap: 1rem;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--tint-info-border);
   border-radius: 0.75rem;
   background: var(--bg-subtle);
   padding: 1rem;
+  box-shadow: inset 3px 0 0 var(--tint-info-text);
 }
 
 .mesocycle-field-group {
@@ -7135,6 +7171,17 @@ button.goal-impact-cell:focus-visible {
 .mesocycle-editor-card-header > div:first-child {
   display: grid;
   gap: 0.2rem;
+}
+
+.mesocycle-selection-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--tint-info-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
 }
 
 .mesocycle-editor-actions {

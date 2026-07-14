@@ -1,19 +1,21 @@
 import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
 import type { CSSProperties, Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Placeholder } from "../../components/shared/Placeholder";
 import { StatusBanner } from "../../components/shared/StatusBanner";
 import { addDays, parseDate, startOfWeek, toDateInputValue } from "../../lib/dates";
 import { fetchJson } from "../../lib/api";
 import { formatCompactWeekRange, formatNumber, formatPace, formatShortDate } from "../../lib/formatters";
 import { goalCategories } from "../../lib/options";
+import { queryKeys, selectPrimaryPlan, useGoalRacesQuery, usePlanQuery, usePlansQuery } from "../../lib/queries";
+import { useProfileId } from "../../lib/profileContext";
 import type {
   GoalRace,
   MesocyclePhase,
   PlanWeekSummary,
   RecurringGoal,
   TrainingPlan,
-  TrainingPlanSummary,
   WeekGoalCategory
 } from "../../types/domain";
 
@@ -79,11 +81,12 @@ export function PlansView({
   requestedPlanId,
   writesBlocked
 }: PlansViewProps) {
-  const [plans, setPlans] = useState<TrainingPlanSummary[]>([]);
-  const [goalRaces, setGoalRaces] = useState<GoalRace[]>([]);
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(requestedPlanId);
-  const [selectedPlan, setSelectedPlan] = useState<TrainingPlan | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const profileId = useProfileId();
+  const queryClient = useQueryClient();
+  const plansQuery = usePlansQuery(profileId);
+  const goalRacesQuery = useGoalRacesQuery(profileId);
+  const plans = useMemo(() => plansQuery.data ?? [], [plansQuery.data]);
+  const goalRaces = goalRacesQuery.data ?? [];
   const [error, setError] = useState<string | null>(null);
   const [planEditor, setPlanEditor] = useState<PlanEditorState | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -98,54 +101,16 @@ export function PlansView({
     [plans]
   );
   const primaryPlan = useMemo(
-    () =>
-      plans.find((plan) => plan.id === selectedPlanId) ??
-      plans.find((plan) => plan.isCurrent) ??
-      plans.find((plan) => plan.isUpcoming) ??
-      plans[0] ??
-      null,
-    [plans, selectedPlanId]
+    () => plans.find((plan) => plan.id === requestedPlanId) ?? selectPrimaryPlan(plans),
+    [plans, requestedPlanId]
   );
+  const selectedPlanQuery = usePlanQuery(profileId, primaryPlan?.id ?? null);
+  const selectedPlan = selectedPlanQuery.data ?? null;
   const planEditorGoalRace = planEditor
     ? goalRaces.find((goalRace) => goalRace.id === planEditor.goalRaceId) ?? null
     : null;
   const hasActiveEditor = Boolean(planEditor);
   const today = toDateInputValue(new Date());
-
-  useEffect(() => {
-    loadOverview();
-  }, []);
-
-  useEffect(() => {
-    setSelectedPlanId(requestedPlanId);
-  }, [requestedPlanId]);
-
-  useEffect(() => {
-    const nextPlanId = primaryPlan?.id ?? null;
-    if (!nextPlanId) {
-      setSelectedPlan(null);
-      return;
-    }
-    setSelectedPlanId(nextPlanId);
-    fetchJson<TrainingPlan>(`/api/plans/${nextPlanId}`)
-      .then((body) => {
-        setSelectedPlan(body);
-        setError(null);
-      })
-      .catch((loadError: Error) => setError(loadError.message));
-  }, [primaryPlan?.id]);
-
-  function loadOverview() {
-    setIsLoading(true);
-    Promise.all([fetchJson<TrainingPlanSummary[]>("/api/plans"), fetchJson<GoalRace[]>("/api/goal-races")])
-      .then(([planBody, goalRaceBody]) => {
-        setPlans(planBody);
-        setGoalRaces(goalRaceBody);
-        setError(null);
-      })
-      .catch((loadError: Error) => setError(loadError.message))
-      .finally(() => setIsLoading(false));
-  }
 
   function openCreatePlan() {
     setSuccess(null);
@@ -228,12 +193,11 @@ export function PlansView({
         method,
         body: JSON.stringify(planPayload(planEditor))
       });
-      setSelectedPlanId(saved.id);
       onSelectPlan(saved.id);
-      setSelectedPlan(saved);
+      queryClient.setQueryData(queryKeys.plan(profileId, saved.id), saved);
       setPlanEditor(null);
       setSuccess(`${saved.name} was ${planEditor.mode === "edit" ? "updated" : "created"}.`);
-      loadOverview();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.profile(profileId) });
       onPlanApplied();
     } catch (applyError) {
       setError(applyError instanceof Error ? applyError.message : "Could not save the plan.");
@@ -253,24 +217,24 @@ export function PlansView({
     try {
       setSuccess(null);
       await fetchJson(`/api/plans/${planId}?clearScaffolding=false`, { method: "DELETE" });
-      setSelectedPlan(null);
-      setSelectedPlanId(null);
       onSelectPlan(null);
       setPlanEditor(null);
-      loadOverview();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.profile(profileId) });
       onPlanApplied();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Could not delete the plan.");
     }
   }
 
-  if (isLoading) {
+  if (plansQuery.isLoading || goalRacesQuery.isLoading) {
     return <Placeholder title="Plan" detail="Loading training plans." icon={<Route size={22} />} />;
   }
 
   return (
     <section className="plans-view">
-      {error ? <StatusBanner tone="warning" icon={<Flag size={16} />} title="Plan issue" detail={error} /> : null}
+      {error || plansQuery.error || goalRacesQuery.error || selectedPlanQuery.error ? (
+        <StatusBanner tone="warning" icon={<Flag size={16} />} title="Plan issue" detail={error ?? "Could not load training plans."} />
+      ) : null}
       {success ? <StatusBanner tone="success" icon={<CheckCircle size={16} />} title="Saved" detail={success} /> : null}
 
       <header className="plans-toolbar">
@@ -471,7 +435,6 @@ export function PlansView({
                   type="button"
                   className={`plan-switcher-pill ${selectedPlan.id === plan.id ? "plan-switcher-pill--active" : ""}`}
                   onClick={() => {
-                    setSelectedPlanId(plan.id);
                     onSelectPlan(plan.id);
                   }}
                 >
@@ -652,6 +615,8 @@ function MesocycleTimelineEditor({
                 left: `${(startWeek / totalWeeks) * 100}%`,
                 right: `${Math.max(0, ((totalWeeks - endWeek) / totalWeeks) * 100)}%`
               }}
+              aria-label={`${mesocycle.name || phaseLabel(mesocycle.phase)} phase`}
+              aria-pressed={selectedIndex === index}
               onClick={() => onSelectIndex(index)}
             >
               <strong>{mesocycle.name || phaseLabel(mesocycle.phase)}</strong>
@@ -706,6 +671,10 @@ function MesocycleInspector({
     <article className="mesocycle-inspector">
       <header className="mesocycle-editor-card-header">
         <div>
+          <span className="mesocycle-selection-label">
+            <Pencil size={13} aria-hidden="true" />
+            Editing selected phase
+          </span>
           <strong>{selected.name || phaseLabel(selected.phase)}</strong>
           <span>{formatCompactWeekRange(selected.startDate, selected.endDate)}</span>
         </div>

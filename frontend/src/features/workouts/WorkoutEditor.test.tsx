@@ -28,10 +28,9 @@ describe("WorkoutEditor", () => {
     render(<EditorHarness onSave={onSave} onClose={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Title"), "Tempo intervals");
-    await user.selectOptions(screen.getByLabelText("Type"), "tempo");
-    await user.selectOptions(screen.getByLabelText("Intensity"), "workout");
+    await user.selectOptions(screen.getByLabelText("Session type"), "run:tempo");
     await user.type(screen.getByLabelText("Miles"), "7.5");
-    await user.type(screen.getByLabelText("Minutes"), "55");
+    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:55:00");
     await user.type(screen.getByLabelText("Purpose"), "Threshold development");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -41,10 +40,60 @@ describe("WorkoutEditor", () => {
         workoutType: "tempo",
         intensityCategory: "workout",
         plannedDistance: "7.5",
-        plannedDuration: "55",
+        plannedDuration: "0:55:00",
+        plannedPace: "7:20",
         purpose: "Threshold development"
       })
     );
+  });
+
+  it("derives the sport and intensity from one session type choice", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<EditorHarness onSave={onSave} onClose={vi.fn()} />);
+
+    expect(screen.queryByLabelText("Intensity")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Session type"), "strength:strength");
+    await user.type(screen.getByLabelText("Title"), "Gym session");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sport: "strength",
+        workoutType: "strength",
+        intensityCategory: "strength"
+      })
+    );
+  });
+
+  it("calculates pace from miles and time", async () => {
+    const user = userEvent.setup();
+    render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Miles"), "6");
+    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:48:00");
+
+    expect(screen.getByLabelText("Pace (/mi)")).toHaveValue("8:00");
+  });
+
+  it("calculates time from miles and pace", async () => {
+    const user = userEvent.setup();
+    render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Miles"), "5");
+    await user.type(screen.getByLabelText("Pace (/mi)"), "8:30");
+
+    expect(screen.getByLabelText("Time (H:MM:SS)")).toHaveValue("0:42:30");
+  });
+
+  it("calculates miles from time and pace", async () => {
+    const user = userEvent.setup();
+    render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:45:00");
+    await user.type(screen.getByLabelText("Pace (/mi)"), "9:00");
+
+    expect(screen.getByLabelText("Miles")).toHaveValue(5);
   });
 
   it("closes without submitting", async () => {

@@ -2,16 +2,41 @@ import { describe, expect, it } from "vitest";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "./forms";
 
 describe("form payload helpers", () => {
-  it("converts empty numeric workout fields to null and minutes to seconds", () => {
+  it("converts empty numeric workout fields to null and clock duration to seconds", () => {
     const payload = formToPayload({
       ...defaultForm("2026-07-01"),
       title: "Easy run",
       plannedDistance: "",
-      plannedDuration: "45"
+      plannedDuration: "0:45:00"
     });
 
     expect(payload.plannedDistance).toBeNull();
     expect(payload.plannedDuration).toBe(2700);
+  });
+
+  it("canonicalizes session metadata instead of accepting an invalid pairing", () => {
+    const payload = formToPayload({
+      ...defaultForm("2026-07-01"),
+      sport: "run",
+      workoutType: "race",
+      intensityCategory: "easy"
+    });
+
+    expect(payload).toMatchObject({ sport: "run", workoutType: "race", intensityCategory: "race" });
+  });
+
+  it("keeps non-running activities non-running when normalizing legacy metadata", () => {
+    const payload = formToPayload({
+      ...defaultForm("2026-07-01"),
+      sport: "cross_training",
+      workoutType: "easy"
+    });
+
+    expect(payload).toMatchObject({
+      sport: "cross_training",
+      workoutType: "other",
+      intensityCategory: "moderate"
+    });
   });
 
   it("preserves manual weekly goal metadata", () => {

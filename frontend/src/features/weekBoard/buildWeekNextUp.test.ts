@@ -149,6 +149,7 @@ function makeWorkout(overrides: Partial<Workout> = {}): Workout {
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "Aerobic support",

@@ -147,6 +147,7 @@ class PlannedWorkout(Base):
     intensity_category: Mapped[str] = mapped_column(String, nullable=False, default="easy")
     planned_distance: Mapped[float | None] = mapped_column(Float)
     planned_duration: Mapped[int | None] = mapped_column(Integer)
+    planned_pace: Mapped[int | None] = mapped_column(Integer)
     planned_elevation: Mapped[float | None] = mapped_column(Float)
     planned_tss: Mapped[float | None] = mapped_column(Float)
     purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")

@@ -32,6 +32,7 @@ export type Workout = {
   intensityCategory: "rest" | "easy" | "moderate" | "workout" | "race" | "strength";
   plannedDistance: number | null;
   plannedDuration: number | null;
+  plannedPace: number | null;
   plannedElevation: number | null;
   plannedTss: number | null;
   purpose: string;
@@ -301,6 +302,7 @@ export type WorkoutForm = {
   intensityCategory: Workout["intensityCategory"];
   plannedDistance: string;
   plannedDuration: string;
+  plannedPace: string;
   purpose: string;
   instructions: string;
   notes: string;

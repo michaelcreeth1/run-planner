@@ -21,6 +21,7 @@ import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload, optiona
 import { comparisonMileage, formatNumber, labelForWorkoutType } from "../../lib/formatters";
 import { roundToTenth } from "../../lib/numbers";
 import { weekPurposes } from "../../lib/options";
+import { formatDurationSeconds, paceInputFromMetrics } from "../../lib/workoutMetrics";
 
 export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, TrainingWeek>): PlanWeekDraft {
   const hasExistingPlan =
@@ -35,7 +36,9 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
   const purpose =
     typeof week.purpose === "string" && week.purpose.length > 0
       ? normalizeWeekPurposeId(week.purpose)
-      : purposeFromText(week.notes) ?? "maintain";
+      : week.notes.trim().length > 0
+        ? "custom"
+        : "maintain";
   const load =
     week.targetMileage !== null
       ? planTargetLoad(week.targetMileage, loadBaselineMileageOrNull(priorWeek))
@@ -197,7 +200,12 @@ export function workoutDraftFromWorkout(workout: Workout, plannedDate: string): 
     workoutType: workout.workoutType,
     intensityCategory: workout.intensityCategory,
     plannedDistance: workout.plannedDistance?.toString() ?? "",
-    plannedDuration: workout.plannedDuration ? String(Math.round(workout.plannedDuration / 60)) : "",
+    plannedDuration: workout.plannedDuration ? formatDurationSeconds(workout.plannedDuration) : "",
+    plannedPace: paceInputFromMetrics(
+      workout.plannedDuration,
+      workout.plannedDistance,
+      workout.plannedPace
+    ),
     purpose: workout.purpose,
     instructions: workout.instructions,
     notes: workout.notes,
@@ -502,17 +510,12 @@ export function purposeText(draft: PlanWeekDraft) {
   return weekPurposes.find((option) => option.value === draft.purpose)?.label ?? "Maintain";
 }
 
-export function purposeFromText(value: string): WeekPurposeId | null {
-  const normalized = value.trim().toLowerCase();
-  return weekPurposes.find((option) => option.label.toLowerCase() === normalized)?.value ?? (normalized ? "custom" : null);
-}
-
 export function normalizeWeekPurposeId(value: string): WeekPurposeId {
   const normalized = value.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
   if (weekPurposes.some((option) => option.value === normalized)) {
     return normalized as WeekPurposeId;
   }
-  return purposeFromText(value) ?? "custom";
+  return "custom";
 }
 
 function planTargetLoad(targetMileage: number, priorMileage: number | null): ProposedLoad {

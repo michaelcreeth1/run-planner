@@ -52,6 +52,15 @@ describe("plan week draft helpers", () => {
     });
   });
 
+  it("treats legacy notes as custom purpose instead of guessing a structured purpose", () => {
+    const week = makeWeek("2026-06-29", { notes: "Maintain", purpose: "" });
+
+    const draft = buildPlanWeekDraft(week, { [week.weekStartDate]: week });
+
+    expect(draft.purpose).toBe("custom");
+    expect(draft.customPurpose).toBe("Maintain");
+  });
+
   it("seeds workout drafts from completed run activities", () => {
     const sourceWeek = makeWeek("2026-06-22", {
       actualActivities: [
@@ -200,7 +209,7 @@ describe("plan week draft helpers", () => {
       workouts: [
         makeDraftWorkout({
           plannedDistance: "8",
-          plannedDuration: "64",
+          plannedDuration: "1:04:00",
           workoutType: "long_run"
         })
       ],
@@ -294,6 +303,7 @@ function makeWorkout(overrides: Partial<Workout> = {}): Workout {
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "",
@@ -353,6 +363,7 @@ function makeDraftWorkout(overrides: Partial<PlanWeekWorkoutDraft> = {}): PlanWe
     intensityCategory: "easy",
     plannedDistance: "5",
     plannedDuration: "",
+    plannedPace: "",
     purpose: "",
     instructions: "",
     notes: "",
