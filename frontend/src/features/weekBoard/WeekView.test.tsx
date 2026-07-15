@@ -1,0 +1,150 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { HttpResponse, http } from "msw";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { ProfileProvider } from "../../lib/profile";
+import { server } from "../../test/server";
+import type { TrainingWeek, Workout } from "../../types/domain";
+import { WeekView } from "./WeekView";
+
+describe("WeekView workout completion", () => {
+  it("marks an unmatched workout complete and allows undoing it", async () => {
+    const user = userEvent.setup();
+    const onSetCompletion = vi.fn();
+    const workout = makeWorkout();
+    const week = makeWeek(workout);
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week, onSetCompletion)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Mark Untracked strength session complete" }));
+
+    expect(onSetCompletion).toHaveBeenCalledWith(workout, true);
+
+    const completedWorkout = { ...workout, status: "completed_as_planned" as const };
+    const completedWeek = makeWeek(completedWorkout);
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(completedWeek, onSetCompletion)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText("completed manually")).toBeVisible();
+    const undo = screen.getByRole("button", { name: "Mark Untracked strength session incomplete" });
+    expect(undo).toHaveAttribute("aria-pressed", "true");
+    await user.click(undo);
+
+    expect(onSetCompletion).toHaveBeenLastCalledWith(completedWorkout, false);
+  });
+});
+
+function makeProps(
+  week: TrainingWeek,
+  onSetCompletion: (workout: Workout, completed: boolean) => void
+): ComponentProps<typeof WeekView> {
+  return {
+    activePlan: null,
+    canLoadNewerWeeks: false,
+    canLoadOlderWeeks: false,
+    currentWeekStart: week.weekStartDate,
+    isLoading: false,
+    onJumpToThisWeek: vi.fn(),
+    onLoadNewerWeeks: vi.fn(),
+    onLoadOlderWeeks: vi.fn(),
+    onDismissReviewHandoff: vi.fn(),
+    onOpenPlan: vi.fn(),
+    onOpenProgress: vi.fn(),
+    onPlanNextWeek: vi.fn(),
+    onSelectTimeWeek: vi.fn(),
+    onSelectWeek: vi.fn(),
+    selectedWeekStart: week.weekStartDate,
+    reviewHandoff: null,
+    timelineIndex: {
+      years: [],
+      selectedWeekStartDate: week.weekStartDate,
+      currentWeekStartDate: week.weekStartDate
+    },
+    today: "2026-07-13",
+    week,
+    weekStack: { [week.weekStartDate]: week },
+    weekStarts: [week.weekStartDate],
+    onCreate: vi.fn(),
+    onEdit: vi.fn(),
+    onSetCompletion,
+    onDelete: vi.fn(),
+    onDuplicate: vi.fn(),
+    onCreateGoal: vi.fn(),
+    onCopyPriorWeek: vi.fn(),
+    onDeriveWeekGoals: vi.fn(),
+    onEditGoal: vi.fn(),
+    onOpenPlanWeek: vi.fn(),
+    onSync: vi.fn(),
+    copyingPriorWeekId: null
+  };
+}
+
+function makeWeek(workout: Workout): TrainingWeek {
+  return {
+    id: "week-1",
+    weekStartDate: "2026-07-13",
+    weekEndDate: "2026-07-19",
+    plannedMileage: 0,
+    actualMileage: 0,
+    plannedTime: 1800,
+    actualTime: null,
+    mesocycleId: null,
+    purpose: "maintain",
+    purposeSource: "manual",
+    targetMileage: null,
+    targetMileageSource: "manual",
+    targetLongRunDistance: null,
+    targetLongRunSource: "manual",
+    isDownWeek: false,
+    notes: "",
+    reviewedAt: null,
+    workouts: [workout],
+    actualActivities: [],
+    goals: [],
+    goalEvaluations: [],
+    weekState: "current",
+    goalReviewSummary: "",
+    hardDays: 0,
+    longRunDistance: 0,
+    longRunPercentage: 0
+  };
+}
+
+function makeWorkout(): Workout {
+  return {
+    id: "workout-1",
+    trainingWeekId: "week-1",
+    athleteAccountId: "athlete-1",
+    plannedDate: "2026-07-13",
+    title: "Untracked strength session",
+    sport: "strength",
+    workoutType: "strength",
+    intensityCategory: "strength",
+    plannedDistance: null,
+    plannedDuration: 1800,
+    plannedPace: null,
+    plannedElevation: null,
+    plannedTss: null,
+    purpose: "General strength",
+    instructions: "",
+    notes: "",
+    status: "planned"
+  };
+}

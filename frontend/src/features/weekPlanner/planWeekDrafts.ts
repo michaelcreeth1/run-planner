@@ -20,7 +20,7 @@ import { addDays, daysBetween } from "../../lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload, optionalNumber } from "../../lib/forms";
 import { comparisonMileage, formatNumber, labelForWorkoutType } from "../../lib/formatters";
 import { roundToTenth } from "../../lib/numbers";
-import { weekPurposes } from "../../lib/options";
+import { sessionTypeForWorkout, weekPurposes } from "../../lib/options";
 import { formatDurationSeconds, paceInputFromMetrics } from "../../lib/workoutMetrics";
 
 export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, TrainingWeek>): PlanWeekDraft {
@@ -192,20 +192,20 @@ export function draftWorkoutsFromWeek(sourceWeek: TrainingWeek, targetWeekStartD
 }
 
 export function workoutDraftFromWorkout(workout: Workout, plannedDate: string): PlanWeekWorkoutDraft {
+  const sessionType = sessionTypeForWorkout(workout);
   return {
     draftId: draftId("workout"),
     plannedDate,
     title: workout.title,
-    sport: workout.sport,
-    workoutType: workout.workoutType,
-    intensityCategory: workout.intensityCategory,
-    plannedDistance: workout.plannedDistance?.toString() ?? "",
+    sport: sessionType.sport,
+    workoutType: sessionType.workoutType,
+    intensityCategory: sessionType.intensityCategory,
+    plannedDistance: sessionType.sport === "run" ? workout.plannedDistance?.toString() ?? "" : "",
     plannedDuration: workout.plannedDuration ? formatDurationSeconds(workout.plannedDuration) : "",
-    plannedPace: paceInputFromMetrics(
-      workout.plannedDuration,
-      workout.plannedDistance,
-      workout.plannedPace
-    ),
+    plannedPace:
+      sessionType.sport === "run"
+        ? paceInputFromMetrics(workout.plannedDuration, workout.plannedDistance, workout.plannedPace)
+        : "",
     purpose: workout.purpose,
     instructions: workout.instructions,
     notes: workout.notes,
@@ -226,6 +226,15 @@ export function restWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
   };
 }
 
+export function newWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
+  return {
+    ...defaultForm(plannedDate),
+    draftId: draftId("workout"),
+    title: "Easy run",
+    purpose: "Aerobic training"
+  };
+}
+
 export function scaleDraftWorkoutsToMileage(workouts: PlanWeekWorkoutDraft[], targetMileage: number) {
   const currentMileage = sumDraftRunDistance(workouts);
   if (!currentMileage || !targetMileage) {
@@ -233,7 +242,7 @@ export function scaleDraftWorkoutsToMileage(workouts: PlanWeekWorkoutDraft[], ta
   }
   const scale = targetMileage / currentMileage;
   return workouts.map((workout) => {
-    if (workout.sport !== "run") {
+    if (effectiveWorkoutSport(workout) !== "run") {
       return workout;
     }
     return {
@@ -251,8 +260,8 @@ export function deriveGoalDraftsFromSchedule(draft: PlanWeekDraft, sourceLabel: 
       : draft.load.suggestedMileage || scheduleMileage;
   const hardSessions = countDraftHardSessions(draft.workouts);
   const longestRun = maxDraftRunDistance(draft.workouts);
-  const sessions = draft.workouts.filter((workout) => workout.sport !== "rest").length;
-  const strengthSessions = draft.workouts.filter((workout) => workout.sport === "strength" || workout.workoutType === "strength").length;
+  const sessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+  const strengthSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) === "strength").length;
   const goals: PlanWeekGoalDraft[] = [];
 
   if (mileage > 0) {
@@ -447,11 +456,11 @@ export function evaluatePlanAlignment(draft: PlanWeekDraft): AlignmentItem[] {
       return numericAlignment("recovery", "Recovery", restDays, goal, `${restDays} rest day${restDays === 1 ? "" : "s"} planned`);
     }
     if (goal.category === "sessions") {
-      const sessions = draft.workouts.filter((workout) => workout.sport !== "rest").length;
+      const sessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
       return numericAlignment("sessions", "Sessions", sessions, goal, `${sessions} sessions planned`);
     }
     if (goal.category === "strength") {
-      const strength = draft.workouts.filter((workout) => workout.sport === "strength" || workout.workoutType === "strength").length;
+      const strength = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) === "strength").length;
       return numericAlignment("strength", "Strength", strength, goal, `${strength} strength session${strength === 1 ? "" : "s"} planned`);
     }
     return {
@@ -485,7 +494,17 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
     purpose: draft.purpose,
     customPurpose: draft.customPurpose,
     targetLongRunDistance: optionalNumber(draft.goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
-    workouts: draft.workouts.map((workout) => formToPayload(workout)),
+    workouts: draft.workouts.map((workout) => {
+      const sessionType = sessionTypeForWorkout(workout);
+      return formToPayload({
+        ...workout,
+        sport: sessionType.sport,
+        workoutType: sessionType.workoutType,
+        intensityCategory: sessionType.intensityCategory,
+        plannedDistance: sessionType.sport === "run" ? workout.plannedDistance : "",
+        plannedPace: sessionType.sport === "run" ? workout.plannedPace : ""
+      });
+    }),
     goals: draft.goals.map((goal) => ({
       ...goalFormToPayload({ ...goal, weekId: draft.weekId }),
       label: goalLabelFromDraft(goal),
@@ -498,7 +517,7 @@ export function startingPointOptions(draft: PlanWeekDraft): Array<{ value: PlanS
   return [
     ...(draft.hasExistingPlan ? [{ value: "existing" as const, label: "Existing plan" }] : []),
     { value: "copy_prior" as const, label: "Copy prior week" },
-    { value: "smart_adjustment" as const, label: "Smart adjustment" },
+    { value: "smart_adjustment" as const, label: "Rebalance remaining days" },
     { value: "blank" as const, label: "Start blank" }
   ];
 }
@@ -572,7 +591,7 @@ export function goalLabelFromDraft(goal: PlanWeekGoalDraft) {
 }
 
 export function formatDraftWorkoutLabel(workout: PlanWeekWorkoutDraft) {
-  if (workout.sport === "rest") {
+  if (effectiveWorkoutSport(workout) === "rest") {
     return "Rest";
   }
   const miles = optionalNumber(workout.plannedDistance);
@@ -601,7 +620,7 @@ export function sortDraftWorkouts(a: PlanWeekWorkoutDraft, b: PlanWeekWorkoutDra
 export function sumDraftRunDistance(workouts: Array<Pick<Workout, "sport" | "plannedDistance"> | PlanWeekWorkoutDraft>) {
   return roundToTenth(
     workouts.reduce((sum, workout) => {
-      if (workout.sport !== "run") {
+      if (!("workoutType" in workout) ? workout.sport !== "run" : effectiveWorkoutSport(workout) !== "run") {
         return sum;
       }
       const distance = typeof workout.plannedDistance === "string" ? Number(workout.plannedDistance || 0) : workout.plannedDistance ?? 0;
@@ -614,7 +633,7 @@ export function maxDraftRunDistance(workouts: PlanWeekWorkoutDraft[]) {
   return roundToTenth(
     Math.max(
       ...workouts
-        .filter((workout) => workout.sport === "run")
+        .filter((workout) => effectiveWorkoutSport(workout) === "run")
         .map((workout) => Number(workout.plannedDistance || 0)),
       0
     )
@@ -630,8 +649,14 @@ export function countDraftHardSessions(workouts: PlanWeekWorkoutDraft[]) {
 }
 
 export function countDraftRestDays(workouts: PlanWeekWorkoutDraft[], weekStartDate: string) {
-  const trainingDays = new Set(workouts.filter((workout) => workout.sport !== "rest").map((workout) => workout.plannedDate));
+  const trainingDays = new Set(
+    workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").map((workout) => workout.plannedDate)
+  );
   return Array.from({ length: 7 }, (_, index) => addDays(weekStartDate, index)).filter((dateValue) => !trainingDays.has(dateValue)).length;
+}
+
+export function effectiveWorkoutSport(workout: Pick<PlanWeekWorkoutDraft, "sport" | "workoutType">) {
+  return sessionTypeForWorkout(workout).sport;
 }
 
 export function normalizedActivitySport(sportType: string): Workout["sport"] {

@@ -82,6 +82,7 @@ def update_goal_race(
     athlete_account_id: str,
 ) -> dict[str, Any]:
     race = get_goal_race_model(db, goal_race_id, athlete_account_id)
+    previous_race_date = race.race_date
     updates = payload.model_dump(exclude_unset=True)
     if "distance" in updates or "distance_miles" in updates:
         merged = {
@@ -98,9 +99,76 @@ def update_goal_race(
         updates = validated_goal_race_data(GoalRaceCreate(**merged))
     for field, value in updates.items():
         setattr(race, field, value)
+    if race.race_date != previous_race_date:
+        sync_linked_plans_to_race_date(db, race, athlete_account_id)
     db.commit()
     db.refresh(race)
     return serialize_goal_race(race)
+
+
+def sync_linked_plans_to_race_date(
+    db: Session,
+    race: GoalRace,
+    athlete_account_id: str,
+) -> None:
+    linked_plans = db.scalars(
+        select(TrainingPlan)
+        .where(
+            TrainingPlan.goal_race_id == race.id,
+            TrainingPlan.athlete_account_id == athlete_account_id,
+        )
+        .options(*PLAN_RELATIONSHIPS)
+    ).all()
+    for plan in linked_plans:
+        if race.race_date < plan.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{race.name} cannot move before the start of its linked training plan."
+                ),
+            )
+        validate_no_overlap(
+            db,
+            athlete_account_id,
+            plan.start_date,
+            race.race_date,
+            existing_plan_id=plan.id,
+            incoming_status=plan.status,
+        )
+
+    for plan in linked_plans:
+        old_linked_weeks = linked_weeks_by_start(db, plan.id, athlete_account_id)
+        retained_mesocycles = [
+            mesocycle for mesocycle in plan.mesocycles if mesocycle.start_date <= race.race_date
+        ]
+        if not retained_mesocycles:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Goal race date must fall on or after the first training phase.",
+            )
+
+        plan.mesocycles[:] = retained_mesocycles
+        plan.end_date = race.race_date
+        plan.mesocycles[-1].end_date = race.race_date
+        db.add(plan)
+        db.flush()
+
+        normalized_mesocycles = [serialize_mesocycle(mesocycle) for mesocycle in plan.mesocycles]
+        scaffold_weeks(
+            db,
+            athlete_account_id,
+            normalized_mesocycles,
+            weeks_for_preview(
+                db,
+                athlete_account_id,
+                plan.start_date,
+                plan.end_date,
+                existing_plan_id=plan.id,
+            ),
+            linked_weeks_by_start=old_linked_weeks,
+            apply_changes=True,
+            recurring_goals=[serialize_recurring_goal(goal) for goal in plan.recurring_goals],
+        )
 
 
 def delete_goal_race(db: Session, goal_race_id: str, athlete_account_id: str) -> None:
@@ -297,13 +365,6 @@ def normalize_plan_spec(
 ) -> dict[str, Any]:
     data = payload.model_dump()
     data["start_date"] = normalize_to_monday(payload.start_date)
-    data["end_date"] = normalize_to_sunday(payload.end_date)
-    if data["end_date"] < data["start_date"]:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Plan end date must be on or after the start date.",
-        )
-
     goal_race_date = None
     if payload.goal_race_id:
         goal_race = get_goal_race_model(db, payload.goal_race_id, athlete_account_id)
@@ -312,10 +373,15 @@ def normalize_plan_spec(
         validated_goal_race_data(payload.goal_race)
         goal_race_date = payload.goal_race.race_date
 
-    if goal_race_date and not (data["start_date"] <= goal_race_date <= data["end_date"]):
+    data["end_date"] = goal_race_date or normalize_to_sunday(payload.end_date)
+    if data["end_date"] < data["start_date"]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Goal race date must fall within the training plan date range.",
+            detail=(
+                "Goal race date must be on or after the training plan start date."
+                if goal_race_date
+                else "Plan end date must be on or after the start date."
+            ),
         )
 
     validate_no_overlap(
@@ -327,7 +393,10 @@ def normalize_plan_spec(
         incoming_status=data["status"],
     )
     data["mesocycles"] = normalize_mesocycles(
-        payload.mesocycles, data["start_date"], data["end_date"]
+        payload.mesocycles,
+        data["start_date"],
+        data["end_date"],
+        derived_end_date=goal_race_date is not None,
     )
     data["recurring_goals"] = [goal.model_dump() for goal in payload.recurring_goals]
     return data
@@ -337,12 +406,19 @@ def normalize_mesocycles(
     mesocycles: list[MesocycleSpec],
     plan_start_date: date,
     plan_end_date: date,
+    *,
+    derived_end_date: bool = False,
 ) -> list[dict[str, Any]]:
     normalized = []
-    for mesocycle in sorted(mesocycles, key=lambda item: item.order_index):
+    sorted_mesocycles = sorted(mesocycles, key=lambda item: item.order_index)
+    for index, mesocycle in enumerate(sorted_mesocycles):
         data = mesocycle.model_dump()
         data["start_date"] = normalize_to_monday(mesocycle.start_date)
-        data["end_date"] = normalize_to_sunday(mesocycle.end_date)
+        data["end_date"] = (
+            plan_end_date
+            if derived_end_date and index == len(sorted_mesocycles) - 1
+            else normalize_to_sunday(mesocycle.end_date)
+        )
         normalized.append(data)
 
     if not normalized:

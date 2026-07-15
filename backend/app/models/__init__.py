@@ -9,6 +9,7 @@ from app.models.planning import (
     TrainingWeek,
     UserAccount,
     WeekGoal,
+    WeeklyMetricSnapshot,
     WorkoutTemplate,
 )
 from app.models.strava import StravaActivity, StravaOAuthToken, StravaWebhookEvent, SyncJob
@@ -28,5 +29,6 @@ __all__ = [
     "TrainingWeek",
     "UserAccount",
     "WeekGoal",
+    "WeeklyMetricSnapshot",
     "WorkoutTemplate",
 ]

@@ -55,6 +55,7 @@ export function WeekView({
   weekStarts,
   onCreate,
   onEdit,
+  onSetCompletion,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -88,6 +89,7 @@ export function WeekView({
   weekStarts: string[];
   onCreate: (plannedDate: string) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -187,6 +189,7 @@ export function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onSetCompletion={onSetCompletion}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
@@ -222,6 +225,7 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onSetCompletion,
   onCreateGoal,
   onCopyPriorWeek,
   onDeriveWeekGoals,
@@ -242,6 +246,7 @@ function WeekRow({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
@@ -289,6 +294,7 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onSetCompletion={onSetCompletion}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
@@ -369,6 +375,7 @@ function ExpandedWeekBoard({
   weekStart,
   onCreate,
   onEdit,
+  onSetCompletion,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -385,6 +392,7 @@ function ExpandedWeekBoard({
   weekStart: string;
   onCreate: (plannedDate: string) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -433,6 +441,7 @@ function ExpandedWeekBoard({
       onDeriveWeekGoals={onDeriveWeekGoals}
       onDuplicate={onDuplicate}
       onEdit={onEdit}
+      onSetCompletion={onSetCompletion}
       onEditGoal={onEditGoal}
       onOpenPlanWeek={onOpenPlanWeek}
       onSync={onSync}
@@ -453,6 +462,7 @@ function WeekSlate({
   onDeriveWeekGoals,
   onDuplicate,
   onEdit,
+  onSetCompletion,
   onEditGoal,
   onOpenPlanWeek,
   onSync,
@@ -469,6 +479,7 @@ function WeekSlate({
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSync: () => void;
@@ -511,6 +522,7 @@ function WeekSlate({
           onDelete={onDelete}
           onDuplicate={onDuplicate}
           onEdit={onEdit}
+          onSetCompletion={onSetCompletion}
           today={today}
           workouts={workouts}
         />
@@ -526,6 +538,7 @@ function WeekSchedule({
   onDelete,
   onDuplicate,
   onEdit,
+  onSetCompletion,
   today,
   workouts
 }: {
@@ -535,6 +548,7 @@ function WeekSchedule({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   today: string;
   workouts: Workout[];
 }) {
@@ -587,6 +601,7 @@ function WeekSchedule({
                       onDelete={onDelete}
                       onDuplicate={onDuplicate}
                       onEdit={onEdit}
+                      onSetCompletion={onSetCompletion}
                     />
                   )
                 )}
@@ -776,6 +791,7 @@ function WorkoutItem({
   actual,
   today,
   onEdit,
+  onSetCompletion,
   onDelete,
   onDuplicate
 }: {
@@ -783,11 +799,14 @@ function WorkoutItem({
   actual: ActualActivity | null;
   today: string;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
 }) {
   const state = workoutState(workout, actual, today);
   const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
+  const isManuallyCompleted = !actual && workout.status === "completed_as_planned";
+  const canSetCompletion = !actual && !isRest && (isManuallyCompleted || state !== "done");
   const plannedMeta = formatWorkoutMeta(workout);
   const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
 
@@ -808,6 +827,15 @@ function WorkoutItem({
   }
   if (actual?.averageHeartrate) {
     detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
+  }
+  if (!actual && state === "done") {
+    detailPieces.push(
+      workout.status === "completed_modified"
+        ? "completed with changes"
+        : workout.status === "partial"
+          ? "partially completed"
+          : "completed manually"
+    );
   }
   const detail = detailPieces.join(" · ");
 
@@ -831,6 +859,18 @@ function WorkoutItem({
         </span>
         {detail ? <small>{detail}</small> : null}
       </button>
+      {canSetCompletion ? (
+        <button
+          type="button"
+          className={`workout-completion-toggle ${isManuallyCompleted ? "is-complete" : ""}`}
+          aria-label={`Mark ${workout.title} ${isManuallyCompleted ? "incomplete" : "complete"}`}
+          aria-pressed={isManuallyCompleted}
+          title={isManuallyCompleted ? "Mark workout incomplete" : "Mark workout complete"}
+          onClick={() => onSetCompletion(workout, !isManuallyCompleted)}
+        >
+          <Check size={14} strokeWidth={2.75} aria-hidden="true" />
+        </button>
+      ) : null}
       <div className="workout-controls">
         {actual ? (
           <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>

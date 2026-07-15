@@ -40,6 +40,7 @@ export function formToPayload(form: WorkoutForm) {
 export function defaultGoalForm(weekId: string): WeekGoalForm {
   return {
     weekId,
+    metricKey: null,
     category: "custom",
     goalType: "achievement",
     label: "",
@@ -57,6 +58,7 @@ export function defaultGoalForm(weekId: string): WeekGoalForm {
 
 export function goalFormToPayload(form: WeekGoalForm) {
   return {
+    metricKey: form.metricKey ?? null,
     category: form.category,
     goalType: form.goalType,
     label: form.label,

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Ellipsis, Plus, Save, X } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
   PlanStartingPoint,
@@ -6,20 +6,20 @@ import type {
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
   TrainingWeek,
+  WeekGoalCategory,
   WeekPurposeId
 } from "../../types/domain";
 import { addDays } from "../../lib/dates";
 import { formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
-import { weekPurposes } from "../../lib/options";
+import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes, weekPurposes } from "../../lib/options";
 import {
   countDraftHardSessions,
-  deriveGoalDraftsFromSchedule,
   draftGoalTitle,
+  effectiveWorkoutSport,
   evaluatePlanAlignment,
-  formatDraftWorkoutLabel,
   formatGuardrailDraft,
+  newWorkoutDraft,
   rebuildPlanWeekDraftForStartingPoint,
-  restWorkoutDraft,
   scaleDraftWorkoutsToMileage,
   sortDraftWorkouts,
   startingPointOptions,
@@ -46,11 +46,12 @@ export function PlanWeekDrawer({
 }) {
   const alignment = evaluatePlanAlignment(draft);
   const mismatches = alignment.filter((item) => item.status === "mismatch");
+  const passedChecks = alignment.length - mismatches.length;
   const achievementGoals = draft.goals.filter((goal) => goal.goalType === "achievement");
-  const detailedAchievementGoals = achievementGoals.filter((goal) => !["mileage", "quality"].includes(goal.category));
   const guardrailGoals = draft.goals.filter((goal) => goal.goalType === "guardrail");
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
+  const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
   const purpose = weekPurposes.find((option) => option.value === draft.purpose) ?? weekPurposes[0];
   const drawerTitle =
     draft.weekState === "past"
@@ -113,6 +114,31 @@ export function PlanWeekDrawer({
     }));
   }
 
+  function updateWorkoutType(workoutDraftId: string, sessionTypeValue: string) {
+    const sessionType = sessionTypes.find((option) => option.value === sessionTypeValue);
+    if (!sessionType) {
+      return;
+    }
+    updateDraft((current) => ({
+      ...current,
+      workouts: current.workouts.map((workout) => {
+        if (workout.draftId !== workoutDraftId) {
+          return workout;
+        }
+        const currentSessionType = sessionTypeForWorkout(workout);
+        const keepRunMetrics = sessionType.sport === "run" && currentSessionType.sport === "run";
+        return {
+          ...workout,
+          sport: sessionType.sport,
+          workoutType: sessionType.workoutType,
+          intensityCategory: sessionType.intensityCategory,
+          plannedDistance: keepRunMetrics ? workout.plannedDistance : "",
+          plannedPace: keepRunMetrics ? workout.plannedPace : ""
+        };
+      })
+    }));
+  }
+
   function removeWorkout(workoutDraftId: string) {
     updateDraft((current) => ({
       ...current,
@@ -120,36 +146,85 @@ export function PlanWeekDrawer({
     }));
   }
 
-  function markDayRest(dateValue: string) {
-    updateDraft((current) => ({
-      ...current,
-      workouts: [
-        ...current.workouts.filter((workout) => workout.plannedDate !== dateValue),
-        restWorkoutDraft(dateValue)
-      ].sort(sortDraftWorkouts)
-    }));
-  }
-
-  function regenerateGoalsFromSchedule() {
-    updateDraft((current) => ({
-      ...current,
-      goals: deriveGoalDraftsFromSchedule(current, "Schedule")
-    }));
-  }
-
-  function applySuggestedGoals() {
+  function addWorkout(dateValue: string) {
     updateDraft((current) => {
-      const adjustedWorkouts = scaleDraftWorkoutsToMileage(current.workouts, current.load.suggestedMileage);
-      const nextLoad = suggestLoad(current.load.priorMileage, current.purpose, adjustedWorkouts);
-      const nextDraft = {
-        ...current,
-        load: nextLoad,
-        workouts: adjustedWorkouts.sort(sortDraftWorkouts)
-      };
+      const workouts = current.workouts.filter(
+        (workout) => workout.plannedDate !== dateValue || effectiveWorkoutSport(workout) !== "rest"
+      );
+      const lastDayIndex = workouts.reduce(
+        (lastIndex, workout, index) => (workout.plannedDate === dateValue ? index : lastIndex),
+        -1
+      );
+      const nextDayIndex = workouts.findIndex((workout) => workout.plannedDate > dateValue);
+      const insertionIndex = lastDayIndex >= 0 ? lastDayIndex + 1 : nextDayIndex >= 0 ? nextDayIndex : workouts.length;
       return {
-        ...nextDraft,
-        goals: deriveGoalDraftsFromSchedule(nextDraft, "Suggested")
+        ...current,
+        workouts: [
+          ...workouts.slice(0, insertionIndex),
+          newWorkoutDraft(dateValue),
+          ...workouts.slice(insertionIndex)
+        ]
       };
+    });
+  }
+
+  function updateTargetToSchedule(category: WeekGoalCategory) {
+    updateDraft((current) => {
+      const scheduleValue = goalValueFromSchedule(current, category);
+      return {
+        ...current,
+        goals: current.goals.map((goal) => {
+          if (goal.goalType !== "achievement" || goal.category !== category) {
+            return goal;
+          }
+
+          return {
+            ...goal,
+            targetValue: String(scheduleValue),
+            minAcceptable: goal.evaluationMode === "at_most" ? "" : String(scheduleValue),
+            maxAcceptable: goal.evaluationMode === "at_least" ? "" : String(scheduleValue),
+            manuallyEdited: true,
+            source: "workouts",
+            sourceLabel: "Schedule"
+          };
+        })
+      };
+    });
+  }
+
+  function adjustScheduleToTarget(category: WeekGoalCategory) {
+    updateDraft((current) => {
+      const goal = current.goals.find(
+        (candidate) => candidate.goalType === "achievement" && candidate.category === category
+      );
+      const target = goalTarget(goal);
+      if (target === null || target <= 0) {
+        return current;
+      }
+
+      if (category === "mileage") {
+        return {
+          ...current,
+          workouts: scaleDraftWorkoutsToMileage(current.workouts, target).sort(sortDraftWorkouts)
+        };
+      }
+
+      if (category === "long_run") {
+        const longestRun = current.workouts
+          .filter((workout) => effectiveWorkoutSport(workout) === "run")
+          .sort((left, right) => Number(right.plannedDistance || 0) - Number(left.plannedDistance || 0))[0];
+        if (!longestRun) {
+          return current;
+        }
+        return {
+          ...current,
+          workouts: current.workouts.map((workout) =>
+            workout.draftId === longestRun.draftId ? { ...workout, plannedDistance: String(target) } : workout
+          )
+        };
+      }
+
+      return current;
     });
   }
 
@@ -167,43 +242,35 @@ export function PlanWeekDrawer({
         </header>
 
         <div className="plan-week-body">
-          <section className="plan-week-section">
+          <section className="plan-week-section plan-week-direction">
             <div className="section-heading">
-              <span>1</span>
-              <h3>Starting point</h3>
+              <h3>Week direction</h3>
             </div>
-            {draft.noPriorUsableWeek ? (
-              <p className="plan-week-note">No prior usable week was found, so this draft starts blank.</p>
-            ) : null}
-            <div className="segmented-control">
-              {startingPointOptions(draft).map((option) => (
-                <button
-                  className={draft.startingPoint === option.value ? "active" : ""}
-                  key={option.value}
-                  type="button"
-                  onClick={() => replaceFromStartingPoint(option.value)}
+            <div className="week-direction-controls">
+              <label>
+                <span>Starting point</span>
+                <select
+                  value={draft.startingPoint}
+                  onChange={(event) => replaceFromStartingPoint(event.target.value as PlanStartingPoint)}
                 >
-                  {option.label}
-                </button>
-              ))}
+                  {startingPointOptions(draft).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Purpose</span>
+                <select value={draft.purpose} onChange={(event) => updatePurpose(event.target.value as WeekPurposeId)}>
+                  {weekPurposes.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-          </section>
-
-          <section className="plan-week-section">
-            <div className="section-heading">
-              <span>2</span>
-              <h3>Week purpose</h3>
-            </div>
-            <label>
-              <span>Purpose</span>
-              <select value={draft.purpose} onChange={(event) => updatePurpose(event.target.value as WeekPurposeId)}>
-                {weekPurposes.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
             {draft.purpose === "custom" ? (
               <label>
                 <span>Custom purpose</span>
@@ -218,149 +285,242 @@ export function PlanWeekDrawer({
                 />
               </label>
             ) : null}
+            {draft.noPriorUsableWeek ? (
+              <p className="plan-week-note">No prior usable week was found, so this draft starts blank.</p>
+            ) : null}
             <p className="plan-week-note">
               {purpose.meaning} Load direction: {purpose.loadDirection}.
             </p>
           </section>
 
-          <section className="plan-week-section">
+          <section className="plan-week-section plan-summary-section">
             <div className="section-heading">
-              <span>3</span>
-              <h3>Proposed load</h3>
+              <h3>Plan summary</h3>
             </div>
-            <div className="proposed-load">
+            <div className="plan-summary-grid">
               <div>
-                <span>Prior week</span>
-                <strong>{draft.load.priorMileage === null ? "No prior load" : `${formatNumber(draft.load.priorMileage)} mi`}</strong>
+                <span>Scheduled mileage</span>
+                <strong>{formatNumber(scheduledMileage)} mi</strong>
+                <small>The total of the run sessions below</small>
               </div>
               <div>
-                <span>Mileage</span>
+                <span>Schedule</span>
+                <strong>{scheduledSessions} session{scheduledSessions === 1 ? "" : "s"}</strong>
+                <small>{scheduledQuality} hard session{scheduledQuality === 1 ? "" : "s"}</small>
+              </div>
+              <div>
+                <span>Direction</span>
                 <strong>{formatNumber(draft.load.suggestedMileage)} mi</strong>
-                <small>{scheduledMileage ? `${formatNumber(scheduledMileage)} scheduled` : "No schedule yet"}</small>
-              </div>
-              <div>
-                <span>Quality</span>
-                <strong>{scheduledQuality} hard</strong>
-                <small>{scheduledQuality === 1 ? "session" : "sessions"}</small>
+                <small>
+                  {draft.load.priorMileage === null
+                    ? "No prior load"
+                    : `${formatNumber(draft.load.priorMileage)} mi prior week`}
+                </small>
               </div>
             </div>
             <p className="plan-week-note">{draft.load.reason}</p>
-            <button className="text-action" type="button" onClick={applySuggestedGoals}>
-              Update goals to suggested load
-            </button>
           </section>
 
-          <details className="plan-week-section plan-goals-disclosure">
-            <summary>
-              <div className="section-heading">
-                <span>4</span>
-                <h3>Proposed goals</h3>
+          <section className="plan-week-section schedule-section">
+            <div className="section-heading schedule-section-heading">
+              <div>
+                <h3>Schedule</h3>
+                <small>Edit each session directly. Mileage only applies to running sessions.</small>
               </div>
-              <small>{detailedAchievementGoals.length} supporting goal{detailedAchievementGoals.length === 1 ? "" : "s"}</small>
-              <ChevronDown size={16} />
-            </summary>
-            <div className="draft-goal-list">
-              {detailedAchievementGoals.map((goal) => (
-                <DraftGoalEditor goal={goal} key={goal.draftId} onChange={(updates) => updateGoal(goal.draftId, updates)} />
-              ))}
-              {!detailedAchievementGoals.length ? (
-                <p className="plan-week-note">Mileage and quality are handled in proposed load.</p>
-              ) : null}
             </div>
-          </details>
-
-          {guardrailGoals.length ? (
-            <section className="plan-week-section">
-              <div className="section-heading">
-                <span>5</span>
-                <h3>Guardrails</h3>
+            <div className="schedule-draft-column-labels" aria-hidden="true">
+              <span />
+              <div>
+                <span>Name</span>
+                <span>Type</span>
+                <span>Mileage</span>
+                <span>Actions</span>
               </div>
-              <div className="guardrail-draft-list">
-                {guardrailGoals.map((goal) => (
-                  <div className="guardrail-draft" key={goal.draftId}>
-                    <strong>{goal.label}</strong>
-                    <span>{formatGuardrailDraft(goal)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          <section className="plan-week-section">
-            <div className="section-heading">
-              <span>{guardrailGoals.length ? "6" : "5"}</span>
-              <h3>Schedule draft</h3>
             </div>
             <div className="schedule-draft">
               {Array.from({ length: 7 }, (_, index) => addDays(draft.weekStartDate, index)).map((dateValue) => {
-                const dayWorkouts = draft.workouts.filter((workout) => workout.plannedDate === dateValue);
+                const dayWorkouts = draft.workouts.filter(
+                  (workout) => workout.plannedDate === dateValue && effectiveWorkoutSport(workout) !== "rest"
+                );
                 return (
                   <div className="schedule-draft-day" key={dateValue}>
-                    <strong>{formatWeekday(dateValue)}</strong>
-                    <div>
+                    <div className="schedule-day-heading">
+                      <strong>{formatWeekday(dateValue)}</strong>
+                      <button
+                        aria-label={`Add session to ${formatWeekday(dateValue)}`}
+                        className="schedule-day-add"
+                        title={`Add session to ${formatWeekday(dateValue)}`}
+                        type="button"
+                        onClick={() => addWorkout(dateValue)}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                    <div className="schedule-draft-sessions">
                       {dayWorkouts.length ? (
-                        dayWorkouts.map((workout) => (
-                          <div className="schedule-draft-workout" key={workout.draftId}>
-                            <span>{formatDraftWorkoutLabel(workout)}</span>
-                            <input
-                              aria-label={`${workout.title} distance`}
-                              min="0"
-                              step="0.1"
-                              type="number"
-                              value={workout.plannedDistance}
-                              onChange={(event) =>
-                                updateWorkout(workout.draftId, { plannedDistance: event.target.value })
-                              }
-                            />
-                            <button type="button" title="Remove workout" onClick={() => removeWorkout(workout.draftId)}>
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))
+                        dayWorkouts.map((workout, workoutIndex) => {
+                          const sessionType = sessionTypeForWorkout(workout);
+                          const fieldPrefix = `${formatWeekday(dateValue)} session ${workoutIndex + 1}`;
+                          return (
+                            <div className="schedule-draft-workout" key={workout.draftId}>
+                              <input
+                                aria-label={`${fieldPrefix} name`}
+                                className="session-name-input"
+                                placeholder="Session name"
+                                value={workout.title}
+                                onChange={(event) => updateWorkout(workout.draftId, { title: event.target.value })}
+                              />
+                              <select
+                                aria-label={`${fieldPrefix} type`}
+                                className="session-type-select"
+                                value={sessionType.value}
+                                onChange={(event) => updateWorkoutType(workout.draftId, event.target.value)}
+                              >
+                                {sessionTypeGroups.map((group) => (
+                                  <optgroup key={group.label} label={group.label}>
+                                    {group.options
+                                      .filter((option) => option.sport !== "rest")
+                                      .map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                ))}
+                              </select>
+                              {sessionType.sport === "run" ? (
+                                <label className="session-mileage-field" title="Session mileage">
+                                  <input
+                                    aria-label={`${fieldPrefix} mileage`}
+                                    min="0"
+                                    step="0.1"
+                                    type="number"
+                                    value={workout.plannedDistance}
+                                    onChange={(event) =>
+                                      updateWorkout(workout.draftId, { plannedDistance: event.target.value })
+                                    }
+                                  />
+                                  <span>mi</span>
+                                </label>
+                              ) : (
+                                <span className="session-mileage-not-applicable">—</span>
+                              )}
+                              <details className="overflow-menu session-overflow-menu">
+                                <summary
+                                  aria-label={`Actions for ${fieldPrefix}`}
+                                  title={`${workout.title || fieldPrefix} actions`}
+                                >
+                                  <Ellipsis size={15} />
+                                </summary>
+                                <div>
+                                  <button
+                                    aria-label={`Remove ${fieldPrefix}`}
+                                    type="button"
+                                    onClick={() => removeWorkout(workout.draftId)}
+                                  >
+                                    Remove session
+                                  </button>
+                                </div>
+                              </details>
+                            </div>
+                          );
+                        })
                       ) : (
-                        <span className="schedule-rest">Rest</span>
+                        <div className="schedule-rest-row">
+                          <span className="schedule-rest">Rest</span>
+                        </div>
                       )}
                     </div>
-                    {dayWorkouts.length ? (
-                      <button className="compact-rest-button" type="button" onClick={() => markDayRest(dateValue)}>
-                        Rest
-                      </button>
-                    ) : null}
                   </div>
                 );
               })}
             </div>
           </section>
 
-          <section className="plan-week-section">
+          <section className="plan-week-section exception-review-section">
             <div className="section-heading">
-              <span>{guardrailGoals.length ? "7" : "6"}</span>
-              <h3>Plan alignment</h3>
+              <h3>Review</h3>
             </div>
-            <div className="alignment-summary">
-              <strong>{mismatches.length ? `${mismatches.length} mismatch${mismatches.length === 1 ? "" : "es"}` : "Plan aligned"}</strong>
-              <span>{alignment.length} checks</span>
+            <div className={`alignment-summary${mismatches.length ? "" : " alignment-summary--passed"}`}>
+              <strong>
+                {mismatches.length
+                  ? `${mismatches.length} exception${mismatches.length === 1 ? "" : "s"} to review`
+                  : "Everything lines up"}
+              </strong>
+              <span>{passedChecks} check{passedChecks === 1 ? "" : "s"} passed</span>
             </div>
             <p className="plan-week-note">These checks are advisory and never prevent you from saving the plan.</p>
-            <div className="alignment-list">
-              {alignment.map((item) => (
-                <div className={`alignment-item alignment-item--${item.status}`} key={item.id}>
-                  {item.status === "aligned" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            <div className="review-disclosures">
+              <details className="review-disclosure">
+                <summary>
                   <div>
-                    <strong>{item.label}</strong>
-                    <span>{item.detail}</span>
+                    <strong>Targets</strong>
+                    <small>{achievementGoals.length} configured</small>
                   </div>
+                  <ChevronDown size={16} />
+                </summary>
+                <div className="review-disclosure-content draft-goal-list">
+                  {achievementGoals.map((goal) => (
+                    <DraftGoalEditor
+                      goal={goal}
+                      key={goal.draftId}
+                      onChange={(updates) => updateGoal(goal.draftId, updates)}
+                    />
+                  ))}
+                  {!achievementGoals.length ? <p className="plan-week-note">No targets are set for this week.</p> : null}
                 </div>
-              ))}
+              </details>
+              <details className="review-disclosure">
+                <summary>
+                  <div>
+                    <strong>Guardrails</strong>
+                    <small>{guardrailGoals.length} configured</small>
+                  </div>
+                  <ChevronDown size={16} />
+                </summary>
+                <div className="review-disclosure-content guardrail-draft-list">
+                  {guardrailGoals.map((goal) => (
+                    <div className="guardrail-draft" key={goal.draftId}>
+                      <strong>{goal.label}</strong>
+                      <span>{formatGuardrailDraft(goal)}</span>
+                    </div>
+                  ))}
+                  {!guardrailGoals.length ? <p className="plan-week-note">No guardrails are set for this week.</p> : null}
+                </div>
+              </details>
             </div>
             {mismatches.length ? (
-              <div className="mismatch-actions">
-                <button type="button" onClick={regenerateGoalsFromSchedule}>
-                  Update goals to match plan
-                </button>
-                <button disabled type="button" title="Automatic plan adjustment is not ready yet.">
-                  Adjust plan to match goals
-                </button>
+              <div className="alignment-list alignment-list--exceptions">
+                {mismatches.map((item) => {
+                  const category = item.id as WeekGoalCategory;
+                  const adjustmentTarget = goalTarget(
+                    achievementGoals.find((goal) => goal.category === category)
+                  );
+                  const canAdjustSchedule =
+                    ["mileage", "long_run"].includes(category) &&
+                    adjustmentTarget !== null &&
+                    adjustmentTarget > 0 &&
+                    draft.workouts.some((workout) => effectiveWorkoutSport(workout) === "run");
+                  return (
+                    <div className="alignment-item alignment-item--mismatch" key={item.id}>
+                      <AlertTriangle size={16} />
+                      <div className="alignment-item-copy">
+                        <strong>{item.label}</strong>
+                        <span>{item.detail}</span>
+                      </div>
+                      <div className="mismatch-actions">
+                        {canAdjustSchedule ? (
+                          <button type="button" onClick={() => adjustScheduleToTarget(category)}>
+                            Match schedule to target
+                          </button>
+                        ) : null}
+                        <button type="button" onClick={() => updateTargetToSchedule(category)}>
+                          Update target
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </section>
@@ -373,12 +533,58 @@ export function PlanWeekDrawer({
           </button>
           <button className="primary" disabled={isSaving} type="button" onClick={() => onSave(draft)}>
             <Save size={17} />
-            <span>{isSaving ? "Saving" : "Save plan"}</span>
+            <span>{isSaving ? "Saving" : "Save changes"}</span>
           </button>
         </div>
       </aside>
     </div>
   );
+}
+
+function goalValueFromSchedule(draft: PlanWeekDraft, category: WeekGoalCategory) {
+  if (category === "mileage") {
+    return sumDraftRunDistance(draft.workouts);
+  }
+  if (category === "quality") {
+    return countDraftHardSessions(draft.workouts);
+  }
+  if (category === "long_run") {
+    return Math.max(
+      ...draft.workouts
+        .filter((workout) => effectiveWorkoutSport(workout) === "run")
+        .map((workout) => Number(workout.plannedDistance || 0)),
+      0
+    );
+  }
+  if (category === "recovery") {
+    const trainingDays = new Set(
+      draft.workouts
+        .filter((workout) => effectiveWorkoutSport(workout) !== "rest")
+        .map((workout) => workout.plannedDate)
+    );
+    return Array.from({ length: 7 }, (_, index) => addDays(draft.weekStartDate, index)).filter(
+      (dateValue) => !trainingDays.has(dateValue)
+    ).length;
+  }
+  if (category === "sessions") {
+    return draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+  }
+  if (category === "strength") {
+    return draft.workouts.filter((workout) => effectiveWorkoutSport(workout) === "strength").length;
+  }
+  return 0;
+}
+
+function goalTarget(goal: PlanWeekGoalDraft | undefined) {
+  if (!goal) {
+    return null;
+  }
+  const rawValue = goal.targetValue || goal.minAcceptable || goal.maxAcceptable;
+  if (!rawValue) {
+    return null;
+  }
+  const value = Number(rawValue);
+  return Number.isFinite(value) ? value : null;
 }
 
 function PastWeekReviewDrawer({

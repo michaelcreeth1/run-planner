@@ -51,6 +51,15 @@ export type Workout = {
 
 export type WeekGoalCategory = "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";
 export type WeekGoalType = "achievement" | "guardrail";
+export type WeekGoalMetric =
+  | "weekly_run_distance"
+  | "training_session_count"
+  | "longest_run_distance"
+  | "hard_training_day_count"
+  | "rest_day_count"
+  | "strength_session_count"
+  | "long_run_share"
+  | "back_to_back_hard_pairs";
 export type WeekGoalUnit = "mi" | "sessions" | "days" | "percent" | "boolean" | "custom";
 export type WeekGoalEvaluationMode = "at_least" | "at_most" | "range" | "exact-ish" | "boolean" | "manual";
 export type WeekGoalPriority = "primary" | "secondary" | "guardrail";
@@ -77,6 +86,7 @@ export type WeekGoal = {
   trainingWeekId: string;
   athleteAccountId: string;
   weekStartDate: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -98,6 +108,14 @@ export type WeekGoal = {
 export type WeekGoalEvaluation = {
   goalId: string;
   weekStartDate: string;
+  metricKey?: WeekGoalMetric | null;
+  basis?: "planned" | "actual" | "projected" | null;
+  measuredValue?: number | null;
+  unit?: WeekGoalUnit | null;
+  evaluationMode?: WeekGoalEvaluationMode | null;
+  thresholdValue?: number | null;
+  thresholdMin?: number | null;
+  thresholdMax?: number | null;
   status: WeekGoalStatus;
   guardrailStatus: "ok" | "warning" | "danger" | "waived" | "not_applicable" | null;
   actualValue: number | null;
@@ -312,6 +330,7 @@ export type WorkoutForm = {
 export type WeekGoalForm = {
   id?: string;
   weekId: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -410,6 +429,7 @@ export type RecurringGoal = {
   id: string;
   trainingPlanId: string | null;
   athleteAccountId: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -423,6 +443,17 @@ export type RecurringGoal = {
   notes: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type GoalMetricDefinition = {
+  key: WeekGoalMetric;
+  label: string;
+  category: WeekGoalCategory;
+  unit: WeekGoalUnit;
+  valueType: "integer" | "decimal";
+  operators: WeekGoalEvaluationMode[];
+  minimum: number;
+  maximum: number | null;
 };
 
 export type PlanWeekSummary = {

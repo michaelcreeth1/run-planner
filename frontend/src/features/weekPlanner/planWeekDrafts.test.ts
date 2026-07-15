@@ -245,6 +245,31 @@ describe("plan week draft helpers", () => {
     expect(payload.goals[0]).not.toHaveProperty("sourceLabel");
     expect(payload.goals[0]).not.toHaveProperty("qualityType");
   });
+
+  it("normalizes a strength workout that carries stale running fields", () => {
+    const draft = makeDraft({
+      workouts: [
+        makeDraftWorkout({
+          title: "Strength",
+          sport: "run",
+          workoutType: "strength",
+          intensityCategory: "strength",
+          plannedDistance: "6"
+        })
+      ]
+    });
+
+    const goals = deriveGoalDraftsFromSchedule(draft, "Schedule");
+    const payload = planWeekDraftToPayload(draft);
+
+    expect(goals.some((goal) => goal.category === "mileage")).toBe(false);
+    expect(goals.some((goal) => goal.category === "strength")).toBe(true);
+    expect(payload.workouts[0]).toMatchObject({
+      sport: "strength",
+      workoutType: "strength",
+      plannedDistance: null
+    });
+  });
 });
 
 function makeWeek(

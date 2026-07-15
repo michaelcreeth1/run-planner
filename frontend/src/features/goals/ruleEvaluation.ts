@@ -8,6 +8,7 @@ import type {
   TrainingWeek,
   WeekGoal,
   WeekGoalCategory,
+  WeekGoalMetric,
   WeekGoalType,
   Workout
 } from "../../types/domain";
@@ -27,6 +28,7 @@ export type PlanRule = {
   label: string;
   goalType: WeekGoalType;
   category: WeekGoalCategory | null;
+  metricKey: WeekGoalMetric | null;
   threshold: number | null;
 };
 
@@ -90,14 +92,15 @@ export function buildPlanRules({
   plan: TrainingPlan | null;
 }): PlanRule[] {
   const activeGoals = [...defaultGoals, ...(plan?.recurringGoals ?? [])];
-  const restGoal = matchGoal(activeGoals, "recovery", "at_least", /rest\s*day/i);
-  const hardGoal = matchGoal(activeGoals, "quality", "at_most", /hard\s*day/i);
+  const restGoal = matchGoal(activeGoals, "rest_day_count", "recovery", "at_least");
+  const hardGoal = matchGoal(activeGoals, "hard_training_day_count", "quality", "at_most");
   const longRunPercentGoal =
     activeGoals.find(
       (goal) =>
-        goal.unit === "percent" &&
+        (goal.metricKey === "long_run_share" ||
+          (!goal.metricKey && goal.category === "long_run" && goal.unit === "percent")) &&
         goal.evaluationMode === "at_most" &&
-        (goal.category === "long_run" || /long\s*run/i.test(goal.label))
+        goal.unit === "percent"
     ) ?? null;
 
   const restMinimum = goalMinimum(restGoal) ?? 1;
@@ -111,6 +114,7 @@ export function buildPlanRules({
       label: restGoal?.label ?? `At least ${restMinimum} rest day${restMinimum === 1 ? "" : "s"}`,
       goalType: restGoal?.goalType ?? "guardrail",
       category: "recovery",
+      metricKey: "rest_day_count",
       threshold: restMinimum
     },
     {
@@ -119,6 +123,7 @@ export function buildPlanRules({
       label: hardGoal?.label ?? `No more than ${hardLimit} hard days`,
       goalType: hardGoal?.goalType ?? "guardrail",
       category: "quality",
+      metricKey: "hard_training_day_count",
       threshold: hardLimit
     },
     {
@@ -127,6 +132,7 @@ export function buildPlanRules({
       label: longRunPercentGoal?.label ?? `Long run no more than ${formatNumber(longRunLimit)}% of week`,
       goalType: longRunPercentGoal?.goalType ?? "guardrail",
       category: "long_run",
+      metricKey: "long_run_share",
       threshold: longRunLimit
     },
     {
@@ -135,6 +141,7 @@ export function buildPlanRules({
       label: "Long run scheduled",
       goalType: "achievement",
       category: "long_run",
+      metricKey: "longest_run_distance",
       threshold: null
     }
   ];
@@ -146,6 +153,7 @@ export function buildPlanRules({
       label: "Down-week rhythm",
       goalType: "guardrail",
       category: null,
+      metricKey: null,
       threshold: null
     });
   }
@@ -448,13 +456,15 @@ function rhythmMetrics(summary: PlanWeekSummary | null | undefined, cadence: num
 
 function matchGoal(
   goals: RecurringGoal[],
+  metricKey: WeekGoalMetric,
   category: WeekGoalCategory,
-  mode: RecurringGoal["evaluationMode"],
-  labelPattern: RegExp
+  mode: RecurringGoal["evaluationMode"]
 ) {
   return (
-    goals.find((goal) => goal.category === category && goal.evaluationMode === mode) ??
-    goals.find((goal) => labelPattern.test(goal.label)) ??
+    goals.find((goal) => goal.metricKey === metricKey && goal.evaluationMode === mode) ??
+    goals.find(
+      (goal) => !goal.metricKey && goal.category === category && goal.evaluationMode === mode
+    ) ??
     null
   );
 }
@@ -472,7 +482,11 @@ function findOverrideGoal(rule: PlanRule, week: TrainingWeek): WeekGoal | null {
     return null;
   }
   return (
-    week.goals.find((goal) => goal.category === rule.category && (goal.status === "waived" || !goal.isEnabled)) ?? null
+    week.goals.find(
+      (goal) =>
+        (goal.metricKey === rule.metricKey || (!goal.metricKey && goal.category === rule.category)) &&
+        (goal.status === "waived" || !goal.isEnabled)
+    ) ?? null
   );
 }
 
@@ -482,7 +496,7 @@ function effectiveThreshold(rule: PlanRule, week: TrainingWeek): { threshold: nu
   const weekGoal = week.goals.find(
     (goal) =>
       goal.isEnabled &&
-      goal.category === rule.category &&
+      (goal.metricKey === rule.metricKey || (!goal.metricKey && goal.category === rule.category)) &&
       goal.evaluationMode === (rule.kind === "rest_days" ? "at_least" : "at_most") &&
       (rule.kind !== "long_run_percent" || goal.unit === "percent")
   );

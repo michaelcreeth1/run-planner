@@ -1,7 +1,14 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.goal_metrics import (
+    GOAL_METRICS,
+    GoalMetricKey,
+    infer_goal_metric,
+    normalized_goal_thresholds,
+)
 
 
 def to_camel(value: str) -> str:
@@ -166,6 +173,7 @@ class ActualActivityRead(ApiModel):
 
 
 class WeekGoalBase(ApiModel):
+    metric_key: GoalMetricKey | None = None
     category: WeekGoalCategory = "custom"
     goal_type: WeekGoalType = "achievement"
     label: str = Field(min_length=1, max_length=140)
@@ -181,12 +189,41 @@ class WeekGoalBase(ApiModel):
     is_editable: bool = True
     is_enabled: bool = True
 
+    @model_validator(mode="after")
+    def normalize_metric(self):
+        metric_key = self.metric_key or infer_goal_metric(self.category, self.unit)
+        if metric_key is None:
+            if self.category == "custom" and self.evaluation_mode == "manual":
+                return self
+            raise ValueError("Automatic goals require a supported metric and unit.")
+
+        definition = GOAL_METRICS[metric_key]
+        if self.metric_key and self.category != definition.category:
+            raise ValueError(f"{definition.label} must use the {definition.category} category.")
+        if self.metric_key and self.unit != definition.unit:
+            raise ValueError(f"{definition.label} must use {definition.unit} as its unit.")
+        target, minimum, maximum = normalized_goal_thresholds(
+            metric_key,
+            self.evaluation_mode,
+            target_value=self.target_value,
+            min_acceptable=self.min_acceptable,
+            max_acceptable=self.max_acceptable,
+        )
+        self.metric_key = metric_key
+        self.category = definition.category
+        self.unit = definition.unit
+        self.target_value = target
+        self.min_acceptable = minimum
+        self.max_acceptable = maximum
+        return self
+
 
 class WeekGoalCreate(WeekGoalBase):
     pass
 
 
 class WeekGoalUpdate(ApiModel):
+    metric_key: GoalMetricKey | None = None
     category: WeekGoalCategory | None = None
     goal_type: WeekGoalType | None = None
     label: str | None = Field(default=None, min_length=1, max_length=140)
@@ -206,6 +243,14 @@ class WeekGoalUpdate(ApiModel):
 class WeekGoalEvaluationRead(ApiModel):
     goal_id: str
     week_start_date: date
+    metric_key: GoalMetricKey | None = None
+    basis: Literal["planned", "actual", "projected"] | None = None
+    measured_value: float | None = None
+    unit: WeekGoalUnit | None = None
+    evaluation_mode: WeekGoalEvaluationMode | None = None
+    threshold_value: float | None = None
+    threshold_min: float | None = None
+    threshold_max: float | None = None
     status: WeekGoalStatus
     guardrail_status: GuardrailStatus | None = None
     actual_value: float | None = None
@@ -362,6 +407,7 @@ class MesocycleRead(MesocycleSpec):
 
 class RecurringGoalSpec(ApiModel):
     id: str | None = None
+    metric_key: GoalMetricKey | None = None
     category: WeekGoalCategory = "custom"
     goal_type: WeekGoalType = "achievement"
     label: str = Field(min_length=1, max_length=140)
@@ -373,6 +419,34 @@ class RecurringGoalSpec(ApiModel):
     evaluation_mode: WeekGoalEvaluationMode = "manual"
     priority: WeekGoalPriority = "secondary"
     notes: str = ""
+
+    @model_validator(mode="after")
+    def normalize_metric(self):
+        metric_key = self.metric_key or infer_goal_metric(self.category, self.unit)
+        if metric_key is None:
+            if self.category == "custom" and self.evaluation_mode == "manual":
+                return self
+            raise ValueError("Automatic goals require a supported metric and unit.")
+
+        definition = GOAL_METRICS[metric_key]
+        if self.metric_key and self.category != definition.category:
+            raise ValueError(f"{definition.label} must use the {definition.category} category.")
+        if self.metric_key and self.unit != definition.unit:
+            raise ValueError(f"{definition.label} must use {definition.unit} as its unit.")
+        target, minimum, maximum = normalized_goal_thresholds(
+            metric_key,
+            self.evaluation_mode,
+            target_value=self.target_value,
+            min_acceptable=self.min_acceptable,
+            max_acceptable=self.max_acceptable,
+        )
+        self.metric_key = metric_key
+        self.category = definition.category
+        self.unit = definition.unit
+        self.target_value = target
+        self.min_acceptable = minimum
+        self.max_acceptable = maximum
+        return self
 
 
 class RecurringGoalRead(RecurringGoalSpec):

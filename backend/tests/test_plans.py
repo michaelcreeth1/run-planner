@@ -120,6 +120,8 @@ def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
         assert created.status_code == 201
         plan = created.json()
         assert plan["goalRace"]["id"] == goal_race_id
+        assert plan["endDate"] == "2099-03-24"
+        assert plan["mesocycles"][-1]["endDate"] == "2099-03-24"
         assert len(plan["weekSummaries"]) == 4
         assert plan["weekSummaries"][1]["isDownWeek"] is True
 
@@ -147,6 +149,63 @@ def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
         assert sources["Complete 1 strength session"] == "plan"
         strength_goals = [goal for goal in derived_goals if goal["category"] == "strength"]
         assert len(strength_goals) == 1
+
+        reopened = client.get(f"/api/plans/{plan['id']}")
+        assert reopened.status_code == 200
+        assert reopened.json()["endDate"] == "2099-03-24"
+
+
+def test_updating_race_date_resizes_linked_plan_and_phase_timeline() -> None:
+    with TestClient(app) as client:
+        login(client)
+        goal_race = client.post(
+            "/api/goal-races",
+            json={
+                "name": "Summer Half",
+                "raceDate": "2099-06-24",
+                "distance": "half_marathon",
+                "targetTime": 6000,
+                "priority": "A",
+            },
+        )
+        assert goal_race.status_code == 201
+        goal_race_id = goal_race.json()["id"]
+        created = client.post(
+            "/api/plans",
+            json=make_plan_payload(
+                goal_race_id=goal_race_id,
+                start_date="2099-06-01",
+                end_date="2099-06-28",
+            ),
+        )
+        assert created.status_code == 201
+        plan_id = created.json()["id"]
+        assert created.json()["endDate"] == "2099-06-24"
+
+        updated_race = client.patch(
+            f"/api/goal-races/{goal_race_id}",
+            json={"raceDate": "2099-07-08"},
+        )
+        assert updated_race.status_code == 200
+
+        reopened = client.get(f"/api/plans/{plan_id}")
+        assert reopened.status_code == 200
+        plan = reopened.json()
+        assert plan["goalRace"]["raceDate"] == "2099-07-08"
+        assert plan["endDate"] == "2099-07-08"
+        assert plan["mesocycles"][-1]["endDate"] == "2099-07-08"
+        assert plan["weekSummaries"][-1]["weekStartDate"] == "2099-07-06"
+
+        shortened_race = client.patch(
+            f"/api/goal-races/{goal_race_id}",
+            json={"raceDate": "2099-06-10"},
+        )
+        assert shortened_race.status_code == 200
+        shortened_plan = client.get(f"/api/plans/{plan_id}").json()
+        assert shortened_plan["endDate"] == "2099-06-10"
+        assert len(shortened_plan["mesocycles"]) == 1
+        assert shortened_plan["mesocycles"][-1]["endDate"] == "2099-06-10"
+        assert shortened_plan["weekSummaries"][-1]["weekStartDate"] == "2099-06-08"
 
 
 def test_goal_race_update_persists_race_date_with_full_form_payload() -> None:

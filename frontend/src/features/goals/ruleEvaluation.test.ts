@@ -210,7 +210,8 @@ describe("buildPlanRules", () => {
           unit: "days"
         }),
         makeRecurringGoal({
-          category: "custom",
+          metricKey: "rest_day_count",
+          category: "recovery",
           label: "Preserve at least 2 rest days",
           evaluationMode: "at_least",
           minAcceptable: 2,

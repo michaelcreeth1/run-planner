@@ -109,6 +109,7 @@ function useAuthenticatedAppHandlers(onCreateWorkout = vi.fn()) {
     http.get(apiUrl("/api/activities"), () => HttpResponse.json([])),
     http.get(apiUrl("/api/analytics/planning"), () => HttpResponse.json({})),
     http.get(apiUrl("/api/default-goals"), () => HttpResponse.json([])),
+    http.get(apiUrl("/api/goal-metrics"), () => HttpResponse.json([])),
     http.post(apiUrl("/api/planned-workouts"), async ({ request }) => {
       onCreateWorkout(await request.json());
       return HttpResponse.json({ id: "workout-1" }, { status: 201 });
@@ -311,5 +312,33 @@ describe("App authentication states", () => {
       expect(window.location.pathname).toBe("/plan");
       expect(screen.getByRole("heading", { name: "Macrocycle overview" })).toBeVisible();
     });
+  });
+
+  it("keeps an unsaved plan draft while visiting another app section", async () => {
+    const user = userEvent.setup();
+    useAuthenticatedAppHandlers();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Sign in" });
+    await user.type(screen.getByLabelText("Username"), "michael");
+    await user.type(screen.getByLabelText("Password"), "test-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
+    await user.click(within(navigation).getByRole("button", { name: "Plan" }));
+    await user.click(await screen.findByRole("button", { name: "Create training plan" }));
+
+    const planDetails = screen.getByText("Hide plan details").closest("details");
+    expect(planDetails).not.toBeNull();
+    const nameInput = within(planDetails!).getByLabelText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Fall marathon draft");
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+
+    await user.click(within(navigation).getByRole("button", { name: "Week" }));
+    await user.click(within(navigation).getByRole("button", { name: "Plan" }));
+
+    expect(within(planDetails!).getByLabelText("Name")).toHaveValue("Fall marathon draft");
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
   });
 });

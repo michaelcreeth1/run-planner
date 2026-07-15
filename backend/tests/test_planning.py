@@ -132,6 +132,38 @@ def test_authenticated_users_are_isolated() -> None:
         assert update_response.status_code == 404
 
 
+def test_workout_can_be_completed_without_a_strava_activity() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        create_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": week["weekStartDate"],
+                "title": "Untracked strength session",
+                "sport": "strength",
+                "workoutType": "strength",
+                "intensityCategory": "strength",
+                "plannedDuration": 1800,
+            },
+        )
+        workout = create_response.json()
+
+        complete_response = client.patch(
+            f"/api/planned-workouts/{workout['id']}",
+            json={"status": "completed_as_planned"},
+        )
+
+        assert complete_response.status_code == 200
+        assert complete_response.json()["status"] == "completed_as_planned"
+        refreshed_week = client.get(f"/api/weeks/{week['weekStartDate']}").json()
+        assert refreshed_week["actualActivities"] == []
+        completed_workout = next(
+            item for item in refreshed_week["workouts"] if item["id"] == workout["id"]
+        )
+        assert completed_workout["status"] == "completed_as_planned"
+
+
 def test_get_week_does_not_create_empty_week() -> None:
     with TestClient(app) as client:
         login(client)

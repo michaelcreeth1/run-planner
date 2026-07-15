@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_current_profile
 from app.db.session import get_db
+from app.goal_metrics import goal_metric_catalog
 from app.models.planning import AthleteAccount
 from app.schemas.planning import (
     PlannedWorkoutCreate,
@@ -28,6 +29,12 @@ from app.services import planning
 router = APIRouter(tags=["planning"])
 DbSession = Annotated[Session, Depends(get_db)]
 CurrentProfile = Annotated[AthleteAccount, Depends(require_current_profile)]
+
+
+@router.get("/goal-metrics")
+def list_goal_metrics(profile: CurrentProfile) -> list[dict]:
+    del profile
+    return goal_metric_catalog()
 
 
 @router.get("/weeks", response_model=WeekListRead)

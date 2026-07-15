@@ -498,6 +498,7 @@ function AppShell() {
     setGoalEditor({
       id: goal.id,
       weekId: goal.trainingWeekId,
+      metricKey: goal.metricKey ?? null,
       category: goal.category,
       goalType: goal.goalType,
       label: goal.label,
@@ -662,6 +663,38 @@ function AppShell() {
     await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
     refreshVisibleWeeks();
     loadTrainingTimeline();
+  }
+
+  async function setWorkoutCompletion(workout: Workout, completed: boolean) {
+    if (blockStaleWrite(completed ? "completing a workout" : "reopening a workout")) {
+      return;
+    }
+    try {
+      const updatedWorkout = await fetchJson<Workout>(`/api/planned-workouts/${workout.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: completed ? "completed_as_planned" : "planned" })
+      });
+      setWeekStack((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([start, loadedWeek]) => [
+            start,
+            loadedWeek.workouts.some((item) => item.id === updatedWorkout.id)
+              ? {
+                  ...loadedWeek,
+                  workouts: loadedWeek.workouts.map((item) =>
+                    item.id === updatedWorkout.id ? updatedWorkout : item
+                  )
+                }
+              : loadedWeek
+          ])
+        )
+      );
+      refreshVisibleWeeks();
+      loadAnalyticsPlanning();
+      setApiError(null);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Could not update workout completion.");
+    }
   }
 
   async function copyPriorWeek(targetWeek: TrainingWeek) {
@@ -868,6 +901,7 @@ function AppShell() {
               weekStarts={visibleWeekStarts}
               onCreate={openCreate}
               onEdit={openEdit}
+              onSetCompletion={setWorkoutCompletion}
               onDelete={deleteWorkout}
               onDuplicate={duplicateWorkout}
               onCreateGoal={openCreateGoal}
@@ -879,7 +913,7 @@ function AppShell() {
               copyingPriorWeekId={copyingPriorWeekId}
             />
           ) : null}
-          {activeTab === "plan" ? (
+          <div hidden={activeTab !== "plan"}>
             <PlanningWorkspace
               onChangeSection={navigatePlanningSection}
               writesBlocked={staleFrontend}
@@ -895,7 +929,7 @@ function AppShell() {
                 selectWeek(start, "time-rail");
               }}
             />
-          ) : null}
+          </div>
           {activeTab === "progress" ? (
             <ProgressView
               activities={activities}
