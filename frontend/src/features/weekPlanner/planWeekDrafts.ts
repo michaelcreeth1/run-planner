@@ -437,39 +437,73 @@ export function goalDraftFromWeekGoal(goal: WeekGoal, sourceLabel: string): Plan
 }
 
 export function evaluatePlanAlignment(draft: PlanWeekDraft): AlignmentItem[] {
-  const goals = draft.goals.filter((goal) => goal.isEnabled && goal.goalType === "achievement");
-  return goals.map((goal) => {
-    if (goal.category === "mileage") {
-      const planned = sumDraftRunDistance(draft.workouts);
-      return numericAlignment("mileage", "Mileage", planned, goal, `${formatNumber(planned)} planned`);
+  return draft.goals.filter((goal) => goal.isEnabled).map((goal) => evaluateGoalDraft(draft, goal));
+}
+
+export function evaluateGoalDraft(draft: PlanWeekDraft, goal: PlanWeekGoalDraft): AlignmentItem {
+  if (goal.goalType === "guardrail") {
+    return evaluateGuardrailDraft(draft, goal);
+  }
+  if (goal.category === "mileage") {
+    const planned = sumDraftRunDistance(draft.workouts);
+    return numericAlignment("mileage", "Mileage", planned, goal, `${formatNumber(planned)} planned`);
+  }
+  if (goal.category === "quality") {
+    const hard = countDraftHardSessions(draft.workouts);
+    return numericAlignment("quality", "Quality", hard, goal, `${hard} hard session${hard === 1 ? "" : "s"} planned`);
+  }
+  if (goal.category === "long_run") {
+    const longRun = maxDraftRunDistance(draft.workouts);
+    return numericAlignment("long_run", "Long run", longRun, goal, `${formatNumber(longRun)} mi longest run`);
+  }
+  if (goal.category === "recovery") {
+    const restDays = countDraftRestDays(draft.workouts, draft.weekStartDate);
+    return numericAlignment("recovery", "Recovery", restDays, goal, `${restDays} rest day${restDays === 1 ? "" : "s"} planned`);
+  }
+  if (goal.category === "sessions") {
+    const sessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+    return numericAlignment("sessions", "Sessions", sessions, goal, `${sessions} sessions planned`);
+  }
+  if (goal.category === "strength") {
+    const strength = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) === "strength").length;
+    return numericAlignment("strength", "Strength", strength, goal, `${strength} strength session${strength === 1 ? "" : "s"} planned`);
+  }
+  return {
+    id: goal.draftId,
+    label: draftGoalTitle(goal),
+    detail: goal.description || "Manual goal will be evaluated after saving.",
+    status: "aligned"
+  };
+}
+
+function evaluateGuardrailDraft(draft: PlanWeekDraft, goal: PlanWeekGoalDraft): AlignmentItem {
+  const base = { id: goal.draftId, label: goal.label };
+  const limit = optionalNumber(goal.maxAcceptable) ?? optionalNumber(goal.targetValue);
+
+  if (goal.category === "long_run" && goal.unit === "percent") {
+    const total = sumDraftRunDistance(draft.workouts);
+    const longest = maxDraftRunDistance(draft.workouts);
+    if (limit === null || total <= 0 || longest <= 0) {
+      return { ...base, detail: "No running mileage to measure.", status: "aligned" };
     }
-    if (goal.category === "quality") {
-      const hard = countDraftHardSessions(draft.workouts);
-      return numericAlignment("quality", "Quality", hard, goal, `${hard} hard session${hard === 1 ? "" : "s"} planned`);
-    }
-    if (goal.category === "long_run") {
-      const longRun = maxDraftRunDistance(draft.workouts);
-      return numericAlignment("long_run", "Long run", longRun, goal, `${formatNumber(longRun)} mi longest run`);
-    }
-    if (goal.category === "recovery") {
-      const restDays = countDraftRestDays(draft.workouts, draft.weekStartDate);
-      return numericAlignment("recovery", "Recovery", restDays, goal, `${restDays} rest day${restDays === 1 ? "" : "s"} planned`);
-    }
-    if (goal.category === "sessions") {
-      const sessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
-      return numericAlignment("sessions", "Sessions", sessions, goal, `${sessions} sessions planned`);
-    }
-    if (goal.category === "strength") {
-      const strength = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) === "strength").length;
-      return numericAlignment("strength", "Strength", strength, goal, `${strength} strength session${strength === 1 ? "" : "s"} planned`);
-    }
+    const percent = (longest / total) * 100;
     return {
-      id: goal.draftId,
-      label: draftGoalTitle(goal),
-      detail: goal.description || "Manual goal will be evaluated after saving.",
-      status: "aligned"
+      ...base,
+      detail: `Longest run is ${Math.round(percent)}% of the week, limit ${formatNumber(limit)}%`,
+      status: percent > limit ? "mismatch" : "aligned"
     };
-  });
+  }
+
+  if (goal.category === "quality" && limit !== null) {
+    const hard = countDraftHardSessions(draft.workouts);
+    return {
+      ...base,
+      detail: `${hard} hard day${hard === 1 ? "" : "s"} planned, limit ${formatNumber(limit)}`,
+      status: hard > limit ? "mismatch" : "aligned"
+    };
+  }
+
+  return { ...base, detail: formatGuardrailDraft(goal), status: "aligned" };
 }
 
 export function numericAlignment(id: string, label: string, value: number, goal: PlanWeekGoalDraft, prefix: string): AlignmentItem {
@@ -515,7 +549,7 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
 
 export function startingPointOptions(draft: PlanWeekDraft): Array<{ value: PlanStartingPoint; label: string }> {
   return [
-    ...(draft.hasExistingPlan ? [{ value: "existing" as const, label: "Existing plan" }] : []),
+    ...(draft.hasExistingPlan ? [{ value: "existing" as const, label: "Keep current plan" }] : []),
     { value: "copy_prior" as const, label: "Copy prior week" },
     { value: "smart_adjustment" as const, label: "Rebalance remaining days" },
     { value: "blank" as const, label: "Start blank" }

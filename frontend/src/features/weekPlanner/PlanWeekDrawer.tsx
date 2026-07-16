@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Ellipsis, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Plus, Save, X } from "lucide-react";
+import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
   PlanStartingPoint,
@@ -12,12 +13,13 @@ import type {
 import { addDays } from "../../lib/dates";
 import { formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes, weekPurposes } from "../../lib/options";
+import type { AlignmentItem } from "../../types/domain";
 import {
   countDraftHardSessions,
   draftGoalTitle,
   effectiveWorkoutSport,
-  evaluatePlanAlignment,
-  formatGuardrailDraft,
+  evaluateGoalDraft,
+  goalLabelFromDraft,
   newWorkoutDraft,
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
@@ -44,15 +46,20 @@ export function PlanWeekDrawer({
   setDraft: Dispatch<SetStateAction<PlanWeekDraft | null>>;
   weekStack: Record<string, TrainingWeek>;
 }) {
-  const alignment = evaluatePlanAlignment(draft);
-  const mismatches = alignment.filter((item) => item.status === "mismatch");
-  const passedChecks = alignment.length - mismatches.length;
-  const achievementGoals = draft.goals.filter((goal) => goal.goalType === "achievement");
-  const guardrailGoals = draft.goals.filter((goal) => goal.goalType === "guardrail");
+  const [showAllRules, setShowAllRules] = useState(false);
+  const [openRuleId, setOpenRuleId] = useState<string | null>(null);
+  const ruleRows = draft.goals
+    .filter((goal) => goal.isEnabled)
+    .map((goal) => ({ goal, evaluation: evaluateGoalDraft(draft, goal) }));
+  const mismatchCount = ruleRows.filter((row) => row.evaluation.status === "mismatch").length;
+  const visibleRuleRows = showAllRules
+    ? ruleRows
+    : ruleRows.filter(
+        ({ goal, evaluation }) => evaluation.status === "mismatch" || goal.draftId === openRuleId
+      );
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
-  const purpose = weekPurposes.find((option) => option.value === draft.purpose) ?? weekPurposes[0];
   const drawerTitle =
     draft.weekState === "past"
       ? "Review week"
@@ -127,8 +134,10 @@ export function PlanWeekDrawer({
         }
         const currentSessionType = sessionTypeForWorkout(workout);
         const keepRunMetrics = sessionType.sport === "run" && currentSessionType.sport === "run";
+        const titleFollowsType = !workout.title.trim() || workout.title === currentSessionType.label;
         return {
           ...workout,
+          title: titleFollowsType ? sessionType.label : workout.title,
           sport: sessionType.sport,
           workoutType: sessionType.workoutType,
           intensityCategory: sessionType.intensityCategory,
@@ -285,40 +294,11 @@ export function PlanWeekDrawer({
                 />
               </label>
             ) : null}
-            {draft.noPriorUsableWeek ? (
-              <p className="plan-week-note">No prior usable week was found, so this draft starts blank.</p>
-            ) : null}
             <p className="plan-week-note">
-              {purpose.meaning} Load direction: {purpose.loadDirection}.
+              {draft.noPriorUsableWeek
+                ? "No prior usable week was found, so this draft starts blank."
+                : draft.load.reason}
             </p>
-          </section>
-
-          <section className="plan-week-section plan-summary-section">
-            <div className="section-heading">
-              <h3>Plan summary</h3>
-            </div>
-            <div className="plan-summary-grid">
-              <div>
-                <span>Scheduled mileage</span>
-                <strong>{formatNumber(scheduledMileage)} mi</strong>
-                <small>The total of the run sessions below</small>
-              </div>
-              <div>
-                <span>Schedule</span>
-                <strong>{scheduledSessions} session{scheduledSessions === 1 ? "" : "s"}</strong>
-                <small>{scheduledQuality} hard session{scheduledQuality === 1 ? "" : "s"}</small>
-              </div>
-              <div>
-                <span>Direction</span>
-                <strong>{formatNumber(draft.load.suggestedMileage)} mi</strong>
-                <small>
-                  {draft.load.priorMileage === null
-                    ? "No prior load"
-                    : `${formatNumber(draft.load.priorMileage)} mi prior week`}
-                </small>
-              </div>
-            </div>
-            <p className="plan-week-note">{draft.load.reason}</p>
           </section>
 
           <section className="plan-week-section schedule-section">
@@ -331,10 +311,10 @@ export function PlanWeekDrawer({
             <div className="schedule-draft-column-labels" aria-hidden="true">
               <span />
               <div>
-                <span>Name</span>
                 <span>Type</span>
+                <span>Name</span>
                 <span>Mileage</span>
-                <span>Actions</span>
+                <span />
               </div>
             </div>
             <div className="schedule-draft">
@@ -363,13 +343,6 @@ export function PlanWeekDrawer({
                           const fieldPrefix = `${formatWeekday(dateValue)} session ${workoutIndex + 1}`;
                           return (
                             <div className="schedule-draft-workout" key={workout.draftId}>
-                              <input
-                                aria-label={`${fieldPrefix} name`}
-                                className="session-name-input"
-                                placeholder="Session name"
-                                value={workout.title}
-                                onChange={(event) => updateWorkout(workout.draftId, { title: event.target.value })}
-                              />
                               <select
                                 aria-label={`${fieldPrefix} type`}
                                 className="session-type-select"
@@ -388,6 +361,13 @@ export function PlanWeekDrawer({
                                   </optgroup>
                                 ))}
                               </select>
+                              <input
+                                aria-label={`${fieldPrefix} name`}
+                                className="session-name-input"
+                                placeholder="Session name"
+                                value={workout.title}
+                                onChange={(event) => updateWorkout(workout.draftId, { title: event.target.value })}
+                              />
                               {sessionType.sport === "run" ? (
                                 <label className="session-mileage-field" title="Session mileage">
                                   <input
@@ -405,23 +385,15 @@ export function PlanWeekDrawer({
                               ) : (
                                 <span className="session-mileage-not-applicable">—</span>
                               )}
-                              <details className="overflow-menu session-overflow-menu">
-                                <summary
-                                  aria-label={`Actions for ${fieldPrefix}`}
-                                  title={`${workout.title || fieldPrefix} actions`}
-                                >
-                                  <Ellipsis size={15} />
-                                </summary>
-                                <div>
-                                  <button
-                                    aria-label={`Remove ${fieldPrefix}`}
-                                    type="button"
-                                    onClick={() => removeWorkout(workout.draftId)}
-                                  >
-                                    Remove session
-                                  </button>
-                                </div>
-                              </details>
+                              <button
+                                aria-label={`Remove ${fieldPrefix}`}
+                                className="session-remove"
+                                title={`Remove ${workout.title || fieldPrefix}`}
+                                type="button"
+                                onClick={() => removeWorkout(workout.draftId)}
+                              >
+                                <X size={15} />
+                              </button>
                             </div>
                           );
                         })
@@ -437,105 +409,107 @@ export function PlanWeekDrawer({
             </div>
           </section>
 
-          <section className="plan-week-section exception-review-section">
-            <div className="section-heading">
-              <h3>Review</h3>
+          <section className="plan-week-section rules-section">
+            <div className="section-heading section-heading--split">
+              <h3>Rules</h3>
+              {ruleRows.length ? (
+                <span className={`rules-status${mismatchCount ? " rules-status--attention" : ""}`}>
+                  {mismatchCount
+                    ? `${mismatchCount} need${mismatchCount === 1 ? "s" : ""} attention`
+                    : "All rules met"}
+                </span>
+              ) : null}
             </div>
-            <div className={`alignment-summary${mismatches.length ? "" : " alignment-summary--passed"}`}>
-              <strong>
-                {mismatches.length
-                  ? `${mismatches.length} exception${mismatches.length === 1 ? "" : "s"} to review`
-                  : "Everything lines up"}
-              </strong>
-              <span>{passedChecks} check{passedChecks === 1 ? "" : "s"} passed</span>
-            </div>
-            <p className="plan-week-note">These checks are advisory and never prevent you from saving the plan.</p>
-            <div className="review-disclosures">
-              <details className="review-disclosure">
-                <summary>
-                  <div>
-                    <strong>Targets</strong>
-                    <small>{achievementGoals.length} configured</small>
+            {ruleRows.length ? (
+              <>
+                {visibleRuleRows.length ? (
+                  <div className="rule-list">
+                    {visibleRuleRows.map(({ goal, evaluation }) => {
+                      if (goal.goalType !== "achievement") {
+                        const mismatch = evaluation.status === "mismatch";
+                        return (
+                          <div
+                            className={`rule-row rule-row--readonly${mismatch ? " rule-row--mismatch" : ""}`}
+                            key={goal.draftId}
+                          >
+                            <RuleStatusIcon mismatch={mismatch} />
+                            <div className="rule-copy">
+                              <strong>{goal.label}</strong>
+                              {mismatch ? <small>{evaluation.detail}</small> : null}
+                            </div>
+                          </div>
+                        );
+                      }
+                      const canAdjustSchedule =
+                        ["mileage", "long_run"].includes(goal.category) &&
+                        (goalTarget(goal) ?? 0) > 0 &&
+                        draft.workouts.some((workout) => effectiveWorkoutSport(workout) === "run");
+                      return (
+                        <RuleEditor
+                          evaluation={evaluation}
+                          goal={goal}
+                          isOpen={openRuleId === goal.draftId}
+                          key={goal.draftId}
+                          onChange={(updates) => updateGoal(goal.draftId, updates)}
+                          onMatchSchedule={canAdjustSchedule ? () => adjustScheduleToTarget(goal.category) : null}
+                          onToggle={() =>
+                            setOpenRuleId((current) => (current === goal.draftId ? null : goal.draftId))
+                          }
+                          onUpdateTarget={
+                            goal.category !== "custom" ? () => updateTargetToSchedule(goal.category) : null
+                          }
+                        />
+                      );
+                    })}
                   </div>
-                  <ChevronDown size={16} />
-                </summary>
-                <div className="review-disclosure-content draft-goal-list">
-                  {achievementGoals.map((goal) => (
-                    <DraftGoalEditor
-                      goal={goal}
-                      key={goal.draftId}
-                      onChange={(updates) => updateGoal(goal.draftId, updates)}
-                    />
-                  ))}
-                  {!achievementGoals.length ? <p className="plan-week-note">No targets are set for this week.</p> : null}
-                </div>
-              </details>
-              <details className="review-disclosure">
-                <summary>
-                  <div>
-                    <strong>Guardrails</strong>
-                    <small>{guardrailGoals.length} configured</small>
-                  </div>
-                  <ChevronDown size={16} />
-                </summary>
-                <div className="review-disclosure-content guardrail-draft-list">
-                  {guardrailGoals.map((goal) => (
-                    <div className="guardrail-draft" key={goal.draftId}>
-                      <strong>{goal.label}</strong>
-                      <span>{formatGuardrailDraft(goal)}</span>
-                    </div>
-                  ))}
-                  {!guardrailGoals.length ? <p className="plan-week-note">No guardrails are set for this week.</p> : null}
-                </div>
-              </details>
-            </div>
-            {mismatches.length ? (
-              <div className="alignment-list alignment-list--exceptions">
-                {mismatches.map((item) => {
-                  const category = item.id as WeekGoalCategory;
-                  const adjustmentTarget = goalTarget(
-                    achievementGoals.find((goal) => goal.category === category)
-                  );
-                  const canAdjustSchedule =
-                    ["mileage", "long_run"].includes(category) &&
-                    adjustmentTarget !== null &&
-                    adjustmentTarget > 0 &&
-                    draft.workouts.some((workout) => effectiveWorkoutSport(workout) === "run");
-                  return (
-                    <div className="alignment-item alignment-item--mismatch" key={item.id}>
-                      <AlertTriangle size={16} />
-                      <div className="alignment-item-copy">
-                        <strong>{item.label}</strong>
-                        <span>{item.detail}</span>
-                      </div>
-                      <div className="mismatch-actions">
-                        {canAdjustSchedule ? (
-                          <button type="button" onClick={() => adjustScheduleToTarget(category)}>
-                            Match schedule to target
-                          </button>
-                        ) : null}
-                        <button type="button" onClick={() => updateTargetToSchedule(category)}>
-                          Update target
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
+                ) : null}
+                {mismatchCount < ruleRows.length ? (
+                  <button
+                    className="text-action rules-toggle"
+                    type="button"
+                    onClick={() => setShowAllRules((current) => !current)}
+                  >
+                    {showAllRules ? "Hide passing rules" : "Show all rules"}
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <p className="plan-week-note">No rules are set for this week.</p>
+            )}
+            <p className="plan-week-footnote">Rules are advisory and never prevent you from saving the plan.</p>
           </section>
         </div>
 
-        <div className="editor-actions plan-week-actions">
-          <button type="button" onClick={onClose}>
-            <X size={17} />
-            <span>Cancel</span>
-          </button>
-          <button className="primary" disabled={isSaving} type="button" onClick={() => onSave(draft)}>
-            <Save size={17} />
-            <span>{isSaving ? "Saving" : "Save changes"}</span>
-          </button>
-        </div>
+        <footer className="plan-week-footer">
+          <div aria-live="polite" className="plan-week-summary">
+            <div>
+              <span className="summary-label">Planned</span>
+              <strong>{formatNumber(scheduledMileage)} mi</strong>
+              <span className="summary-detail">
+                {scheduledSessions} session{scheduledSessions === 1 ? "" : "s"} · {scheduledQuality} hard
+              </span>
+            </div>
+            {draft.load.suggestedMileage > 0 || draft.load.priorMileage !== null ? (
+              <div>
+                <span className="summary-label">Suggested</span>
+                <strong>{formatNumber(draft.load.suggestedMileage)} mi</strong>
+                {draft.load.priorMileage !== null ? (
+                  <span className="summary-detail">prior {formatNumber(draft.load.priorMileage)} mi</span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="editor-actions plan-week-actions">
+            <button type="button" onClick={onClose}>
+              <X size={17} />
+              <span>Cancel</span>
+            </button>
+            <button className="primary" disabled={isSaving} type="button" onClick={() => onSave(draft)}>
+              <Save size={17} />
+              <span>{isSaving ? "Saving" : draft.hasExistingPlan ? "Save changes" : "Save plan"}</span>
+            </button>
+          </div>
+        </footer>
       </aside>
     </div>
   );
@@ -621,7 +595,7 @@ function PastWeekReviewDrawer({
         <div className="plan-week-body">
           <section className="plan-week-section">
             <div className="section-heading">
-              <span>1</span>
+              <span className="section-step">1</span>
               <h3>Week outcomes</h3>
             </div>
             <p className="plan-week-note">
@@ -646,7 +620,7 @@ function PastWeekReviewDrawer({
 
           <section className="plan-week-section">
             <div className="section-heading">
-              <span>2</span>
+              <span className="section-step">2</span>
               <h3>Goal outcomes</h3>
             </div>
             {goalOutcomes.length ? (
@@ -682,120 +656,179 @@ function PastWeekReviewDrawer({
   );
 }
 
-function DraftGoalEditor({
+function RuleStatusIcon({ mismatch }: { mismatch: boolean }) {
+  return mismatch ? (
+    <AlertTriangle className="rule-status-icon" size={15} />
+  ) : (
+    <CheckCircle2 className="rule-status-icon" size={15} />
+  );
+}
+
+function RuleEditor({
+  evaluation,
   goal,
-  onChange
+  isOpen,
+  onChange,
+  onMatchSchedule,
+  onToggle,
+  onUpdateTarget
 }: {
+  evaluation: AlignmentItem;
   goal: PlanWeekGoalDraft;
+  isOpen: boolean;
   onChange: (updates: Partial<PlanWeekGoalDraft>) => void;
+  onMatchSchedule: (() => void) | null;
+  onToggle: () => void;
+  onUpdateTarget: (() => void) | null;
 }) {
+  const mismatch = evaluation.status === "mismatch";
   return (
-    <article className="draft-goal">
-      <header>
-        <strong>{draftGoalTitle(goal)}</strong>
-        <span>{goal.sourceLabel}</span>
-      </header>
-      {goal.category === "mileage" ? (
-        <div className="form-grid form-grid--three">
-          <label>
-            <span>Minimum mileage</span>
-            <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
-          </label>
-          <label>
-            <span>Target mileage</span>
-            <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
-          </label>
-          <label>
-            <span>Maximum mileage</span>
-            <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
-          </label>
+    <details className={`rule-row${mismatch ? " rule-row--mismatch" : ""}`} open={isOpen}>
+      <summary
+        aria-label={`Edit ${draftGoalTitle(goal)} rule`}
+        onClick={(event) => {
+          event.preventDefault();
+          onToggle();
+        }}
+      >
+        <RuleStatusIcon mismatch={mismatch} />
+        <div className="rule-copy">
+          <strong>{goalLabelFromDraft(goal)}</strong>
+          {mismatch ? <small>{evaluation.detail}</small> : null}
         </div>
-      ) : null}
-      {goal.category === "quality" ? (
-        <div className="form-grid">
+        {mismatch ? (
+          <div className="rule-actions">
+            {onMatchSchedule ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onMatchSchedule();
+                }}
+              >
+                Match schedule
+              </button>
+            ) : null}
+            {onUpdateTarget ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onUpdateTarget();
+                }}
+              >
+                Update target
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <ChevronDown className="rule-chevron" size={16} />
+      </summary>
+      <div className="rule-fields">
+        {goal.category === "mileage" ? (
+          <div className="form-grid form-grid--three">
+            <label>
+              <span>Minimum mileage</span>
+              <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
+            </label>
+            <label>
+              <span>Target mileage</span>
+              <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
+            </label>
+            <label>
+              <span>Maximum mileage</span>
+              <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
+            </label>
+          </div>
+        ) : null}
+        {goal.category === "quality" ? (
+          <div className="form-grid">
+            <label>
+              <span>Hard sessions</span>
+              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
+            </label>
+            <label>
+              <span>Quality type</span>
+              <select value={goal.qualityType ?? "any"} onChange={(event) => onChange({ qualityType: event.target.value as PlanWeekGoalDraft["qualityType"] })}>
+                <option value="any">Any quality</option>
+                <option value="threshold">Threshold</option>
+                <option value="tempo">Tempo</option>
+                <option value="intervals">Intervals</option>
+                <option value="hills">Hills</option>
+                <option value="race">Race</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
+        {goal.category === "long_run" ? (
+          <div className="form-grid form-grid--three">
+            <label>
+              <span>Minimum distance</span>
+              <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
+            </label>
+            <label>
+              <span>Target distance</span>
+              <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
+            </label>
+            <label>
+              <span>Maximum distance</span>
+              <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
+            </label>
+          </div>
+        ) : null}
+        {goal.category === "recovery" ? (
+          <div className="form-grid">
+            <label>
+              <span>Minimum rest days</span>
+              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={goal.noBackToBackHardDays ?? true}
+                type="checkbox"
+                onChange={(event) => onChange({ noBackToBackHardDays: event.target.checked })}
+              />
+              <span>No back-to-back hard days</span>
+            </label>
+          </div>
+        ) : null}
+        {goal.category === "sessions" ? (
           <label>
-            <span>Hard sessions</span>
+            <span>Target total sessions</span>
             <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
           </label>
-          <label>
-            <span>Quality type</span>
-            <select value={goal.qualityType ?? "any"} onChange={(event) => onChange({ qualityType: event.target.value as PlanWeekGoalDraft["qualityType"] })}>
-              <option value="any">Any quality</option>
-              <option value="threshold">Threshold</option>
-              <option value="tempo">Tempo</option>
-              <option value="intervals">Intervals</option>
-              <option value="hills">Hills</option>
-              <option value="race">Race</option>
-            </select>
-          </label>
-        </div>
-      ) : null}
-      {goal.category === "long_run" ? (
-        <div className="form-grid form-grid--three">
-          <label>
-            <span>Minimum distance</span>
-            <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
-          </label>
-          <label>
-            <span>Target distance</span>
-            <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
-          </label>
-          <label>
-            <span>Maximum distance</span>
-            <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
-          </label>
-        </div>
-      ) : null}
-      {goal.category === "recovery" ? (
-        <div className="form-grid">
-          <label>
-            <span>Minimum rest days</span>
-            <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-          </label>
-          <label className="checkbox-row">
-            <input
-              checked={goal.noBackToBackHardDays ?? true}
-              type="checkbox"
-              onChange={(event) => onChange({ noBackToBackHardDays: event.target.checked })}
-            />
-            <span>No back-to-back hard days</span>
-          </label>
-        </div>
-      ) : null}
-      {goal.category === "sessions" ? (
-        <label>
-          <span>Target total sessions</span>
-          <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-        </label>
-      ) : null}
-      {goal.category === "strength" ? (
-        <div className="form-grid">
-          <label>
-            <span>Strength sessions</span>
-            <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-          </label>
-          <label className="checkbox-row">
-            <input
-              checked={goal.strengthRequired ?? true}
-              type="checkbox"
-              onChange={(event) => onChange({ strengthRequired: event.target.checked })}
-            />
-            <span>Required</span>
-          </label>
-        </div>
-      ) : null}
-      {goal.category === "custom" ? (
-        <>
-          <label>
-            <span>Goal label</span>
-            <input value={goal.label} onChange={(event) => onChange({ label: event.target.value })} />
-          </label>
-          <label>
-            <span>Goal description</span>
-            <textarea rows={2} value={goal.description} onChange={(event) => onChange({ description: event.target.value })} />
-          </label>
-        </>
-      ) : null}
-    </article>
+        ) : null}
+        {goal.category === "strength" ? (
+          <div className="form-grid">
+            <label>
+              <span>Strength sessions</span>
+              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={goal.strengthRequired ?? true}
+                type="checkbox"
+                onChange={(event) => onChange({ strengthRequired: event.target.checked })}
+              />
+              <span>Required</span>
+            </label>
+          </div>
+        ) : null}
+        {goal.category === "custom" ? (
+          <>
+            <label>
+              <span>Goal label</span>
+              <input value={goal.label} onChange={(event) => onChange({ label: event.target.value })} />
+            </label>
+            <label>
+              <span>Goal description</span>
+              <textarea rows={2} value={goal.description} onChange={(event) => onChange({ description: event.target.value })} />
+            </label>
+          </>
+        ) : null}
+      </div>
+    </details>
   );
 }

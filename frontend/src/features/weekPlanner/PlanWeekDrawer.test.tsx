@@ -33,10 +33,11 @@ describe("PlanWeekDrawer", () => {
     const onSave = vi.fn();
     render(<PlannerHarness onSave={onSave} />);
 
-    expect(screen.getByText("1 exception to review")).toBeInTheDocument();
-    expect(screen.getByText(/checks are advisory and never prevent you from saving/i)).toBeInTheDocument();
+    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
+    expect(screen.getByText(/rules are advisory and never prevent you from saving/i)).toBeInTheDocument();
 
-    const saveButton = screen.getByRole("button", { name: "Save changes" });
+    const saveButton = screen.getByRole("button", { name: "Save plan" });
     expect(saveButton).toBeEnabled();
     await user.click(saveButton);
 
@@ -78,7 +79,7 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByText("Week direction")).toBeInTheDocument();
   });
 
-  it("edits session names and types with one scoped action menu per session", async () => {
+  it("keeps session names in sync with the selected type until renamed", async () => {
     const user = userEvent.setup();
     const draft = mismatchedDraft();
     draft.workouts.push({
@@ -95,9 +96,10 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(5);
     expect(screen.getByLabelText("Mon session 2 type")).toHaveValue("strength:strength");
     expect(screen.queryByLabelText("Mon session 2 mileage")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Actions for Mon session 1")).toHaveAttribute("title", "Easy run actions");
-    expect(screen.getByLabelText("Actions for Mon session 2")).toHaveAttribute("title", "Strength session actions");
     expect(screen.queryByRole("button", { name: "Rest" })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Mon session 1 type"), "run:threshold");
+    expect(screen.getByLabelText("Mon session 1 name")).toHaveValue("Threshold workout");
 
     const nameInput = screen.getByLabelText("Mon session 2 name");
     await user.clear(nameInput);
@@ -107,13 +109,12 @@ describe("PlanWeekDrawer", () => {
     expect(nameInput).toHaveValue("Gym work");
     expect(screen.getByLabelText("Mon session 2 mileage")).toHaveValue(null);
 
-    await user.click(screen.getByLabelText("Actions for Mon session 2"));
     await user.click(screen.getByRole("button", { name: "Remove Mon session 2" }));
 
     expect(screen.queryByDisplayValue("Gym work")).not.toBeInTheDocument();
   });
 
-  it("adds sessions from the day heading without persistent actions below the day", async () => {
+  it("adds sessions from the day heading and removes them with the inline control", async () => {
     const user = userEvent.setup();
     render(<PlannerHarness onSave={vi.fn()} />);
 
@@ -124,24 +125,22 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("Easy run");
     expect(screen.getByLabelText("Tue session 1 type")).toHaveValue("run:easy");
     expect(screen.getByLabelText("Tue session 1 mileage")).toHaveValue(null);
-    expect(screen.getByLabelText("Actions for Tue session 1")).toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("Actions for Tue session 1"));
     await user.click(screen.getByRole("button", { name: "Remove Tue session 1" }));
 
     expect(screen.queryByLabelText("Tue session 1 name")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add session to Tue" })).toBeInTheDocument();
   });
 
-  it("offers contextual fixes and hides passing checks", async () => {
+  it("offers contextual fixes on the failing rule and clears them once met", async () => {
     const user = userEvent.setup();
     render(<PlannerHarness onSave={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: "Match schedule to target" }));
+    await user.click(screen.getByRole("button", { name: "Match schedule" }));
 
     expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(10);
-    expect(screen.getByText("Everything lines up")).toBeInTheDocument();
-    expect(screen.getByText("1 check passed")).toBeInTheDocument();
+    expect(screen.getByText("All rules met")).toBeInTheDocument();
+    expect(screen.queryByText("5 planned, target range 10-12")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update target" })).not.toBeInTheDocument();
   });
 
@@ -151,11 +150,10 @@ describe("PlanWeekDrawer", () => {
 
     await user.click(screen.getByRole("button", { name: "Update target" }));
 
-    expect(screen.getByText("Everything lines up")).toBeInTheDocument();
-    expect(screen.getByText("1 check passed")).toBeInTheDocument();
+    expect(screen.getByText("All rules met")).toBeInTheDocument();
   });
 
-  it("keeps targets and expandable guardrails together in the review section", async () => {
+  it("shows every rule with its status baked in, guardrails included", async () => {
     const user = userEvent.setup();
     const draft = mismatchedDraft();
     draft.goals.push({
@@ -173,14 +171,47 @@ describe("PlanWeekDrawer", () => {
     });
     render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
 
-    expect(screen.queryByText("Rebalance schedule to direction")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Targets")).toHaveLength(1);
-    expect(screen.getAllByText("Guardrails")).toHaveLength(1);
+    expect(screen.getAllByText("Rules")).toHaveLength(1);
+    expect(screen.queryByText("Targets")).not.toBeInTheDocument();
+    expect(screen.queryByText("Guardrails")).not.toBeInTheDocument();
+    expect(screen.getByText("Run 10 miles")).toBeInTheDocument();
+    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.queryByText("No more than 2 hard days")).not.toBeInTheDocument();
 
-    await user.click(screen.getByText("Guardrails"));
+    await user.click(screen.getByRole("button", { name: "Show all rules" }));
 
     expect(screen.getByText("No more than 2 hard days")).toBeVisible();
-    expect(screen.getByText("Hard days <= 2")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide passing rules" })).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Edit Mileage rule"));
+
+    expect(screen.getByLabelText("Target mileage")).toHaveValue(10);
+  });
+
+  it("keeps an open rule visible after edits bring it back in line", async () => {
+    const user = userEvent.setup();
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    await user.click(screen.getByLabelText("Edit Mileage rule"));
+    const minimumInput = screen.getByLabelText("Minimum mileage");
+    await user.clear(minimumInput);
+    await user.type(minimumInput, "4");
+
+    expect(screen.getByText("All rules met")).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum mileage")).toHaveValue(4);
+
+    await user.click(screen.getByLabelText("Edit Mileage rule"));
+
+    expect(screen.queryByText("Run 10 miles")).not.toBeInTheDocument();
+  });
+
+  it("keeps live schedule totals and the load suggestion in the footer", () => {
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    expect(screen.getByText("Planned")).toBeInTheDocument();
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+    expect(screen.getByText("1 session · 0 hard")).toBeInTheDocument();
+    expect(screen.getByText("prior 5 mi")).toBeInTheDocument();
   });
 });
 
