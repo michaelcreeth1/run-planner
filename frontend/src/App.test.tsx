@@ -244,7 +244,7 @@ describe("App authentication states", () => {
     await user.type(screen.getByLabelText("Password"), "test-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("heading", { name: "Macrocycle overview" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Plan overview" })).toBeVisible();
     expect(await screen.findByText("Autumn Half plan")).toBeVisible();
     expect(window.location.pathname).toBe("/plan/plan-1");
 
@@ -310,7 +310,7 @@ describe("App authentication states", () => {
     window.history.forward();
     await waitFor(() => {
       expect(window.location.pathname).toBe("/plan");
-      expect(screen.getByRole("heading", { name: "Macrocycle overview" })).toBeVisible();
+      expect(screen.getByRole("heading", { name: "Plan overview" })).toBeVisible();
     });
   });
 

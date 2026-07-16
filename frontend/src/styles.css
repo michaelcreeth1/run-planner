@@ -7163,8 +7163,7 @@ button.goal-impact-cell:focus-visible {
   padding: 1.25rem;
 }
 
-.plan-form,
-.mesocycle-editor-list {
+.plan-form {
   display: grid;
   gap: 1rem;
 }
@@ -7232,8 +7231,7 @@ button.goal-impact-cell:focus-visible {
     repeat(2, minmax(150px, 0.8fr));
 }
 
-.plan-form label,
-.mesocycle-editor-card label {
+.plan-form label {
   display: grid;
   gap: 0.35rem;
   color: var(--text-secondary);
@@ -7242,9 +7240,7 @@ button.goal-impact-cell:focus-visible {
 
 .plan-form input,
 .plan-form select,
-.plan-form textarea,
-.mesocycle-editor-card input,
-.mesocycle-editor-card select {
+.plan-form textarea {
   width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: 1rem;
@@ -7383,17 +7379,10 @@ button.goal-impact-cell:focus-visible {
   text-underline-offset: 0.2rem;
 }
 
-.mesocycle-editor-card,
 .plan-week-bar {
   border: 1px solid var(--border-subtle);
   border-radius: 1.15rem;
   background: var(--bg-subtle);
-}
-
-.mesocycle-editor-card {
-  display: grid;
-  gap: 1rem;
-  padding: 1rem;
 }
 
 .plan-race-row {
@@ -7504,7 +7493,7 @@ button.goal-impact-cell:focus-visible {
   border: 1px solid var(--border-subtle);
   border-radius: 0.75rem;
   background:
-    linear-gradient(90deg, rgba(15, 23, 42, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px),
     var(--bg-subtle);
   background-size: calc(100% / var(--week-count, 12)) 100%, auto;
   overflow: visible;
@@ -7526,7 +7515,7 @@ button.goal-impact-cell:focus-visible {
   text-align: left;
   cursor: pointer;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
   transition: bottom 140ms ease, box-shadow 140ms ease, top 140ms ease;
 }
 
@@ -7557,9 +7546,7 @@ button.goal-impact-cell:focus-visible {
 .mesocycle-timeline-bar.selected {
   top: 0.85rem;
   bottom: 0.85rem;
-  box-shadow:
-    inset 0 0 0 3px var(--tint-info-text),
-    0 10px 24px rgba(15, 23, 42, 0.2);
+  box-shadow: inset 0 0 0 2px var(--primary);
   z-index: 2;
 }
 
@@ -7613,7 +7600,7 @@ button.goal-impact-cell:focus-visible {
   bottom: 0.8rem;
   width: 2px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.24);
+  background: var(--border-strong);
   transform: translateX(-50%);
 }
 
@@ -7624,12 +7611,12 @@ button.goal-impact-cell:focus-visible {
   top: 50%;
   width: 0.45rem;
   height: 3.15rem;
-  border: 1px solid rgba(15, 23, 42, 0.28);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background:
-    linear-gradient(90deg, transparent 35%, rgba(15, 23, 42, 0.34) 35% 44%, transparent 44% 56%, rgba(15, 23, 42, 0.34) 56% 65%, transparent 65%),
-    rgba(255, 255, 255, 0.94);
-  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.14);
+    linear-gradient(90deg, transparent 35%, var(--text-secondary) 35% 44%, transparent 44% 56%, var(--text-secondary) 56% 65%, transparent 65%),
+    var(--bg-surface);
+  box-shadow: var(--shadow-sm);
   transform: translate(-50%, -50%);
 }
 
@@ -7640,23 +7627,28 @@ button.goal-impact-cell:focus-visible {
 
 .mesocycle-boundary-handle:hover::before,
 .mesocycle-boundary-handle.dragging::before {
-  background: var(--tint-info-text);
+  background: var(--primary);
 }
 
 .mesocycle-boundary-handle:hover::after,
 .mesocycle-boundary-handle.dragging::after {
-  border-color: var(--tint-info-text);
-  box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.16), 0 7px 16px rgba(15, 23, 42, 0.18);
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring), var(--shadow-sm);
 }
 
 .mesocycle-inspector {
   display: grid;
   gap: 1rem;
-  border: 1px solid var(--tint-info-border);
-  border-radius: 0.75rem;
+  margin-top: 0.85rem;
+  border-radius: 1rem;
   background: var(--bg-subtle);
-  padding: 1rem;
-  box-shadow: inset 3px 0 0 var(--tint-info-text);
+  padding: 1rem 1.1rem;
+}
+
+.mesocycle-inspector input,
+.mesocycle-inspector select,
+.mesocycle-inspector textarea {
+  background: var(--bg-surface);
 }
 
 .mesocycle-field-group {
@@ -7731,20 +7723,28 @@ button.goal-impact-cell:focus-visible {
   gap: 0.2rem;
 }
 
-.mesocycle-selection-label {
+.mesocycle-inspector-heading {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  color: var(--tint-info-text);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
+  gap: 0.45rem;
+}
+
+.mesocycle-inspector-heading strong {
+  font-size: 1rem;
+}
+
+.mesocycle-inspector-dates {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
 }
 
 .mesocycle-editor-actions {
   display: flex;
   gap: 0.4rem;
+}
+
+.mesocycle-editor-actions .icon-button:disabled {
+  opacity: 0.6;
 }
 
 .icon-button {

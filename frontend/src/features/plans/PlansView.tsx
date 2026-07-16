@@ -280,19 +280,21 @@ export function PlansView({
       <header className="plans-toolbar">
         <div>
           <p className="eyebrow">Training planning</p>
-          <h1>Macrocycle overview</h1>
+          <h1>Plan overview</h1>
         </div>
-        <div className="plans-toolbar-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={openCreatePlan}
-            disabled={writesBlocked || hasActiveEditor}
-          >
-            <Plus size={16} />
-            Create training plan
-          </button>
-        </div>
+        {hasActiveEditor ? null : (
+          <div className="plans-toolbar-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={openCreatePlan}
+              disabled={writesBlocked}
+            >
+              <Plus size={16} />
+              Create training plan
+            </button>
+          </div>
+        )}
       </header>
 
       {planEditor ? (
@@ -454,7 +456,7 @@ export function PlansView({
           <div className="plan-form-section">
             <div className="plan-form-section-header">
               <div className="section-title-row">
-                <strong>Mesocycles</strong>
+                <strong>Training phases</strong>
                 <span>
                   {planEditor.mesocycles.length} phases
                   {planEditorGoalRace ? ` · race milestone ${formatShortDate(planEditorGoalRace.raceDate)}` : ""}
@@ -494,7 +496,7 @@ export function PlansView({
             </div>
             <p className="plan-form-hint">
               Added to every week this plan scaffolds. Weekly mileage and long-run targets come from
-              the mesocycles above; use these for standing intent like strength or rest days.
+              the training phases above; use these for standing intent like strength or rest days.
             </p>
             <div className="plan-recurring-goal-list">
               {planEditor.recurringGoals.map((goal, index) => (
@@ -779,7 +781,7 @@ function MesocycleTimelineEditor({
             ].filter(Boolean).join(" ")}
             style={{ left: `${(boundaryWeek / totalWeeks) * 100}%` }}
             title="Drag to resize phases"
-            aria-label="Drag to resize mesocycle boundary"
+            aria-label="Drag to resize phase boundary"
             onPointerDown={(event) => beginBoundaryDrag(event, boundaryIndex)}
           />
         ))}
@@ -813,15 +815,16 @@ function MesocycleInspector({
   const longRunEndEffective = optionalNumber(selected.longRunEnd) ?? longRunEndAuto;
 
   return (
-    <article className="mesocycle-inspector">
+    <article className="mesocycle-inspector" aria-label="Selected phase settings">
       <header className="mesocycle-editor-card-header">
         <div>
-          <span className="mesocycle-selection-label">
-            <Pencil size={13} aria-hidden="true" />
-            Editing selected phase
+          <span className={`mesocycle-inspector-heading plan-phase--${selected.phase}`}>
+            <span className="plan-phase-dot" aria-hidden="true" />
+            <strong>{selected.name || phaseLabel(selected.phase)}</strong>
           </span>
-          <strong>{selected.name || phaseLabel(selected.phase)}</strong>
-          <span>{formatCompactWeekRange(selected.startDate, selected.endDate)}</span>
+          <span className="mesocycle-inspector-dates">
+            {formatCompactWeekRange(selected.startDate, selected.endDate)}
+          </span>
         </div>
         <div className="mesocycle-editor-actions">
           <button

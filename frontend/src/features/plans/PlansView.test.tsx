@@ -88,15 +88,14 @@ describe("PlansView", () => {
     const buildPhase = screen.getByRole("button", { name: "Build phase" });
     expect(basePhase).toHaveAttribute("aria-pressed", "true");
     expect(buildPhase).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText("Editing selected phase")).toBeVisible();
+    const inspector = screen.getByRole("article", { name: "Selected phase settings" });
+    expect(within(inspector).getByText("Base", { selector: "strong" })).toBeVisible();
 
     await user.click(buildPhase);
 
     expect(basePhase).toHaveAttribute("aria-pressed", "false");
     expect(buildPhase).toHaveAttribute("aria-pressed", "true");
-    const inspector = screen.getByText("Editing selected phase").closest("article");
-    expect(inspector).not.toBeNull();
-    expect(within(inspector!).getByText("Build", { selector: "strong" })).toBeVisible();
+    expect(within(inspector).getByText("Build", { selector: "strong" })).toBeVisible();
   });
 
   it("does not reserve a textarea for an empty description", async () => {
