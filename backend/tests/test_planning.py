@@ -921,3 +921,32 @@ def test_save_week_plan_persists_custom_purpose_text() -> None:
         assert saved_week.notes == "Altitude camp shakeout"
     finally:
         db.close()
+
+
+def test_save_week_plan_without_purpose_preserves_existing_intent() -> None:
+    db = make_session()
+    try:
+        week = planning.get_or_create_week(db, date(2099, 8, 10))
+        week.purpose = "recovery"
+        week.purpose_source = "manual"
+        db.add(week)
+        db.commit()
+
+        saved_week = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(
+                workouts=[
+                    PlanWeekWorkout(
+                        planned_date=date(2099, 8, 11),
+                        title="Easy 4",
+                        planned_distance=4,
+                    )
+                ]
+            ),
+        )
+
+        assert saved_week.purpose == "recovery"
+        assert saved_week.purpose_source == "manual"
+    finally:
+        db.close()

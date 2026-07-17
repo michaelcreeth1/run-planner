@@ -3,14 +3,38 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { defaultGoalForm } from "../../lib/forms";
-import type { WeekGoalForm } from "../../types/domain";
+import type { GoalMetricDefinition, WeekGoalForm } from "../../types/domain";
 import { WeekGoalEditor } from "./WeekGoalEditor";
+
+const metrics: GoalMetricDefinition[] = [
+  {
+    key: "weekly_run_distance",
+    label: "Weekly running distance",
+    category: "mileage",
+    unit: "mi",
+    valueType: "decimal",
+    operators: ["at_least", "at_most", "range", "exact-ish"],
+    minimum: 0,
+    maximum: null
+  },
+  {
+    key: "rest_day_count",
+    label: "Rest days",
+    category: "recovery",
+    unit: "days",
+    valueType: "integer",
+    operators: ["at_least", "exact-ish"],
+    minimum: 0,
+    maximum: 7
+  }
+];
 
 function GoalHarness({ onSave }: { onSave: (form: WeekGoalForm) => void }) {
   const [editor, setEditor] = useState(() => defaultGoalForm("week-1"));
   return (
     <WeekGoalEditor
       editor={editor}
+      metrics={metrics}
       setEditor={setEditor}
       onClose={vi.fn()}
       onSubmit={(event) => {
@@ -22,29 +46,57 @@ function GoalHarness({ onSave }: { onSave: (form: WeekGoalForm) => void }) {
 }
 
 describe("WeekGoalEditor", () => {
-  it("edits goal rules and preserves enabled state", async () => {
+  it("builds a week goal from metric, condition, and value", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     render(<GoalHarness onSave={onSave} />);
 
-    await user.selectOptions(screen.getByLabelText("Category"), "mileage");
-    await user.type(screen.getByLabelText("Label"), "Weekly mileage");
-    await user.type(screen.getByLabelText("Min"), "28");
-    await user.type(screen.getByLabelText("Target"), "32");
-    await user.selectOptions(screen.getByLabelText("Unit"), "mi");
-    await user.selectOptions(screen.getByLabelText("Evaluation"), "at_least");
-    await user.click(screen.getByLabelText("Enabled"));
+    expect(screen.queryByLabelText("Status")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Enabled")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Priority")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Metric"), "weekly_run_distance");
+    await user.type(screen.getByLabelText("Value"), "28");
+
+    expect(screen.getAllByText("Run at least 28 miles").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
+        metricKey: "weekly_run_distance",
         category: "mileage",
-        label: "Weekly mileage",
+        goalType: "achievement",
+        label: "Run at least 28 miles",
         minAcceptable: "28",
-        targetValue: "32",
+        targetValue: "28",
         unit: "mi",
         evaluationMode: "at_least",
-        isEnabled: false
+        priority: "secondary",
+        status: "not_started",
+        isEnabled: true
+      })
+    );
+  });
+
+  it("derives limits from the condition while allowing custom wording", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<GoalHarness onSave={onSave} />);
+
+    await user.selectOptions(screen.getByLabelText("Metric"), "weekly_run_distance");
+    await user.selectOptions(screen.getByLabelText("Condition"), "at_most");
+    await user.type(screen.getByLabelText("Value"), "40");
+    const label = screen.getByLabelText("Label");
+    await user.clear(label);
+    await user.type(label, "Cap this week at 40 miles");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goalType: "guardrail",
+        label: "Cap this week at 40 miles",
+        maxAcceptable: "40",
+        priority: "guardrail"
       })
     );
   });

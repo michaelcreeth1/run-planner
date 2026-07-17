@@ -33,7 +33,7 @@ import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "
 import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
 import { appRoutePath, parseAppRoute } from "./lib/navigation";
 import type { AppRoute, AppTab, PlanningSection, ProgressSection } from "./lib/navigation";
-import { selectPrimaryPlan, useDefaultGoalsQuery, usePlanQuery, usePlansQuery } from "./lib/queries";
+import { selectPrimaryPlan, useDefaultGoalsQuery, useGoalMetricsQuery, usePlanQuery, usePlansQuery } from "./lib/queries";
 import { ProfileProvider } from "./lib/profile";
 import type {
   AnalyticsPlanning,
@@ -155,6 +155,7 @@ function AppShell() {
   );
   const activePlan = activePlanQuery.data ?? null;
   const defaultGoalsQuery = useDefaultGoalsQuery(session?.activeAthleteAccountId ?? null);
+  const goalMetricsQuery = useGoalMetricsQuery(Boolean(session?.authenticated));
   const sharedPlanRules = useMemo(
     () => buildPlanRules({ defaultGoals: defaultGoalsQuery.data ?? [], plan: activePlan }),
     [activePlan, defaultGoalsQuery.data]
@@ -983,6 +984,7 @@ function AppShell() {
         {goalEditor ? (
           <WeekGoalEditor
             editor={goalEditor}
+            metrics={goalMetricsQuery.data ?? []}
             setEditor={setGoalEditor}
             onSubmit={saveGoal}
             onClose={() => setGoalEditor(null)}

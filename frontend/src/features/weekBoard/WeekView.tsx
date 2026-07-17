@@ -337,7 +337,7 @@ function CollapsedWeekCard({
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
   const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
   const mileageTrend = getCollapsedMileageTrend(week, previousWeek);
-  const detail = formatCollapsedWeekDetail(week, tone);
+  const detail = formatCollapsedWeekDetail(week);
   const dayBadges = collapsedWeekDayBadges(week, weekStart);
   const dailySummary = dayBadges.map((badge) => `${formatWeekday(badge.date)} ${badge.label}`).join(", ");
   const trendSummary = mileageTrend ? `, ${formatMileageTrendAriaLabel(mileageTrend)}` : "";
@@ -606,7 +606,7 @@ function WeekSchedule({
                   )
                 )}
                 {isEmpty && dateValue < today ? (
-                  <span className="empty-day-action empty-day-action--static">Rest</span>
+                  <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
                 {isEmpty && dateValue >= today ? (
                   <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
@@ -834,7 +834,7 @@ function WorkoutItem({
         ? "completed with changes"
         : workout.status === "partial"
           ? "partially completed"
-          : "completed manually"
+          : "completed"
     );
   }
   const detail = detailPieces.join(" · ");
@@ -913,7 +913,7 @@ function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmp
   } else if (activities.length > 0) {
     classes.push("day-column--actual");
   } else if (isEmpty) {
-    classes.push("day-column--empty", "day-column--rest");
+    classes.push("day-column--empty");
   }
   return classes.join(" ");
 }
@@ -940,9 +940,9 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
     if (dayActuals.length > 0) {
       return {
         date,
-        kind: actualMiles > 0 ? "actual" : "rest",
-        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "rest",
-        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} completed miles`
+        kind: "actual",
+        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "done",
+        title: `${weekday} ${dateLabel}: ${dayActuals.length} completed activit${dayActuals.length === 1 ? "y" : "ies"}`
       };
     }
 
@@ -955,11 +955,20 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
       };
     }
 
+    if (dayWorkouts.some((workout) => workout.sport === "rest" || workout.intensityCategory === "rest")) {
+      return {
+        date,
+        kind: "rest",
+        label: "rest",
+        title: `${weekday} ${dateLabel}: rest planned`
+      };
+    }
+
     return {
       date,
-      kind: "rest",
-      label: "rest",
-      title: `${weekday} ${dateLabel}: rest`
+      kind: "empty",
+      label: "—",
+      title: `${weekday} ${dateLabel}: no session planned`
     };
   });
 }
@@ -985,10 +994,10 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
     return `${formatNumber(planned)} mi planned`;
   }
 
-  return tone === "future" ? "not planned" : "no plan";
+  return "Not planned yet";
 }
 
-function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: CollapsedWeekTone) {
+function formatCollapsedWeekDetail(week: TrainingWeek | undefined) {
   if (!week) {
     return "loading";
   }
@@ -996,8 +1005,8 @@ function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: Collaps
   const hasPlannedWork = week.plannedMileage > 0 || week.workouts.length > 0;
   const hasActualWork = week.actualMileage > 0 || week.actualActivities.length > 0;
 
-  if (!hasPlannedWork && !hasActualWork && tone === "future") {
-    return "tap to plan";
+  if (!hasPlannedWork && !hasActualWork) {
+    return "not planned yet";
   }
 
   const planLabel = hasPlannedWork ? formatHardDays(week.hardDays) : "no plan";

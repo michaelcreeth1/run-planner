@@ -80,7 +80,7 @@ describe("buildWeekNextUp", () => {
         }),
         "2026-07-09"
       )
-    ).toMatchObject({ action: "plan_week", actionLabel: "Adjust rest of week", eyebrow: "Needs attention" });
+    ).toMatchObject({ action: "plan_week", actionLabel: "Edit week plan", eyebrow: "Needs attention" });
   });
 
   it("does not raise the needs-attention banner while a sparse week is still taking shape", () => {

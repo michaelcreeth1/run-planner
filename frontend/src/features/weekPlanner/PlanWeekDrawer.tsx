@@ -104,11 +104,9 @@ export function PlanWeekDrawer({
   const drawerTitle =
     draft.weekState === "past"
       ? "Review week"
-      : draft.weekState === "current"
-      ? "Adjust rest of week"
       : draft.hasExistingPlan
-      ? "Edit plan"
-      : "Plan week";
+        ? "Edit week plan"
+        : "Plan week";
 
   if (draft.weekState === "past") {
     return (
@@ -150,6 +148,7 @@ export function PlanWeekDrawer({
       return {
         ...current,
         purpose: purposeValue,
+        purposeIsSuggested: false,
         load: nextLoad
       };
     });
@@ -324,7 +323,7 @@ export function PlanWeekDrawer({
                 </select>
               </label>
               <label>
-                <span>Purpose</span>
+                <span>{draft.purposeIsSuggested ? "Suggested purpose" : "Purpose"}</span>
                 <select value={draft.purpose} onChange={(event) => updatePurpose(event.target.value as WeekPurposeId)}>
                   {weekPurposes.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -644,7 +643,7 @@ function trainingWeekFromDraft(draft: PlanWeekDraft, sourceWeek?: TrainingWeek):
     plannedTime: null,
     actualTime: sourceWeek?.actualTime ?? null,
     mesocycleId: sourceWeek?.mesocycleId ?? null,
-    purpose: draft.purpose,
+    purpose: draft.purposeIsSuggested ? sourceWeek?.purpose ?? "" : draft.purpose,
     purposeSource: sourceWeek?.purposeSource ?? "manual",
     targetMileage: sourceWeek?.targetMileage ?? null,
     targetMileageSource: sourceWeek?.targetMileageSource ?? "manual",

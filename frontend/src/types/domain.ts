@@ -379,6 +379,7 @@ export type PlanWeekDraft = {
   weekState: WeekState;
   startingPoint: PlanStartingPoint;
   purpose: WeekPurposeId;
+  purposeIsSuggested?: boolean;
   customPurpose: string;
   priorWeekStartDate: string | null;
   noPriorUsableWeek: boolean;

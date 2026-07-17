@@ -214,6 +214,50 @@ def test_invalid_legacy_default_goal_remains_readable_for_review() -> None:
         assert legacy_goal["evaluationMode"] == "manual"
 
 
+def test_manual_workout_completion_counts_toward_automatic_goal_metrics() -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2024-04-01",
+                "title": "Untracked long run",
+                "sport": "run",
+                "workoutType": "long_run",
+                "plannedDistance": 10,
+                "status": "completed_as_planned",
+            },
+        )
+        assert workout_response.status_code == 201
+
+        week = client.get("/api/weeks/2024-04-01").json()
+        goal_response = client.post(
+            f"/api/weeks/{week['id']}/goals",
+            json={
+                "metricKey": "weekly_run_distance",
+                "category": "mileage",
+                "goalType": "achievement",
+                "label": "Run at least 10 miles",
+                "targetValue": 10,
+                "minAcceptable": 10,
+                "unit": "mi",
+                "evaluationMode": "at_least",
+            },
+        )
+        assert goal_response.status_code == 201
+
+        refreshed_week = client.get("/api/weeks/2024-04-01").json()
+        evaluation = next(
+            item
+            for item in refreshed_week["goalEvaluations"]
+            if item["goalId"] == goal_response.json()["id"]
+        )
+
+        assert evaluation["actualValue"] == 10
+        assert evaluation["remainingPlannedValue"] == 0
+        assert evaluation["status"] == "achieved"
+
+
 def test_completing_review_snapshots_actual_weekly_metrics() -> None:
     db = make_session()
     try:

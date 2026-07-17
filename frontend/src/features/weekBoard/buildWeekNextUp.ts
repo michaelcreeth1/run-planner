@@ -38,7 +38,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
     const hasPlan = hasWeekPlan(week);
     return {
       action: "plan_week",
-      actionLabel: hasPlan ? "Edit week" : "Plan week",
+      actionLabel: hasPlan ? "Edit week plan" : "Plan week",
       detail: hasPlan
         ? `${formatNumber(week.plannedMileage)} miles are scheduled. Check the load and key sessions before the week begins.`
         : "Set the purpose, load, key sessions, and recovery pattern before the week begins.",
@@ -50,7 +50,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
   if (!hasWeekPlan(week)) {
     return {
       action: "plan_week",
-      actionLabel: "Plan this week",
+      actionLabel: "Plan week",
       detail: "Give the week a purpose, mileage target, and enough structure to guide the next run.",
       eyebrow: "Next up",
       title: "Set the direction for this week"
@@ -60,7 +60,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
   if (hasEnoughStructureForGoalAlarm(week) && week.goalEvaluations.some((evaluation) => attentionStatuses.has(evaluation.status))) {
     return {
       action: "plan_week",
-      actionLabel: "Adjust rest of week",
+      actionLabel: "Edit week plan",
       detail: "At least one weekly goal is at risk. Rebalance the remaining work while there is still time.",
       eyebrow: "Needs attention",
       title: "Bring the week back into alignment"
@@ -95,7 +95,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
 
   return {
     action: "plan_week",
-    actionLabel: "Adjust rest of week",
+    actionLabel: "Edit week plan",
     detail: "There is no remaining session on the schedule. Decide whether the week is complete or needs another adjustment.",
     eyebrow: "Next up",
     title: "Close the gap in the schedule"

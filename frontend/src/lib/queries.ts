@@ -50,10 +50,11 @@ export function useDefaultGoalsQuery(profileId: string | null) {
 }
 
 // The metric catalog is static server configuration, not profile data.
-export function useGoalMetricsQuery() {
+export function useGoalMetricsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.goalMetrics,
     queryFn: () => fetchJson<GoalMetricDefinition[]>("/api/goal-metrics"),
+    enabled,
     staleTime: Infinity
   });
 }

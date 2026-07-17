@@ -42,12 +42,52 @@ describe("WeekView workout completion", () => {
       </QueryClientProvider>
     );
 
-    expect(screen.getByText("completed manually")).toBeVisible();
+    expect(screen.getByText("completed")).toBeVisible();
     const undo = screen.getByRole("button", { name: "Mark Untracked strength session incomplete" });
     expect(undo).toHaveAttribute("aria-pressed", "true");
     await user.click(undo);
 
     expect(onSetCompletion).toHaveBeenLastCalledWith(completedWorkout, false);
+  });
+
+  it("renders an unplanned collapsed week as quiet empty days, not seven rest days", () => {
+    const selectedWeek = makeWeek(makeWorkout());
+    const emptyWeek: TrainingWeek = {
+      ...selectedWeek,
+      id: "week-empty",
+      weekStartDate: "2026-07-06",
+      weekEndDate: "2026-07-12",
+      plannedTime: null,
+      purpose: "",
+      workouts: [],
+      weekState: "past"
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = makeProps(selectedWeek, vi.fn());
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView
+            {...props}
+            weekStack={{
+              [emptyWeek.weekStartDate]: emptyWeek,
+              [selectedWeek.weekStartDate]: selectedWeek
+            }}
+            weekStarts={[emptyWeek.weekStartDate, selectedWeek.weekStartDate]}
+          />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const preview = document.querySelector<HTMLElement>('[data-week-start="2026-07-06"] .week-preview-card');
+    expect(preview).not.toBeNull();
+    expect(preview?.getAttribute("aria-label")).toContain("Mon —");
+    expect(preview?.getAttribute("aria-label")).toContain("Not planned yet");
+    expect(preview?.getAttribute("aria-label")).not.toContain("rest");
   });
 });
 

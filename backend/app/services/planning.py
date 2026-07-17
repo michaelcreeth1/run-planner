@@ -821,12 +821,13 @@ def save_week_plan(
             status_code=status.HTTP_409_CONFLICT,
             detail="Past weeks are read-only. Complete a review instead.",
         )
-    normalized_purpose = normalize_week_purpose(payload.purpose)
-    week.purpose = normalized_purpose
-    week.purpose_source = "manual"
-    week.is_down_week = int(normalized_purpose == "down_week")
-    if normalized_purpose == "custom":
-        week.notes = payload.custom_purpose.strip()
+    if payload.purpose is not None:
+        normalized_purpose = normalize_week_purpose(payload.purpose)
+        week.purpose = normalized_purpose
+        week.purpose_source = "manual"
+        week.is_down_week = int(normalized_purpose == "down_week")
+        if normalized_purpose == "custom":
+            week.notes = payload.custom_purpose.strip()
     week.target_long_run_distance = payload.target_long_run_distance
     week.target_long_run_source = "manual"
 
@@ -1617,8 +1618,20 @@ def evaluate_mileage_goal(
     today: date,
 ) -> dict:
     remaining = remaining_planned_mileage(workouts, activities, today)
+    run_activity_dates = {
+        activity.start_date_local.date() for activity in activities if is_run_activity(activity)
+    }
+    manual_completed_miles = sum(
+        workout.planned_distance or 0
+        for workout in workouts
+        if workout.sport == "run"
+        and is_manually_completed_workout(workout)
+        and workout.planned_date not in run_activity_dates
+    )
     actual = round(
-        sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity)), 1
+        sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity))
+        + manual_completed_miles,
+        1,
     )
     planned = round(
         sum(workout.planned_distance or 0 for workout in workouts if workout.sport == "run"), 1
@@ -1658,13 +1671,29 @@ def evaluate_sessions_goal(
     week_state: str,
     today: date,
 ) -> dict:
-    actual = count_training_activities(activities)
+    activity_dates = {
+        activity.start_date_local.date()
+        for activity in activities
+        if is_training_activity(activity)
+    }
+    manual_completions = len(
+        [
+            workout
+            for workout in workouts
+            if workout.sport != "rest"
+            and is_manually_completed_workout(workout)
+            and workout.planned_date not in activity_dates
+        ]
+    )
+    actual = count_training_activities(activities) + manual_completions
     planned = len([workout for workout in workouts if workout.sport != "rest"])
     remaining = len(
         [
             workout
             for workout in workouts
-            if workout.sport != "rest" and workout.planned_date >= today
+            if workout.sport != "rest"
+            and workout.planned_date >= today
+            and not is_manually_completed_workout(workout)
         ]
     )
     value = (
@@ -1700,14 +1729,28 @@ def evaluate_long_run_goal(
 ) -> dict:
     actual_runs = [activity for activity in activities if is_run_activity(activity)]
     planned_runs = [workout for workout in workouts if workout.sport == "run"]
-    actual = round(max((activity.distance / 1609.344 for activity in actual_runs), default=0), 1)
+    run_activity_dates = {activity.start_date_local.date() for activity in actual_runs}
+    manual_completed_runs = [
+        workout
+        for workout in planned_runs
+        if is_manually_completed_workout(workout)
+        and workout.planned_date not in run_activity_dates
+    ]
+    actual = round(
+        max(
+            [activity.distance / 1609.344 for activity in actual_runs]
+            + [workout.planned_distance or 0 for workout in manual_completed_runs],
+            default=0,
+        ),
+        1,
+    )
     planned = round(max((workout.planned_distance or 0 for workout in planned_runs), default=0), 1)
     remaining = round(
         max(
             (
                 workout.planned_distance or 0
                 for workout in planned_runs
-                if workout.planned_date >= today
+                if workout.planned_date >= today and not is_manually_completed_workout(workout)
             ),
             default=0,
         ),
@@ -2045,6 +2088,7 @@ def remaining_planned_mileage(
             if workout.sport == "run"
             and workout.planned_date >= current_day
             and workout.planned_date not in completed_run_dates
+            and not is_manually_completed_workout(workout)
         ),
         1,
     )
@@ -2052,6 +2096,10 @@ def remaining_planned_mileage(
 
 def is_run_activity(activity: StravaActivity) -> bool:
     return weekly_metrics.is_run_activity(activity)
+
+
+def is_manually_completed_workout(workout: PlannedWorkout) -> bool:
+    return workout.status in {"completed_as_planned", "completed_modified", "partial"}
 
 
 def is_training_activity(activity: StravaActivity) -> bool:

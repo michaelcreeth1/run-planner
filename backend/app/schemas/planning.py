@@ -290,7 +290,7 @@ class PlanWeekGoal(WeekGoalBase):
 
 
 class PlanWeekSave(ApiModel):
-    purpose: WeekPurpose | str = "maintain"
+    purpose: WeekPurpose | str | None = None
     custom_purpose: str = ""
     target_long_run_distance: float | None = Field(default=None, ge=0)
     workouts: list[PlanWeekWorkout] = []

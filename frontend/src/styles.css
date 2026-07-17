@@ -1524,6 +1524,14 @@ h1 {
   opacity: 0.62;
 }
 
+.week-preview-card .week-peek-day-badge.empty {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+  opacity: 0.38;
+}
+
 .week-preview-card.current .week-peek-day-badge.planned {
   background: var(--tint-planned-bg);
   border-color: var(--tint-planned-border);

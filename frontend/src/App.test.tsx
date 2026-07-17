@@ -116,6 +116,11 @@ function useAuthenticatedAppHandlers(onCreateWorkout = vi.fn()) {
     http.post(apiUrl("/api/planned-workouts"), async ({ request }) => {
       onCreateWorkout(await request.json());
       return HttpResponse.json({ id: "workout-1" }, { status: 201 });
+    }),
+    http.put(apiUrl("/api/weeks/:weekId/plan"), async ({ request }) => {
+      const payload = await request.json();
+      onCreateWorkout(payload);
+      return HttpResponse.json(emptyWeek(startOfWeek(new Date())));
     })
   );
 }
@@ -150,7 +155,7 @@ describe("App authentication states", () => {
     expect(screen.getByLabelText("Password")).toHaveValue("wrong-password");
   });
 
-  it("logs in, loads the empty week, and creates a workout", async () => {
+  it("logs in, loads the empty week, and plans a workout", async () => {
     const user = userEvent.setup();
     const onCreateWorkout = vi.fn();
     useAuthenticatedAppHandlers(onCreateWorkout);
@@ -162,20 +167,26 @@ describe("App authentication states", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByRole("navigation", { name: "Primary navigation" })).toBeVisible();
-    const addSessionButtons = await screen.findAllByRole("button", { name: "Add session" });
-    await user.click(addSessionButtons[0]);
-    await user.type(screen.getByLabelText("Title"), "Easy recovery run");
-    await user.type(screen.getByLabelText("Miles"), "4");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Plan week" }));
+    await user.click(screen.getByRole("button", { name: "Add session to Mon" }));
+    const name = screen.getByLabelText("Mon session 1 name");
+    await user.clear(name);
+    await user.type(name, "Easy recovery run");
+    await user.type(screen.getByLabelText("Mon session 1 mileage"), "4");
+    await user.click(screen.getByRole("button", { name: "Save plan" }));
 
     expect(onCreateWorkout).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Easy recovery run",
-        plannedDistance: 4,
-        workoutType: "easy"
+        workouts: [
+          expect.objectContaining({
+            title: "Easy recovery run",
+            plannedDistance: 4,
+            workoutType: "easy"
+          })
+        ]
       })
     );
-    expect(screen.queryByRole("heading", { name: "New workout" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Plan week" })).not.toBeInTheDocument();
   });
 
   it("requires confirmation before deleting a workout", async () => {

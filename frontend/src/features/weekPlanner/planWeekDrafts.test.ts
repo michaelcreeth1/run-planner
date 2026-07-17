@@ -59,6 +59,18 @@ describe("plan week draft helpers", () => {
 
     expect(draft.purpose).toBe("custom");
     expect(draft.customPurpose).toBe("Maintain");
+    expect(draft.purposeIsSuggested).toBe(false);
+  });
+
+  it("keeps an untouched purpose suggestion out of the save payload", () => {
+    const week = makeWeek("2026-06-29", { notes: "", purpose: "" });
+
+    const draft = buildPlanWeekDraft(week, { [week.weekStartDate]: week });
+    const payload = planWeekDraftToPayload(draft);
+
+    expect(draft.purpose).toBe("maintain");
+    expect(draft.purposeIsSuggested).toBe(true);
+    expect(payload.purpose).toBeNull();
   });
 
   it("seeds workout drafts from completed run activities", () => {

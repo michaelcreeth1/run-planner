@@ -33,8 +33,10 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
     week.targetLongRunDistance !== null;
   const priorWeek = findPriorUsableWeek(week.weekStartDate, weekStack);
   const startingPoint: PlanStartingPoint = hasExistingPlan ? "existing" : priorWeek ? "copy_prior" : "blank";
+  const hasStoredPurpose =
+    (typeof week.purpose === "string" && week.purpose.length > 0) || week.notes.trim().length > 0;
   const purpose =
-    typeof week.purpose === "string" && week.purpose.length > 0
+    hasStoredPurpose
       ? normalizeWeekPurposeId(week.purpose)
       : week.notes.trim().length > 0
         ? "custom"
@@ -50,6 +52,7 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
     weekState: week.weekState,
     startingPoint,
     purpose,
+    purposeIsSuggested: !hasStoredPurpose,
     customPurpose: purpose === "custom" ? week.notes.trim() : "",
     priorWeekStartDate: priorWeek?.weekStartDate ?? null,
     noPriorUsableWeek: !hasExistingPlan && !priorWeek,
@@ -525,7 +528,7 @@ export function numericAlignment(id: string, label: string, value: number, goal:
 
 export function planWeekDraftToPayload(draft: PlanWeekDraft) {
   return {
-    purpose: draft.purpose,
+    purpose: draft.purposeIsSuggested ? null : draft.purpose,
     customPurpose: draft.customPurpose,
     targetLongRunDistance: optionalNumber(draft.goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => {

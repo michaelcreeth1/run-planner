@@ -66,11 +66,22 @@ def calculate_weekly_metrics(
 
     completed_run_dates = {activity.start_date_local.date() for activity in run_activities}
     actual_training_dates = {activity.start_date_local.date() for activity in training_activities}
+    manually_completed_training_workouts = [
+        workout
+        for workout in training_workouts
+        if is_manually_completed_workout(workout)
+        and workout.planned_date not in actual_training_dates
+    ]
+    actual_training_dates |= {
+        workout.planned_date for workout in manually_completed_training_workouts
+    }
     planned_training_dates = {workout.planned_date for workout in training_workouts}
     remaining_training_workouts = [
         workout
         for workout in training_workouts
-        if workout.planned_date >= today and workout.planned_date not in actual_training_dates
+        if workout.planned_date >= today
+        and workout.planned_date not in actual_training_dates
+        and not is_manually_completed_workout(workout)
     ]
     projected_training_dates = actual_training_dates | {
         workout.planned_date for workout in remaining_training_workouts
@@ -84,20 +95,39 @@ def calculate_weekly_metrics(
         for activity in run_activities
         if activity.start_date_local.date() in planned_quality_dates
     }
+    actual_quality_dates |= {
+        workout.planned_date
+        for workout in quality_workouts
+        if is_manually_completed_workout(workout)
+    }
     remaining_quality_dates = {
         workout.planned_date
         for workout in quality_workouts
-        if workout.planned_date >= today and workout.planned_date not in actual_quality_dates
+        if workout.planned_date >= today
+        and workout.planned_date not in actual_quality_dates
+        and not is_manually_completed_workout(workout)
     }
     projected_quality_dates = actual_quality_dates | remaining_quality_dates
 
+    manually_completed_run_workouts = [
+        workout
+        for workout in run_workouts
+        if is_manually_completed_workout(workout)
+        and workout.planned_date not in completed_run_dates
+    ]
     remaining_run_workouts = [
         workout
         for workout in run_workouts
-        if workout.planned_date >= today and workout.planned_date not in completed_run_dates
+        if workout.planned_date >= today
+        and workout.planned_date not in completed_run_dates
+        and not is_manually_completed_workout(workout)
     ]
     planned_miles = round(sum(workout.planned_distance or 0 for workout in run_workouts), 1)
-    actual_miles = round(sum(activity.distance / 1609.344 for activity in run_activities), 1)
+    actual_miles = round(
+        sum(activity.distance / 1609.344 for activity in run_activities)
+        + sum(workout.planned_distance or 0 for workout in manually_completed_run_workouts),
+        1,
+    )
     remaining_miles = round(
         sum(workout.planned_distance or 0 for workout in remaining_run_workouts), 1
     )
@@ -107,7 +137,12 @@ def calculate_weekly_metrics(
         max((workout.planned_distance or 0 for workout in run_workouts), default=0), 1
     )
     actual_longest = round(
-        max((activity.distance / 1609.344 for activity in run_activities), default=0), 1
+        max(
+            [activity.distance / 1609.344 for activity in run_activities]
+            + [workout.planned_distance or 0 for workout in manually_completed_run_workouts],
+            default=0,
+        ),
+        1,
     )
     remaining_longest = round(
         max((workout.planned_distance or 0 for workout in remaining_run_workouts), default=0),
@@ -115,10 +150,20 @@ def calculate_weekly_metrics(
     )
     projected_longest = max(actual_longest, remaining_longest)
 
+    actual_strength_dates = {
+        activity.start_date_local.date() for activity in strength_activities
+    }
+    manually_completed_strength_workouts = [
+        workout
+        for workout in strength_workouts
+        if is_manually_completed_workout(workout)
+        and workout.planned_date not in actual_strength_dates
+    ]
     remaining_strength_workouts = [
         workout
         for workout in strength_workouts
         if workout.planned_date >= today
+        and not is_manually_completed_workout(workout)
         and not any(
             activity.start_date_local.date() == workout.planned_date
             for activity in strength_activities
@@ -138,8 +183,10 @@ def calculate_weekly_metrics(
         "training_session_count": measurement(
             "training_session_count",
             len(training_workouts),
-            len(training_activities),
-            len(training_activities) + len(remaining_training_workouts),
+            len(training_activities) + len(manually_completed_training_workouts),
+            len(training_activities)
+            + len(manually_completed_training_workouts)
+            + len(remaining_training_workouts),
             remaining=len(remaining_training_workouts),
             workouts=training_workouts,
             activities=training_activities,
@@ -173,8 +220,10 @@ def calculate_weekly_metrics(
         "strength_session_count": measurement(
             "strength_session_count",
             len(strength_workouts),
-            len(strength_activities),
-            len(strength_activities) + len(remaining_strength_workouts),
+            len(strength_activities) + len(manually_completed_strength_workouts),
+            len(strength_activities)
+            + len(manually_completed_strength_workouts)
+            + len(remaining_strength_workouts),
             remaining=len(remaining_strength_workouts),
             workouts=strength_workouts,
             activities=strength_activities,
@@ -253,6 +302,10 @@ def is_strength_workout(workout: PlannedWorkout) -> bool:
         "strength",
         "mobility",
     }
+
+
+def is_manually_completed_workout(workout: PlannedWorkout) -> bool:
+    return workout.status in {"completed_as_planned", "completed_modified", "partial"}
 
 
 def is_quality_activity(activity: StravaActivity) -> bool:
