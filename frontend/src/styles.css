@@ -3815,6 +3815,10 @@ dt {
   color: var(--tint-warning-text);
 }
 
+.rule-status-icon--pending {
+  color: var(--text-muted);
+}
+
 .rule-copy {
   display: grid;
   flex: 1;

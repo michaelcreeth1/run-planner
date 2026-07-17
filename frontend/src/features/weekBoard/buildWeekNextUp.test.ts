@@ -55,7 +55,11 @@ describe("buildWeekNextUp", () => {
     expect(
       buildWeekNextUp(
         makeWeek({
-          workouts: [makeWorkout()],
+          workouts: [
+            makeWorkout({ id: "workout-1", plannedDate: "2026-07-09" }),
+            makeWorkout({ id: "workout-2", plannedDate: "2026-07-10" }),
+            makeWorkout({ id: "workout-3", plannedDate: "2026-07-11" })
+          ],
           goalEvaluations: [
             {
               goalId: "goal-1",
@@ -77,6 +81,36 @@ describe("buildWeekNextUp", () => {
         "2026-07-09"
       )
     ).toMatchObject({ action: "plan_week", actionLabel: "Adjust rest of week", eyebrow: "Needs attention" });
+  });
+
+  it("does not raise the needs-attention banner while a sparse week is still taking shape", () => {
+    const workout = makeWorkout({ plannedDate: "2026-07-09" });
+    const week = makeWeek({
+      workouts: [workout],
+      goalEvaluations: [
+        {
+          goalId: "goal-1",
+          weekStartDate: "2026-07-06",
+          status: "at_risk",
+          guardrailStatus: "danger",
+          actualValue: 0,
+          plannedValue: 5,
+          remainingPlannedValue: 5,
+          summary: "At risk",
+          detail: null,
+          severity: "danger",
+          evaluatedAt: "2026-07-09T00:00:00Z",
+          contributingWorkoutIds: [workout.id],
+          contributingActivityIds: []
+        }
+      ]
+    });
+
+    expect(buildWeekNextUp(week, "2026-07-09")).toMatchObject({
+      action: "edit_workout",
+      workoutId: workout.id,
+      eyebrow: "Today"
+    });
   });
 
   it("links to progress after the remaining schedule is complete", () => {

@@ -41,10 +41,11 @@ export function useGoalRacesQuery(profileId: string) {
   });
 }
 
-export function useDefaultGoalsQuery(profileId: string) {
+export function useDefaultGoalsQuery(profileId: string | null) {
   return useQuery({
-    queryKey: queryKeys.defaultGoals(profileId),
-    queryFn: () => fetchJson<RecurringGoal[]>("/api/default-goals")
+    queryKey: queryKeys.defaultGoals(profileId ?? "anonymous"),
+    queryFn: () => fetchJson<RecurringGoal[]>("/api/default-goals"),
+    enabled: Boolean(profileId)
   });
 }
 

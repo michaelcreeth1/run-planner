@@ -547,13 +547,45 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
   };
 }
 
-export function startingPointOptions(draft: PlanWeekDraft): Array<{ value: PlanStartingPoint; label: string }> {
+export function startingPointOptions(
+  draft: PlanWeekDraft
+): Array<{ value: PlanStartingPoint; label: string; disabled?: boolean }> {
+  const hasPriorWeek = Boolean(draft.priorWeekStartDate);
+  const noPriorLabel = " — no prior usable week";
   return [
     ...(draft.hasExistingPlan ? [{ value: "existing" as const, label: "Keep current plan" }] : []),
-    { value: "copy_prior" as const, label: "Copy prior week" },
-    { value: "smart_adjustment" as const, label: "Rebalance remaining days" },
+    {
+      value: "copy_prior" as const,
+      label: `Copy prior week${hasPriorWeek ? "" : noPriorLabel}`,
+      disabled: !hasPriorWeek
+    },
+    {
+      value: "smart_adjustment" as const,
+      label: `Rebalance remaining days${hasPriorWeek ? "" : noPriorLabel}`,
+      disabled: !hasPriorWeek
+    },
     { value: "blank" as const, label: "Start blank" }
   ];
+}
+
+export function startingPointHelperText(draft: PlanWeekDraft) {
+  const hasPriorWeek = Boolean(draft.priorWeekStartDate);
+  if (draft.startingPoint === "existing") {
+    return "Using the sessions and week-specific targets already saved for this week.";
+  }
+  if (draft.startingPoint === "copy_prior") {
+    return !hasPriorWeek
+      ? "Copy prior week is unavailable because no prior usable week was found."
+      : "Starting from the most recent usable week's sessions.";
+  }
+  if (draft.startingPoint === "smart_adjustment") {
+    return !hasPriorWeek
+      ? "Rebalancing is unavailable because no prior usable week was found."
+      : "Starting from the prior week, scaled to this week's suggested load.";
+  }
+  return !hasPriorWeek
+    ? "No prior usable week was found, so this draft starts blank."
+    : "Starting with an empty schedule for this week.";
 }
 
 export function purposeText(draft: PlanWeekDraft) {

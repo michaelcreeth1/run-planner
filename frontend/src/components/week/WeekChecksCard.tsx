@@ -6,7 +6,8 @@ import { useRuleContext } from "../../features/goals/useRuleContext";
 import { todayDateString } from "../../lib/dates";
 import type { TrainingWeek, Workout } from "../../types/domain";
 
-const attentionStatuses = new Set<RuleStatus>(["warning", "fail", "pending"]);
+const attentionStatuses = new Set<RuleStatus>(["warning", "fail"]);
+const visibleStatuses = new Set<RuleStatus>(["warning", "fail", "pending"]);
 
 export function WeekChecksCard({
   week,
@@ -34,7 +35,8 @@ export function WeekChecksCard({
   }, [defaultGoals, error, isLoading, plan, week]);
 
   const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
-  const attentionEvaluations = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status));
+  const pendingCount = evaluations.filter((evaluation) => evaluation.status === "pending").length;
+  const attentionEvaluations = evaluations.filter((evaluation) => visibleStatuses.has(evaluation.status));
   const [isOpen, setIsOpen] = useState(issueCount > 0);
 
   // Start each selected week in its useful default state: open for exceptions, closed for a clean slate.
@@ -47,8 +49,13 @@ export function WeekChecksCard({
     return null;
   }
 
-  const summary =
-    issueCount === 0 ? "All checks pass" : issueCount === 1 ? "1 check needs attention" : `${issueCount} checks need attention`;
+  const summary = issueCount
+    ? issueCount === 1
+      ? "1 check needs attention"
+      : `${issueCount} checks need attention`
+    : pendingCount
+      ? `${pendingCount} check${pendingCount === 1 ? "" : "s"} pending`
+      : "All checks pass";
 
   return (
     <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>

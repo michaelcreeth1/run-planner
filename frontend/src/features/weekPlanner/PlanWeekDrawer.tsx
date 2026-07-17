@@ -1,19 +1,27 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Plus, Save, X } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Plus, Save, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
   PlanStartingPoint,
   PlanWeekDraft,
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
+  TrainingPlan,
   TrainingWeek,
   WeekGoalCategory,
-  WeekPurposeId
+  WeekPurposeId,
+  Workout
 } from "../../types/domain";
-import { addDays } from "../../lib/dates";
+import { addDays, todayDateString } from "../../lib/dates";
 import { formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes, weekPurposes } from "../../lib/options";
 import type { AlignmentItem } from "../../types/domain";
+import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
+import {
+  buildPlanRules,
+  evaluateRulesForWeek,
+  ruleStatusLabels
+} from "../goals/ruleEvaluation";
 import {
   countDraftHardSessions,
   draftGoalTitle,
@@ -24,10 +32,13 @@ import {
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
   sortDraftWorkouts,
+  startingPointHelperText,
   startingPointOptions,
   suggestLoad,
   sumDraftRunDistance
 } from "./planWeekDrafts";
+
+const DEFAULT_SHARED_RULES = buildPlanRules({ defaultGoals: [], plan: null });
 
 export function PlanWeekDrawer({
   draft,
@@ -35,6 +46,8 @@ export function PlanWeekDrawer({
   onClose,
   onCompleteReview,
   onSave,
+  plan = null,
+  rules = DEFAULT_SHARED_RULES,
   setDraft,
   weekStack
 }: {
@@ -43,11 +56,14 @@ export function PlanWeekDrawer({
   onClose: () => void;
   onCompleteReview: (weekId: string) => void;
   onSave: (draft: PlanWeekDraft) => void;
+  plan?: TrainingPlan | null;
+  rules?: PlanRule[];
   setDraft: Dispatch<SetStateAction<PlanWeekDraft | null>>;
   weekStack: Record<string, TrainingWeek>;
 }) {
   const [showAllRules, setShowAllRules] = useState(false);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
+  const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
   const ruleRows = draft.goals
     .filter((goal) => goal.isEnabled)
     .map((goal) => ({ goal, evaluation: evaluateGoalDraft(draft, goal) }));
@@ -60,6 +76,31 @@ export function PlanWeekDrawer({
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+  const sharedEvaluations = useMemo(
+    () => {
+      const summary = plan?.weekSummaries.find((candidate) => candidate.weekStartDate === draft.weekStartDate) ?? null;
+      const mesocycle = summary?.mesocycleId
+        ? plan?.mesocycles.find((candidate) => candidate.id === summary.mesocycleId) ?? null
+        : null;
+      return evaluateRulesForWeek(
+        rules,
+        { week: trainingWeekFromDraft(draft, weekStack[draft.weekStartDate]), summary, mesocycle },
+        todayDateString()
+      ).filter((evaluation) => evaluation.status !== "not_applicable");
+    },
+    [draft, plan, rules, weekStack]
+  );
+  const sharedAttentionCount = sharedEvaluations.filter((evaluation) =>
+    evaluation.status === "warning" || evaluation.status === "fail"
+  ).length;
+  const sharedPendingCount = sharedEvaluations.filter((evaluation) => evaluation.status === "pending").length;
+  const sharedStatusSummary = sharedAttentionCount
+    ? sharedAttentionCount === 1
+      ? "1 check needs attention"
+      : `${sharedAttentionCount} checks need attention`
+    : sharedPendingCount
+      ? `${sharedPendingCount} check${sharedPendingCount === 1 ? "" : "s"} pending`
+      : "All checks pass";
   const drawerTitle =
     draft.weekState === "past"
       ? "Review week"
@@ -87,7 +128,20 @@ export function PlanWeekDrawer({
   }
 
   function replaceFromStartingPoint(startingPoint: PlanStartingPoint) {
-    updateDraft((current) => rebuildPlanWeekDraftForStartingPoint(current, startingPoint, weekStack));
+    if (startingPoint === draft.startingPoint) {
+      return;
+    }
+    if (
+      startingPointSnapshot(draft) !== startingPointBaselineRef.current &&
+      !window.confirm("Change the starting point? Your unsaved schedule and target edits will be discarded.")
+    ) {
+      return;
+    }
+    updateDraft((current) => {
+      const next = rebuildPlanWeekDraftForStartingPoint(current, startingPoint, weekStack);
+      startingPointBaselineRef.current = startingPointSnapshot(next);
+      return next;
+    });
   }
 
   function updatePurpose(purposeValue: WeekPurposeId) {
@@ -263,7 +317,7 @@ export function PlanWeekDrawer({
                   onChange={(event) => replaceFromStartingPoint(event.target.value as PlanStartingPoint)}
                 >
                   {startingPointOptions(draft).map((option) => (
-                    <option key={option.value} value={option.value}>
+                    <option disabled={option.disabled} key={option.value} value={option.value}>
                       {option.label}
                     </option>
                   ))}
@@ -294,11 +348,7 @@ export function PlanWeekDrawer({
                 />
               </label>
             ) : null}
-            <p className="plan-week-note">
-              {draft.noPriorUsableWeek
-                ? "No prior usable week was found, so this draft starts blank."
-                : draft.load.reason}
-            </p>
+            <p className="plan-week-note">{startingPointHelperText(draft)} {draft.load.reason}</p>
           </section>
 
           <section className="plan-week-section schedule-section">
@@ -412,6 +462,23 @@ export function PlanWeekDrawer({
           <section className="plan-week-section rules-section">
             <div className="section-heading section-heading--split">
               <h3>Goals</h3>
+              <span className={`rules-status${sharedAttentionCount ? " rules-status--attention" : ""}`}>
+                {sharedStatusSummary}
+              </span>
+            </div>
+            <div className="rule-list">
+              {sharedEvaluations.map((evaluation) => (
+                <SharedRuleRow evaluation={evaluation} key={evaluation.ruleId} />
+              ))}
+            </div>
+            <p className="plan-week-footnote">
+              These checks use the same current standing goals shown on the week card and goal impact matrix.
+            </p>
+          </section>
+
+          <section className="plan-week-section rules-section">
+            <div className="section-heading section-heading--split">
+              <h3>Week-specific targets</h3>
               {ruleRows.length ? (
                 <span className={`rules-status${mismatchCount ? " rules-status--attention" : ""}`}>
                   {mismatchCount
@@ -476,7 +543,9 @@ export function PlanWeekDrawer({
             ) : (
               <p className="plan-week-note">No goals are set for this week.</p>
             )}
-            <p className="plan-week-footnote">Goals are advisory and never prevent you from saving the plan.</p>
+            <p className="plan-week-footnote">
+              Saved targets apply only to this week. Week-specific goals are advisory and never prevent you from saving the plan.
+            </p>
           </section>
         </div>
 
@@ -513,6 +582,122 @@ export function PlanWeekDrawer({
       </aside>
     </div>
   );
+}
+
+function SharedRuleRow({ evaluation }: { evaluation: RuleEvaluation }) {
+  const needsAttention = evaluation.status === "warning" || evaluation.status === "fail";
+  const StatusIcon = evaluation.status === "pending" ? CircleDashed : needsAttention ? AlertTriangle : CheckCircle2;
+  return (
+    <div className={`rule-row rule-row--readonly${needsAttention ? " rule-row--mismatch" : ""}`}>
+      <StatusIcon
+        className={`rule-status-icon${evaluation.status === "pending" ? " rule-status-icon--pending" : ""}`}
+        size={15}
+      />
+      <div className="rule-copy">
+        <strong>{evaluation.ruleLabel}</strong>
+        <small>{evaluation.reason}</small>
+      </div>
+      <span className={`week-check-status week-check-status--${evaluation.status}`}>
+        {ruleStatusLabels[evaluation.status]}
+      </span>
+    </div>
+  );
+}
+
+function startingPointSnapshot(draft: PlanWeekDraft) {
+  return JSON.stringify({
+    workouts: draft.workouts.map(({ draftId: _draftId, ...workout }) => workout),
+    goals: draft.goals.map(({ draftId: _draftId, ...goal }) => goal)
+  });
+}
+
+function trainingWeekFromDraft(draft: PlanWeekDraft, sourceWeek?: TrainingWeek): TrainingWeek {
+  const workouts: Workout[] = draft.workouts.map((workout) => ({
+    id: workout.id ?? workout.draftId,
+    trainingWeekId: draft.weekId,
+    athleteAccountId: sourceWeek?.workouts[0]?.athleteAccountId ?? "draft",
+    plannedDate: workout.plannedDate,
+    title: workout.title,
+    sport: workout.sport,
+    workoutType: workout.workoutType,
+    intensityCategory: workout.intensityCategory,
+    plannedDistance: optionalDraftNumber(workout.plannedDistance),
+    plannedDuration: null,
+    plannedPace: null,
+    plannedElevation: null,
+    plannedTss: null,
+    purpose: workout.purpose,
+    instructions: workout.instructions,
+    notes: workout.notes,
+    status: workout.status
+  }));
+  const plannedMileage = workouts.reduce(
+    (total, workout) => total + (workout.sport === "run" ? workout.plannedDistance ?? 0 : 0),
+    0
+  );
+  return {
+    id: draft.weekId,
+    weekStartDate: draft.weekStartDate,
+    weekEndDate: draft.weekEndDate,
+    plannedMileage,
+    actualMileage: sourceWeek?.actualMileage ?? 0,
+    plannedTime: null,
+    actualTime: sourceWeek?.actualTime ?? null,
+    mesocycleId: sourceWeek?.mesocycleId ?? null,
+    purpose: draft.purpose,
+    purposeSource: sourceWeek?.purposeSource ?? "manual",
+    targetMileage: sourceWeek?.targetMileage ?? null,
+    targetMileageSource: sourceWeek?.targetMileageSource ?? "manual",
+    targetLongRunDistance: sourceWeek?.targetLongRunDistance ?? null,
+    targetLongRunSource: sourceWeek?.targetLongRunSource ?? "manual",
+    isDownWeek: sourceWeek?.isDownWeek ?? false,
+    notes: sourceWeek?.notes ?? "",
+    reviewedAt: sourceWeek?.reviewedAt ?? null,
+    workouts,
+    actualActivities: sourceWeek?.actualActivities ?? [],
+    goals: draft.goals.map((goal) => ({
+      id: goal.id ?? goal.draftId,
+      trainingWeekId: draft.weekId,
+      athleteAccountId: sourceWeek?.goals[0]?.athleteAccountId ?? "draft",
+      weekStartDate: draft.weekStartDate,
+      metricKey: goal.metricKey,
+      category: goal.category,
+      goalType: goal.goalType,
+      label: goal.label,
+      description: goal.description,
+      targetValue: optionalDraftNumber(goal.targetValue),
+      minAcceptable: optionalDraftNumber(goal.minAcceptable),
+      maxAcceptable: optionalDraftNumber(goal.maxAcceptable),
+      unit: goal.unit,
+      evaluationMode: goal.evaluationMode,
+      priority: goal.priority,
+      status: goal.status,
+      source: goal.source,
+      isEditable: true,
+      isEnabled: goal.isEnabled,
+      createdAt: "",
+      updatedAt: ""
+    })),
+    goalEvaluations: [],
+    weekState: draft.weekState,
+    goalReviewSummary: "",
+    hardDays: countDraftHardSessions(draft.workouts),
+    longRunDistance: Math.max(
+      ...workouts
+        .filter((workout) => workout.workoutType === "long_run" || workout.workoutType === "medium_long")
+        .map((workout) => workout.plannedDistance ?? 0),
+      0
+    ),
+    longRunPercentage: 0
+  };
+}
+
+function optionalDraftNumber(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function goalValueFromSchedule(draft: PlanWeekDraft, category: WeekGoalCategory) {

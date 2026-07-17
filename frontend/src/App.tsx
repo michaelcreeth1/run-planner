@@ -21,6 +21,7 @@ import { ProgressView } from "./features/progress/ProgressView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
+import { buildPlanRules } from "./features/goals/ruleEvaluation";
 import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlanner/planWeekDrafts";
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
 import { WorkoutEditor } from "./features/workouts/WorkoutEditor";
@@ -32,7 +33,7 @@ import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "
 import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
 import { appRoutePath, parseAppRoute } from "./lib/navigation";
 import type { AppRoute, AppTab, PlanningSection, ProgressSection } from "./lib/navigation";
-import { selectPrimaryPlan, usePlanQuery, usePlansQuery } from "./lib/queries";
+import { selectPrimaryPlan, useDefaultGoalsQuery, usePlanQuery, usePlansQuery } from "./lib/queries";
 import { ProfileProvider } from "./lib/profile";
 import type {
   AnalyticsPlanning,
@@ -153,6 +154,11 @@ function AppShell() {
     activePlanSummary?.id ?? null
   );
   const activePlan = activePlanQuery.data ?? null;
+  const defaultGoalsQuery = useDefaultGoalsQuery(session?.activeAthleteAccountId ?? null);
+  const sharedPlanRules = useMemo(
+    () => buildPlanRules({ defaultGoals: defaultGoalsQuery.data ?? [], plan: activePlan }),
+    [activePlan, defaultGoalsQuery.data]
+  );
 
   useEffect(() => {
     weekStackRef.current = weekStack;
@@ -651,6 +657,9 @@ function AppShell() {
     if (blockStaleWrite("deleting a workout")) {
       return;
     }
+    if (!window.confirm(`Delete "${workout.title}"? This cannot be undone.`)) {
+      return;
+    }
     await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
     refreshVisibleWeeks();
     loadTrainingTimeline();
@@ -988,6 +997,8 @@ function AppShell() {
             onClose={() => setPlanWeekDraft(null)}
             onCompleteReview={completeWeekReview}
             onSave={savePlanWeek}
+            plan={activePlan}
+            rules={sharedPlanRules}
           />
         ) : null}
       </div>

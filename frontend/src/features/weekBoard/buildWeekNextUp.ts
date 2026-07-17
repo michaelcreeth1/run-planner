@@ -57,7 +57,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
     };
   }
 
-  if (week.goalEvaluations.some((evaluation) => attentionStatuses.has(evaluation.status))) {
+  if (hasEnoughStructureForGoalAlarm(week) && week.goalEvaluations.some((evaluation) => attentionStatuses.has(evaluation.status))) {
     return {
       action: "plan_week",
       actionLabel: "Adjust rest of week",
@@ -100,6 +100,13 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
     eyebrow: "Next up",
     title: "Close the gap in the schedule"
   };
+}
+
+function hasEnoughStructureForGoalAlarm(week: TrainingWeek) {
+  const plannedTrainingDays = new Set(
+    week.workouts.filter((workout) => workout.sport !== "rest").map((workout) => workout.plannedDate)
+  );
+  return plannedTrainingDays.size >= 3 || week.actualActivities.length > 0;
 }
 
 function hasWeekPlan(week: TrainingWeek) {

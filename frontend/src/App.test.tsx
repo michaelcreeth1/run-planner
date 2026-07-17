@@ -178,6 +178,63 @@ describe("App authentication states", () => {
     expect(screen.queryByRole("heading", { name: "New workout" })).not.toBeInTheDocument();
   });
 
+  it("requires confirmation before deleting a workout", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const currentStart = startOfWeek(new Date());
+    const workout = {
+      id: "workout-delete",
+      trainingWeekId: "week-current",
+      athleteAccountId: "profile-1",
+      plannedDate: currentStart,
+      title: "Easy five",
+      sport: "run",
+      workoutType: "easy",
+      intensityCategory: "easy",
+      plannedDistance: 5,
+      plannedDuration: null,
+      plannedPace: null,
+      plannedElevation: null,
+      plannedTss: null,
+      purpose: "Aerobic support",
+      instructions: "",
+      notes: "",
+      status: "planned"
+    };
+    useAuthenticatedAppHandlers();
+    server.use(
+      http.get(apiUrl("/api/weeks/:weekStartDate"), ({ params }) => {
+        const start = String(params.weekStartDate);
+        return HttpResponse.json({
+          ...emptyWeek(start),
+          workouts: start === currentStart ? [workout] : [],
+          plannedMileage: start === currentStart ? 5 : 0
+        });
+      }),
+      http.delete(apiUrl("/api/planned-workouts/:workoutId"), ({ params }) => {
+        onDelete(String(params.workoutId));
+        return new HttpResponse(null, { status: 204 });
+      })
+    );
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Sign in" });
+    await user.type(screen.getByLabelText("Username"), "michael");
+    await user.type(screen.getByLabelText("Password"), "test-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const deleteButton = await screen.findByTitle("Delete workout");
+    await user.click(deleteButton);
+    expect(confirm).toHaveBeenCalledWith('Delete "Easy five"? This cannot be undone.');
+    expect(onDelete).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    await user.click(deleteButton);
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith("workout-delete"));
+    confirm.mockRestore();
+  });
+
   it("returns to the current week when navigating to the Week tab", async () => {
     const user = userEvent.setup();
     const currentWeekStart = startOfWeek(new Date());

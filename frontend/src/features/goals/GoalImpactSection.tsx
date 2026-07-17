@@ -172,7 +172,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
           <p className="goal-impact-summary">
             Healthy <strong>{summary.healthyWeeks} / {summary.totalWeeks}</strong> weeks
             <span> · {summary.warningWeeks} warning{summary.warningWeeks === 1 ? "" : "s"}</span>
-            <span> · {summary.failureWeeks} failure{summary.failureWeeks === 1 ? "" : "s"}</span>
+            <span> · {summary.failureWeeks} failing week{summary.failureWeeks === 1 ? "" : "s"}</span>
             <span> · {summary.pendingWeeks} pending</span>
           </p>
 

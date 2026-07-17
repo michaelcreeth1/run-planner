@@ -925,7 +925,12 @@ function longestActualRun(week: TrainingWeek) {
 
 function longestPlannedRun(week: TrainingWeek, predicate: (workout: Workout) => boolean = () => true) {
   const workout = week.workouts
-    .filter((item) => item.sport === "run" && predicate(item))
+    .filter(
+      (item) =>
+        item.sport === "run" &&
+        (item.workoutType === "long_run" || item.workoutType === "medium_long") &&
+        predicate(item)
+    )
     .sort((a, b) => (b.plannedDistance ?? 0) - (a.plannedDistance ?? 0))[0];
   if (!workout) {
     return { distance: 0, summary: "Not planned", detail: "No planned long run found." };

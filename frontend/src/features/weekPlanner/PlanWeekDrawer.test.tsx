@@ -33,6 +33,7 @@ describe("PlanWeekDrawer", () => {
     const onSave = vi.fn();
     render(<PlannerHarness onSave={onSave} />);
 
+    expect(screen.getByText("2 checks pending")).toBeInTheDocument();
     expect(screen.getByText("1 needs attention")).toBeInTheDocument();
     expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
     expect(screen.getByText(/goals are advisory and never prevent you from saving/i)).toBeInTheDocument();
@@ -77,6 +78,35 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByRole("option", { name: "Rebalance remaining days" })).toBeInTheDocument();
     expect(screen.queryByText("Smart adjustment")).not.toBeInTheDocument();
     expect(screen.getByText("Week direction")).toBeInTheDocument();
+  });
+
+  it("disables starting points that need a prior week and explains why", () => {
+    const draft = mismatchedDraft();
+    draft.noPriorUsableWeek = true;
+    draft.priorWeekStartDate = null;
+    render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
+
+    expect(screen.getByRole("option", { name: /copy prior week.*no prior usable week/i })).toBeDisabled();
+    expect(screen.getByRole("option", { name: /rebalance remaining days.*no prior usable week/i })).toBeDisabled();
+    expect(screen.getByText(/no prior usable week was found, so this draft starts blank/i)).toBeVisible();
+  });
+
+  it("confirms before a starting-point change discards draft edits", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
+    expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Starting point"), "copy_prior");
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Change the starting point? Your unsaved schedule and target edits will be discarded."
+    );
+    expect(screen.getByLabelText("Starting point")).toHaveValue("blank");
+    expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
+    confirm.mockRestore();
   });
 
   it("keeps session names in sync with the selected type until renamed", async () => {
@@ -172,15 +202,16 @@ describe("PlanWeekDrawer", () => {
     render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
 
     expect(screen.getAllByText("Goals")).toHaveLength(1);
+    expect(screen.getByText("Week-specific targets")).toBeInTheDocument();
     expect(screen.queryByText("Targets")).not.toBeInTheDocument();
     expect(screen.queryByText("Guardrails")).not.toBeInTheDocument();
     expect(screen.getByText("Run 10 miles")).toBeInTheDocument();
     expect(screen.getByText("1 needs attention")).toBeInTheDocument();
-    expect(screen.queryByText("No more than 2 hard days")).not.toBeInTheDocument();
+    expect(screen.getAllByText("No more than 2 hard days")).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Show all goals" }));
 
-    expect(screen.getByText("No more than 2 hard days")).toBeVisible();
+    expect(screen.getAllByText("No more than 2 hard days")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Hide passing goals" })).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Edit Mileage rule"));
@@ -224,7 +255,7 @@ function mismatchedDraft(): PlanWeekDraft {
     startingPoint: "blank",
     purpose: "maintain",
     customPurpose: "",
-    priorWeekStartDate: null,
+    priorWeekStartDate: "2026-07-06",
     noPriorUsableWeek: false,
     load: {
       priorMileage: 5,

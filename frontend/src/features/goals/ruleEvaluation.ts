@@ -77,6 +77,10 @@ const LIMIT_WARNING_TOLERANCE = 1.1;
 // a long run when it takes up a meaningful share of the week.
 const ACTUAL_LONG_RUN_MIN_SHARE = 0.25;
 
+// Ratio-based guidance is misleading while a week is still only a sketch.
+// Wait until there are enough planned runs for a percentage to be useful.
+const MIN_RUNS_FOR_LONG_RUN_SHARE = 3;
+
 // Matches the quality-session heuristic used across the app for Strava names.
 const QUALITY_NAME_PATTERN = /tempo|threshold|interval|hill|race|workout|reps|repeat|fartlek/i;
 
@@ -323,7 +327,16 @@ function evaluateHardDays(rule: PlanRule, week: TrainingWeek, basis: EvaluationB
 }
 
 function evaluateLongRunPercent(rule: PlanRule, week: TrainingWeek, basis: EvaluationBasis): PartialEvaluation {
-  const longRun = basis === "actual" ? longestActualRun(week) : plannedOrLongestRun(week);
+  const plannedRuns = week.workouts.filter(
+    (workout) => workout.sport === "run" && (workout.plannedDistance ?? 0) > 0
+  );
+  const longRun = basis === "actual" ? longestActualRun(week) : plannedLongRunCandidate(week);
+  if (basis === "planned" && plannedRuns.length < MIN_RUNS_FOR_LONG_RUN_SHARE) {
+    return {
+      status: "pending",
+      reason: `Add at least ${MIN_RUNS_FOR_LONG_RUN_SHARE} runs before checking the long-run share.`
+    };
+  }
   if (!longRun) {
     return {
       status: "not_applicable",
@@ -394,6 +407,13 @@ function evaluateLongRunScheduled(week: TrainingWeek, today: string, basis: Eval
       reason: distance > 0 ? `${longRun.title} · ${formatNumber(distance)} mi.` : `${longRun.title} is on the schedule.`,
       metrics: distance > 0 ? `Long run ${formatNumber(distance)} mi` : undefined,
       relatedWorkoutIds: [longRun.id]
+    };
+  }
+  const plannedRuns = week.workouts.filter((workout) => workout.sport === "run");
+  if (plannedRuns.length < MIN_RUNS_FOR_LONG_RUN_SHARE) {
+    return {
+      status: "pending",
+      reason: "The week is still taking shape — add the remaining runs before checking for a long run."
     };
   }
   if (week.weekStartDate > today) {
@@ -496,6 +516,7 @@ function effectiveThreshold(rule: PlanRule, week: TrainingWeek): { threshold: nu
   const weekGoal = week.goals.find(
     (goal) =>
       goal.isEnabled &&
+      goal.source === "manual" &&
       (goal.metricKey === rule.metricKey || (!goal.metricKey && goal.category === rule.category)) &&
       goal.evaluationMode === (rule.kind === "rest_days" ? "at_least" : "at_most") &&
       (rule.kind !== "long_run_percent" || goal.unit === "percent")
@@ -547,15 +568,8 @@ function plannedLongRunWorkout(week: TrainingWeek) {
 
 type LongRunCandidate = { distance: number; title: string; workoutId: string | null };
 
-// The percent guardrail caps the biggest single day, so fall back to the
-// longest planned run when no workout is labelled as the long run.
-function plannedOrLongestRun(week: TrainingWeek): LongRunCandidate | null {
-  const workout =
-    plannedLongRunWorkout(week) ??
-    week.workouts
-      .filter((candidate) => candidate.sport === "run" && (candidate.plannedDistance ?? 0) > 0)
-      .sort((left, right) => (right.plannedDistance ?? 0) - (left.plannedDistance ?? 0))[0] ??
-    null;
+function plannedLongRunCandidate(week: TrainingWeek): LongRunCandidate | null {
+  const workout = plannedLongRunWorkout(week);
   if (!workout || (workout.plannedDistance ?? 0) <= 0) {
     return null;
   }
