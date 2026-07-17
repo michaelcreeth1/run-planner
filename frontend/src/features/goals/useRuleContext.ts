@@ -24,6 +24,6 @@ export function useRuleContext(): RuleContextState {
     plan: planQuery.data ?? null,
     defaultGoals: defaultGoalsQuery.data ?? [],
     isLoading: plansQuery.isLoading || defaultGoalsQuery.isLoading || (Boolean(primaryPlan) && planQuery.isLoading),
-    error: error instanceof Error ? error.message : error ? "Could not load goal rules." : null
+    error: error instanceof Error ? error.message : error ? "Could not load goals." : null
   };
 }

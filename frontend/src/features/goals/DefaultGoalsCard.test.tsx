@@ -44,7 +44,7 @@ describe("DefaultGoalsCard", () => {
     );
 
     render(<DefaultGoalsCard writesBlocked={false} />);
-    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    await user.click(await screen.findByRole("button", { name: "Add goal" }));
 
     expect(screen.getByLabelText("Metric")).toHaveValue("rest_day_count");
     expect(screen.getByText("days")).toBeVisible();

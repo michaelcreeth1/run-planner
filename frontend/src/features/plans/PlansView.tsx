@@ -7,17 +7,26 @@ import { StatusBanner } from "../../components/shared/StatusBanner";
 import { addDays, daysBetween, parseDate, startOfWeek, toDateInputValue } from "../../lib/dates";
 import { fetchJson } from "../../lib/api";
 import { formatCompactWeekRange, formatNumber, formatPace, formatShortDate } from "../../lib/formatters";
-import { goalCategories } from "../../lib/options";
-import { queryKeys, selectPrimaryPlan, useGoalRacesQuery, usePlanQuery, usePlansQuery } from "../../lib/queries";
+import {
+  queryKeys,
+  selectPrimaryPlan,
+  useGoalMetricsQuery,
+  useGoalRacesQuery,
+  usePlanQuery,
+  usePlansQuery
+} from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
+import { GoalListEditor } from "../goals/GoalListEditor";
+import type { GoalDraft } from "../goals/goalDrafts";
+import { goalDraftError, goalDraftPayload, goalToDraft, metricMap } from "../goals/goalDrafts";
 import type {
+  GoalMetricDefinition,
   GoalRace,
   MesocyclePhase,
   PlanWeekSummary,
-  RecurringGoal,
   ScaffoldPreview,
   TrainingPlan,
-  WeekGoalCategory
+  WeekGoalMetric
 } from "../../types/domain";
 
 type PlansViewProps = {
@@ -44,14 +53,6 @@ type MesocycleDraft = {
   notes: string;
 };
 
-type RecurringGoalDraft = {
-  id?: string;
-  category: WeekGoalCategory;
-  label: string;
-  targetValue: string;
-  notes: string;
-};
-
 type PlanEditorState = {
   id?: string;
   mode: "create" | "edit";
@@ -62,7 +63,7 @@ type PlanEditorState = {
   goalRaceId: string;
   notes: string;
   mesocycles: MesocycleDraft[];
-  recurringGoals: RecurringGoalDraft[];
+  recurringGoals: GoalDraft[];
 };
 
 const phaseOptions: Array<{ value: MesocyclePhase; label: string }> = [
@@ -86,6 +87,9 @@ export function PlansView({
   const queryClient = useQueryClient();
   const plansQuery = usePlansQuery(profileId);
   const goalRacesQuery = useGoalRacesQuery(profileId);
+  const goalMetricsQuery = useGoalMetricsQuery();
+  const goalMetrics = useMemo(() => goalMetricsQuery.data ?? [], [goalMetricsQuery.data]);
+  const goalMetricsByKey = useMemo(() => metricMap(goalMetrics), [goalMetrics]);
   const plans = useMemo(() => plansQuery.data ?? [], [plansQuery.data]);
   const goalRaces = goalRacesQuery.data ?? [];
   const [error, setError] = useState<string | null>(null);
@@ -174,42 +178,8 @@ export function PlansView({
     showPlanEditor(planToEditor(plan));
   }
 
-  function updateRecurringGoal(index: number, updates: Partial<RecurringGoalDraft>) {
-    setPlanEditor((current) =>
-      current
-        ? {
-            ...current,
-            recurringGoals: current.recurringGoals.map((goal, goalIndex) =>
-              goalIndex === index ? { ...goal, ...updates } : goal
-            )
-          }
-        : current
-    );
-  }
-
-  function addRecurringGoal() {
-    setPlanEditor((current) =>
-      current
-        ? {
-            ...current,
-            recurringGoals: [
-              ...current.recurringGoals,
-              { category: "custom", label: "", targetValue: "", notes: "" }
-            ]
-          }
-        : current
-    );
-  }
-
-  function removeRecurringGoal(index: number) {
-    setPlanEditor((current) =>
-      current
-        ? {
-            ...current,
-            recurringGoals: current.recurringGoals.filter((_, goalIndex) => goalIndex !== index)
-          }
-        : current
-    );
+  function setRecurringGoals(recurringGoals: GoalDraft[]) {
+    setPlanEditor((current) => (current ? { ...current, recurringGoals } : current));
   }
 
   function changePlanRace(goalRaceId: string) {
@@ -223,6 +193,11 @@ export function PlansView({
     if (!planEditor || writesBlocked) {
       return;
     }
+    if (planEditor.recurringGoals.some((goal) => goalDraftError(goal, goalMetricsByKey) !== null)) {
+      setError("Finish every recurring goal before saving the plan.");
+      setSuccess(null);
+      return;
+    }
     setIsSaving(true);
     try {
       setSuccess(null);
@@ -232,7 +207,7 @@ export function PlansView({
       const method = planEditor.mode === "edit" ? "PUT" : "POST";
       const saved = await fetchJson<TrainingPlan>(endpoint, {
         method,
-        body: JSON.stringify(planPayload(planEditor))
+        body: JSON.stringify(planPayload(planEditor, goalMetricsByKey))
       });
       onSelectPlan(saved.id);
       queryClient.setQueryData(queryKeys.plan(profileId, saved.id), saved);
@@ -492,61 +467,24 @@ export function PlansView({
 
           <div className="plan-form-section">
             <div className="plan-form-section-header">
-              <strong>Recurring weekly goals</strong>
-              <span>{planEditor.recurringGoals.length}</span>
+              <div className="section-title-row">
+                <strong>Recurring goals</strong>
+                <span>
+                  {planEditor.recurringGoals.length}{" "}
+                  {planEditor.recurringGoals.length === 1 ? "goal" : "goals"}
+                </span>
+              </div>
             </div>
             <p className="plan-form-hint">
-              Added to every week this plan scaffolds. Weekly mileage and long-run targets come from
-              the training phases above; use these for standing intent like strength or rest days.
+              Add goals that apply every week, such as strength training or rest days. They add to
+              the weekly mileage and long-run targets set by the phases above.
             </p>
-            <div className="plan-recurring-goal-list">
-              {planEditor.recurringGoals.map((goal, index) => (
-                <div key={goal.id ?? `draft-${index}`} className="plan-recurring-goal-row">
-                  <label>
-                    <span>Category</span>
-                    <select
-                      value={goal.category}
-                      onChange={(event) => updateRecurringGoal(index, { category: event.target.value as WeekGoalCategory })}
-                    >
-                      {goalCategories.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Goal</span>
-                    <input
-                      value={goal.label}
-                      placeholder="Complete 1 strength session"
-                      onChange={(event) => updateRecurringGoal(index, { label: event.target.value })}
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>Target</span>
-                    <input
-                      value={goal.targetValue}
-                      inputMode="decimal"
-                      onChange={(event) => updateRecurringGoal(index, { targetValue: event.target.value })}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="ghost-button ghost-button--danger"
-                    onClick={() => removeRecurringGoal(index)}
-                  >
-                    <Trash2 size={16} />
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="ghost-button" onClick={addRecurringGoal}>
-                <Plus size={16} />
-                Add weekly goal
-              </button>
-            </div>
+            <GoalListEditor
+              addButtonLabel="Add recurring goal"
+              drafts={planEditor.recurringGoals}
+              metrics={goalMetrics}
+              onDraftsChange={setRecurringGoals}
+            />
           </div>
 
         </form>
@@ -555,7 +493,7 @@ export function PlansView({
       {plans.length === 0 && !hasActiveEditor ? (
         <Placeholder
           title="Plan"
-          detail="Create a training plan to scaffold weekly targets and phase context into the Week tab."
+          detail="Create a training plan to bring weekly mileage and phase context into the Week tab."
           icon={<CalendarDays size={22} />}
         />
       ) : null}
@@ -1304,13 +1242,7 @@ function planToEditor(plan: TrainingPlan): PlanEditorState {
       downWeekReductionPct: toInputNumber(mesocycle.downWeekReductionPct) || "20",
       notes: mesocycle.notes
     })),
-    recurringGoals: plan.recurringGoals.map((goal) => ({
-      id: goal.id,
-      category: goal.category,
-      label: goal.label,
-      targetValue: toInputNumber(goal.targetValue),
-      notes: goal.notes
-    }))
+    recurringGoals: plan.recurringGoals.map(goalToDraft)
   };
 }
 
@@ -1377,36 +1309,10 @@ function generateMesocycles(startDate: string, endDate: string, goalRace: GoalRa
   });
 }
 
-const recurringGoalUnits: Record<WeekGoalCategory, RecurringGoal["unit"]> = {
-  mileage: "mi",
-  long_run: "mi",
-  sessions: "sessions",
-  quality: "sessions",
-  strength: "sessions",
-  recovery: "days",
-  custom: "custom"
-};
-
-function recurringGoalPayload(goal: RecurringGoalDraft) {
-  const targetValue = optionalNumber(goal.targetValue);
-  const evaluationMode = goal.category !== "custom" && targetValue !== null ? "at_least" : "manual";
-  return {
-    id: goal.id,
-    category: goal.category,
-    goalType: "achievement",
-    label: goal.label,
-    description: "",
-    targetValue,
-    minAcceptable: evaluationMode === "at_least" ? targetValue : null,
-    maxAcceptable: null,
-    unit: recurringGoalUnits[goal.category],
-    evaluationMode,
-    priority: "secondary",
-    notes: goal.notes
-  };
-}
-
-function planPayload(editor: PlanEditorState) {
+function planPayload(
+  editor: PlanEditorState,
+  metricsByKey: Map<WeekGoalMetric, GoalMetricDefinition>
+) {
   return {
     name: editor.name,
     description: editor.description,
@@ -1430,12 +1336,14 @@ function planPayload(editor: PlanEditorState) {
       downWeekReductionPct: optionalNumber(mesocycle.downWeekReductionPct) ?? 20,
       notes: mesocycle.notes
     })),
-    recurringGoals: editor.recurringGoals.map(recurringGoalPayload)
+    recurringGoals: editor.recurringGoals.map((goal) => goalDraftPayload(goal, metricsByKey))
   };
 }
 
 function planPreviewPayload(editor: PlanEditorState) {
-  const payload = planPayload(editor);
+  // The preview only cares about the week scaffold, so recurring goals are
+  // stripped before the payload is built.
+  const payload = planPayload({ ...editor, recurringGoals: [] }, new Map());
   return {
     ...payload,
     name: "Training plan preview",

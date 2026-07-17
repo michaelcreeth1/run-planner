@@ -196,7 +196,7 @@ export function evaluateRule(rule: PlanRule, input: RuleWeekInput, today: string
       reason:
         week.weekEndDate < today
           ? "Nothing was planned or logged for this week."
-          : "Week not planned yet — plan it to check this rule."
+          : "Week not planned yet — plan it to check this goal."
     };
   }
 

@@ -17,8 +17,32 @@ const emptyPreviewResponse = {
   weekSummaries: []
 };
 
+const goalMetricsFixture = [
+  {
+    key: "strength_session_count",
+    label: "Strength or mobility sessions",
+    category: "strength",
+    unit: "sessions",
+    valueType: "integer",
+    operators: ["at_least", "at_most", "range", "exact-ish"],
+    minimum: 0,
+    maximum: null
+  },
+  {
+    key: "rest_day_count",
+    label: "Rest days",
+    category: "recovery",
+    unit: "days",
+    valueType: "integer",
+    operators: ["at_least", "at_most", "range", "exact-ish"],
+    minimum: 0,
+    maximum: 7
+  }
+];
+
 beforeEach(() => {
   server.use(
+    http.get(apiUrl("/api/goal-metrics"), () => HttpResponse.json(goalMetricsFixture)),
     http.post(apiUrl("/api/plans/preview"), () => HttpResponse.json(emptyPreviewResponse)),
     http.post(apiUrl("/api/plans/:planId/preview"), () => HttpResponse.json(emptyPreviewResponse))
   );
@@ -670,6 +694,80 @@ describe("PlansView", () => {
     await user.click(within(actions).getByRole("button", { name: "Create plan" }));
 
     expect(await screen.findByText("New training plan was created.")).toBeVisible();
+  });
+
+  it("edits recurring goals with the shared metric-based goal model", async () => {
+    const user = userEvent.setup();
+    let submittedPayload: { recurringGoals: Array<Record<string, unknown>> } | null = null;
+    const plan: TrainingPlan = {
+      ...makePlan(),
+      recurringGoals: [
+        {
+          id: "goal-1",
+          trainingPlanId: "plan-1",
+          athleteAccountId: "profile-1",
+          metricKey: "strength_session_count",
+          category: "strength",
+          goalType: "achievement",
+          label: "Complete at least 1 session of strength or mobility",
+          description: "",
+          targetValue: 1,
+          minAcceptable: 1,
+          maxAcceptable: null,
+          unit: "sessions",
+          evaluationMode: "at_least",
+          priority: "secondary",
+          notes: "",
+          createdAt: "2026-07-01T00:00:00Z",
+          updatedAt: "2026-07-01T00:00:00Z"
+        }
+      ]
+    };
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([plan])),
+      http.get(apiUrl("/api/plans/plan-1"), () => HttpResponse.json(plan)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([])),
+      http.put(apiUrl("/api/plans/plan-1"), async ({ request }) => {
+        submittedPayload = await request.json() as typeof submittedPayload;
+        return HttpResponse.json(plan);
+      })
+    );
+    renderPlansView("plan-1");
+
+    await user.click(await screen.findByRole("button", { name: "Edit plan" }));
+
+    // Existing goals render as compact sentences with the count beside the title.
+    expect(screen.getByText("Recurring goals")).toBeVisible();
+    expect(screen.getByText("1 goal")).toBeVisible();
+    expect(screen.getByText("Complete at least 1 session of strength or mobility")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Add recurring goal" }));
+    await user.selectOptions(screen.getByLabelText("Metric"), "rest_day_count");
+    await user.type(screen.getByLabelText("Value"), "1");
+    expect(screen.getByText("Keep at least 1 day of rest")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+
+    const actions = screen.getByRole("group", { name: "Plan editor actions" });
+    await user.click(within(actions).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(submittedPayload).not.toBeNull());
+    expect(submittedPayload!.recurringGoals).toHaveLength(2);
+    expect(submittedPayload!.recurringGoals[0]).toMatchObject({
+      id: "goal-1",
+      metricKey: "strength_session_count",
+      evaluationMode: "at_least",
+      minAcceptable: 1
+    });
+    expect(submittedPayload!.recurringGoals[1]).toMatchObject({
+      metricKey: "rest_day_count",
+      category: "recovery",
+      goalType: "achievement",
+      label: "Keep at least 1 day of rest",
+      unit: "days",
+      evaluationMode: "at_least",
+      minAcceptable: 1,
+      maxAcceptable: null
+    });
   });
 
   it("derives a read-only plan end from the selected race and restores date-range editing", async () => {

@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "./api";
-import type { GoalRace, RecurringGoal, TrainingPlan, TrainingPlanSummary } from "../types/domain";
+import type { GoalMetricDefinition, GoalRace, RecurringGoal, TrainingPlan, TrainingPlanSummary } from "../types/domain";
 
 export const queryKeys = {
   profile: (profileId: string) => ["profile", profileId] as const,
   plans: (profileId: string) => [...queryKeys.profile(profileId), "plans"] as const,
   plan: (profileId: string, planId: string | null) => [...queryKeys.profile(profileId), "plan", planId] as const,
   goalRaces: (profileId: string) => [...queryKeys.profile(profileId), "goal-races"] as const,
-  defaultGoals: (profileId: string) => [...queryKeys.profile(profileId), "default-goals"] as const
+  defaultGoals: (profileId: string) => [...queryKeys.profile(profileId), "default-goals"] as const,
+  goalMetrics: ["goal-metrics"] as const
 };
 
 export function selectPrimaryPlan(plans: TrainingPlanSummary[]) {
@@ -44,5 +45,14 @@ export function useDefaultGoalsQuery(profileId: string) {
   return useQuery({
     queryKey: queryKeys.defaultGoals(profileId),
     queryFn: () => fetchJson<RecurringGoal[]>("/api/default-goals")
+  });
+}
+
+// The metric catalog is static server configuration, not profile data.
+export function useGoalMetricsQuery() {
+  return useQuery({
+    queryKey: queryKeys.goalMetrics,
+    queryFn: () => fetchJson<GoalMetricDefinition[]>("/api/goal-metrics"),
+    staleTime: Infinity
   });
 }

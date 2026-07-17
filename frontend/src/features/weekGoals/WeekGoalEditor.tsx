@@ -52,8 +52,8 @@ export function WeekGoalEditor({
                 value={editor.goalType}
                 onChange={(event) => setEditor({ ...editor, goalType: event.target.value as WeekGoalType })}
               >
-                <option value="achievement">Achievement</option>
-                <option value="guardrail">Guardrail</option>
+                <option value="achievement">Goal</option>
+                <option value="guardrail">Limit</option>
               </select>
             </label>
           </div>
@@ -141,7 +141,7 @@ export function WeekGoalEditor({
               >
                 <option value="primary">Primary</option>
                 <option value="secondary">Secondary</option>
-                <option value="guardrail">Guardrail</option>
+                <option value="guardrail">Limit</option>
               </select>
             </label>
             <label>

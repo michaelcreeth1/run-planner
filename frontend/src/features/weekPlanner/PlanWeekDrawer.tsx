@@ -411,12 +411,12 @@ export function PlanWeekDrawer({
 
           <section className="plan-week-section rules-section">
             <div className="section-heading section-heading--split">
-              <h3>Rules</h3>
+              <h3>Goals</h3>
               {ruleRows.length ? (
                 <span className={`rules-status${mismatchCount ? " rules-status--attention" : ""}`}>
                   {mismatchCount
                     ? `${mismatchCount} need${mismatchCount === 1 ? "s" : ""} attention`
-                    : "All rules met"}
+                    : "All goals met"}
                 </span>
               ) : null}
             </div>
@@ -469,14 +469,14 @@ export function PlanWeekDrawer({
                     type="button"
                     onClick={() => setShowAllRules((current) => !current)}
                   >
-                    {showAllRules ? "Hide passing rules" : "Show all rules"}
+                    {showAllRules ? "Hide passing goals" : "Show all goals"}
                   </button>
                 ) : null}
               </>
             ) : (
-              <p className="plan-week-note">No rules are set for this week.</p>
+              <p className="plan-week-note">No goals are set for this week.</p>
             )}
-            <p className="plan-week-footnote">Rules are advisory and never prevent you from saving the plan.</p>
+            <p className="plan-week-footnote">Goals are advisory and never prevent you from saving the plan.</p>
           </section>
         </div>
 

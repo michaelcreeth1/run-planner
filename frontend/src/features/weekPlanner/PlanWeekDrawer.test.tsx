@@ -35,7 +35,7 @@ describe("PlanWeekDrawer", () => {
 
     expect(screen.getByText("1 needs attention")).toBeInTheDocument();
     expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
-    expect(screen.getByText(/rules are advisory and never prevent you from saving/i)).toBeInTheDocument();
+    expect(screen.getByText(/goals are advisory and never prevent you from saving/i)).toBeInTheDocument();
 
     const saveButton = screen.getByRole("button", { name: "Save plan" });
     expect(saveButton).toBeEnabled();
@@ -139,7 +139,7 @@ describe("PlanWeekDrawer", () => {
     await user.click(screen.getByRole("button", { name: "Match schedule" }));
 
     expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(10);
-    expect(screen.getByText("All rules met")).toBeInTheDocument();
+    expect(screen.getByText("All goals met")).toBeInTheDocument();
     expect(screen.queryByText("5 planned, target range 10-12")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update target" })).not.toBeInTheDocument();
   });
@@ -150,7 +150,7 @@ describe("PlanWeekDrawer", () => {
 
     await user.click(screen.getByRole("button", { name: "Update target" }));
 
-    expect(screen.getByText("All rules met")).toBeInTheDocument();
+    expect(screen.getByText("All goals met")).toBeInTheDocument();
   });
 
   it("shows every rule with its status baked in, guardrails included", async () => {
@@ -171,17 +171,17 @@ describe("PlanWeekDrawer", () => {
     });
     render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
 
-    expect(screen.getAllByText("Rules")).toHaveLength(1);
+    expect(screen.getAllByText("Goals")).toHaveLength(1);
     expect(screen.queryByText("Targets")).not.toBeInTheDocument();
     expect(screen.queryByText("Guardrails")).not.toBeInTheDocument();
     expect(screen.getByText("Run 10 miles")).toBeInTheDocument();
     expect(screen.getByText("1 needs attention")).toBeInTheDocument();
     expect(screen.queryByText("No more than 2 hard days")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Show all rules" }));
+    await user.click(screen.getByRole("button", { name: "Show all goals" }));
 
     expect(screen.getByText("No more than 2 hard days")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Hide passing rules" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide passing goals" })).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Edit Mileage rule"));
 
@@ -197,7 +197,7 @@ describe("PlanWeekDrawer", () => {
     await user.clear(minimumInput);
     await user.type(minimumInput, "4");
 
-    expect(screen.getByText("All rules met")).toBeInTheDocument();
+    expect(screen.getByText("All goals met")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum mileage")).toHaveValue(4);
 
     await user.click(screen.getByLabelText("Edit Mileage rule"));

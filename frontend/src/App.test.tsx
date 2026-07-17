@@ -252,7 +252,7 @@ describe("App authentication states", () => {
     expect(window.location.pathname).toBe("/plan/plan-1");
 
     await user.click(screen.getByRole("button", { name: "Goals & races" }));
-    expect(await screen.findByRole("heading", { name: "Races and weekly defaults" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Goals & races" })).toBeVisible();
     expect(window.location.pathname).toBe("/plan/plan-1/goals");
   });
 

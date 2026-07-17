@@ -328,7 +328,7 @@ function buildDetailSummary(detailGoalCards: GoalCardViewModel[], guardrailDetai
     pieces.push(`${detailGoalCards.length} more goal${detailGoalCards.length === 1 ? "" : "s"}`);
   }
   if (guardrailDetails.length) {
-    pieces.push(warnings ? `${warnings} guardrail warning${warnings === 1 ? "" : "s"}` : "guardrails clear");
+    pieces.push(warnings ? `${warnings} limit warning${warnings === 1 ? "" : "s"}` : "limits clear");
   }
   return pieces.join(" · ") || "Goal details";
 }

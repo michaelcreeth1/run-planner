@@ -136,7 +136,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
       <header className="settings-card-header goals-section-header">
         <div>
           <h2>Goal impact</h2>
-          <p>See how your standing goals and guardrails apply across the active plan.</p>
+          <p>See how your goals apply across the active plan.</p>
         </div>
         <div className="analytics-segmented-control goal-impact-history-control" aria-label="Matrix timeframe">
           <span>History</span>
@@ -156,13 +156,13 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
       </header>
 
       {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
-      {!error && isLoading ? <div className="settings-note">Checking the timeframe against your rules…</div> : null}
+      {!error && isLoading ? <div className="settings-note">Checking the timeframe against your goals…</div> : null}
       {!error && !isLoading && !plan ? (
         <div className="goals-empty-state goals-empty-state--compact">
           <Grid3x3 size={17} />
           <div>
             <strong>No active plan</strong>
-            <span>Showing recent weeks only. Create a training plan to see rule coverage ahead.</span>
+            <span>Showing recent weeks only. Create a training plan to see goal coverage ahead.</span>
           </div>
         </div>
       ) : null}
@@ -180,10 +180,10 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
             <div
               className="goal-impact-grid"
               role="grid"
-              aria-label="Rule status per week"
+              aria-label="Goal status per week"
               style={{ gridTemplateColumns: `minmax(172px, 208px) repeat(${matrix.columns.length}, minmax(20px, 1fr))` }}
             >
-              <span className="goal-impact-corner" role="columnheader" aria-label="Rule" />
+              <span className="goal-impact-corner" role="columnheader" aria-label="Goal" />
               {matrix.columns.map((column, index) => {
                 const isCurrent = column.weekStart <= matrix.today && matrix.today <= column.weekEnd;
                 const monthLabel = monthLabelFor(column.weekStart, matrix.columns[index - 1]?.weekStart ?? null);

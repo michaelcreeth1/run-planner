@@ -68,6 +68,6 @@ describe("GoalsView race management", () => {
     );
     expect(await screen.findByText("Boulder Half was created.")).toBeVisible();
     expect(screen.getByText("Boulder Half")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Races and weekly defaults" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Goals & races" })).toBeVisible();
   });
 });

@@ -161,8 +161,8 @@ export function GoalsView({
     <section className="settings-view goals-view">
       <header className="goals-page-intro">
         <div>
-          <p className="eyebrow">Goal system</p>
-          <h1>Races and weekly defaults</h1>
+          <p className="eyebrow">Training planning</p>
+          <h1>Goals &amp; races</h1>
         </div>
         <button type="button" className="primary-button" onClick={openCreateRace} disabled={writesBlocked}>
           <Plus size={16} />
@@ -295,7 +295,7 @@ export function GoalsView({
       <GoalImpactSection onSelectWeek={onSelectWeek} />
 
       <div className="goals-layout">
-        <DefaultGoalsCard onRulesSaved={invalidateDependentProfileData} writesBlocked={writesBlocked} />
+        <DefaultGoalsCard onGoalsSaved={invalidateDependentProfileData} writesBlocked={writesBlocked} />
 
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">
