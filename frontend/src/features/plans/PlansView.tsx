@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
 import type { CSSProperties, Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Placeholder } from "../../components/shared/Placeholder";
 import { StatusBanner } from "../../components/shared/StatusBanner";
@@ -15,6 +15,7 @@ import type {
   MesocyclePhase,
   PlanWeekSummary,
   RecurringGoal,
+  ScaffoldPreview,
   TrainingPlan,
   WeekGoalCategory
 } from "../../types/domain";
@@ -652,7 +653,7 @@ export function PlansView({
                           </span>
                           {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
                         </span>
-                        <strong>{week.targetMileage ? `${formatNumber(week.targetMileage)} mi` : "--"}</strong>
+                        <strong>{formatTargetMileage(week.targetMileage)}</strong>
                         {week.warning || hasActivity ? (
                           <small>
                             {week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}
@@ -801,6 +802,61 @@ function MesocycleInspector({
   selectedIndex: number;
   setEditor: Dispatch<SetStateAction<PlanEditorState | null>>;
 }) {
+  const [preview, setPreview] = useState<ScaffoldPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const previewRequestId = useRef(0);
+  const previewEndpoint =
+    editor.mode === "edit" && editor.id
+      ? `/api/plans/${editor.id}/preview`
+      : "/api/plans/preview";
+  const previewRequestBody = JSON.stringify(planPreviewPayload(editor));
+
+  useEffect(() => {
+    if (editor.mesocycles.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const requestId = ++previewRequestId.current;
+    let cancelled = false;
+
+    setPreview(null);
+    setIsPreviewLoading(true);
+    setPreviewError(null);
+    void fetchJson<ScaffoldPreview>(previewEndpoint, {
+      method: "POST",
+      body: previewRequestBody,
+      signal: controller.signal
+    })
+      .then((nextPreview) => {
+        if (!cancelled && requestId === previewRequestId.current) {
+          setPreview(nextPreview);
+        }
+      })
+      .catch((previewRequestError) => {
+        if (controller.signal.aborted || cancelled || requestId !== previewRequestId.current) {
+          return;
+        }
+        setPreview(null);
+        setPreviewError(
+          previewRequestError instanceof Error
+            ? previewRequestError.message
+            : "Could not refresh the generated weeks."
+        );
+      })
+      .finally(() => {
+        if (!cancelled && requestId === previewRequestId.current) {
+          setIsPreviewLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [editor.mesocycles.length, previewEndpoint, previewRequestBody]);
+
   const selected = editor.mesocycles[Math.min(selectedIndex, editor.mesocycles.length - 1)];
   const index = Math.max(0, Math.min(selectedIndex, editor.mesocycles.length - 1));
   if (!selected) {
@@ -813,6 +869,11 @@ function MesocycleInspector({
     optionalNumber(selected.longRunStart) !== null || optionalNumber(selected.longRunEnd) !== null;
   const longRunStartEffective = optionalNumber(selected.longRunStart) ?? longRunStartAuto;
   const longRunEndEffective = optionalNumber(selected.longRunEnd) ?? longRunEndAuto;
+  const selectedPreviewWeeks = (preview?.weekSummaries ?? [])
+    .map((week, globalIndex) => ({ globalIndex, week }))
+    .filter(
+      ({ week }) => selected.startDate <= week.weekStartDate && week.weekStartDate <= selected.endDate
+    );
 
   return (
     <article className="mesocycle-inspector" aria-label="Selected phase settings">
@@ -909,6 +970,9 @@ function MesocycleInspector({
           <span>Weekly mileage</span>
           <div className="mesocycle-mileage-inputs">
             <input
+              type="number"
+              min={0}
+              step="any"
               inputMode="decimal"
               aria-label="Mileage at phase start"
               value={selected.targetMileageStart}
@@ -916,6 +980,9 @@ function MesocycleInspector({
             />
             <span aria-hidden="true">→</span>
             <input
+              type="number"
+              min={0}
+              step="any"
               inputMode="decimal"
               aria-label="Mileage at phase end"
               value={selected.targetMileageEnd}
@@ -957,6 +1024,9 @@ function MesocycleInspector({
           <label>
             <span>Long run start (mi)</span>
             <input
+              type="number"
+              min={0}
+              step="any"
               inputMode="decimal"
               placeholder={longRunStartAuto !== null ? `Auto: ${longRunStartAuto}` : "Auto"}
               value={selected.longRunStart}
@@ -966,6 +1036,9 @@ function MesocycleInspector({
           <label>
             <span>Long run end (mi)</span>
             <input
+              type="number"
+              min={0}
+              step="any"
               inputMode="decimal"
               placeholder={longRunEndAuto !== null ? `Auto: ${longRunEndAuto}` : "Auto"}
               value={selected.longRunEnd}
@@ -974,7 +1047,15 @@ function MesocycleInspector({
           </label>
           <label>
             <span>Down week reduction %</span>
-            <input inputMode="decimal" value={selected.downWeekReductionPct} onChange={(event) => updateMesocycle(setEditor, index, { downWeekReductionPct: event.target.value })} />
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              inputMode="decimal"
+              value={selected.downWeekReductionPct}
+              onChange={(event) => updateMesocycle(setEditor, index, { downWeekReductionPct: event.target.value })}
+            />
           </label>
           <label className="plan-form-grid-span">
             <span>Notes</span>
@@ -982,6 +1063,62 @@ function MesocycleInspector({
           </label>
         </div>
       </details>
+      <section
+        className="mesocycle-week-preview"
+        aria-label="Generated week preview"
+        aria-busy={isPreviewLoading}
+      >
+        <header className="mesocycle-week-preview-header">
+          <div>
+            <strong>Generated weeks</strong>
+            <span>
+              {selectedPreviewWeeks.length > 0
+                ? `${selectedPreviewWeeks.length} ${selectedPreviewWeeks.length === 1 ? "week" : "weeks"} in this phase`
+                : "Exact targets from the current phase settings"}
+            </span>
+          </div>
+        </header>
+        {previewError ? (
+          <p className="mesocycle-week-preview-message mesocycle-week-preview-message--error" role="status">
+            Could not refresh the preview. {previewError}
+          </p>
+        ) : null}
+        {selectedPreviewWeeks.length > 0 ? (
+          <ol
+            className="mesocycle-week-preview-list"
+            start={(selectedPreviewWeeks[0]?.globalIndex ?? 0) + 1}
+          >
+            {selectedPreviewWeeks.map(({ globalIndex, week }) => (
+              <li
+                className={`mesocycle-week-preview-card ${week.isDownWeek ? "mesocycle-week-preview-card--down" : ""}`}
+                data-week-start={week.weekStartDate}
+                key={week.weekStartDate}
+              >
+                <div className="mesocycle-week-preview-card-heading">
+                  <span>W{globalIndex + 1} · {formatShortDate(week.weekStartDate)}</span>
+                  {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
+                </div>
+                <dl className="mesocycle-week-preview-targets">
+                  <div>
+                    <dt>Mileage</dt>
+                    <dd>{formatTargetMileage(week.targetMileage)}</dd>
+                  </div>
+                  {week.targetLongRunDistance !== null ? (
+                    <div>
+                      <dt>Long run</dt>
+                      <dd>{formatTargetMileage(week.targetLongRunDistance)}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </li>
+            ))}
+          </ol>
+        ) : isPreviewLoading ? (
+          <p className="mesocycle-week-preview-message" role="status">Generating weekly targets…</p>
+        ) : previewError ? null : (
+          <p className="mesocycle-week-preview-message">No generated weeks are available for this phase.</p>
+        )}
+      </section>
     </article>
   );
 }
@@ -1013,6 +1150,10 @@ function groupWeeksByMesocycle(weeks: PlanWeekSummary[]): PlanWeekGroup[] {
 
 function peakWeekMileage(weeks: PlanWeekSummary[]) {
   return Math.max(0, ...weeks.map((week) => week.targetMileage ?? 0));
+}
+
+function formatTargetMileage(value: number | null) {
+  return value === null ? "--" : `${formatNumber(value)} mi`;
 }
 
 function currentWeekMarker(weeks: PlanWeekSummary[]): { index: number; label: string } | null {
@@ -1290,6 +1431,31 @@ function planPayload(editor: PlanEditorState) {
       notes: mesocycle.notes
     })),
     recurringGoals: editor.recurringGoals.map(recurringGoalPayload)
+  };
+}
+
+function planPreviewPayload(editor: PlanEditorState) {
+  const payload = planPayload(editor);
+  return {
+    ...payload,
+    name: "Training plan preview",
+    description: "",
+    notes: "",
+    mesocycles: payload.mesocycles.map((mesocycle) => ({
+      orderIndex: mesocycle.orderIndex,
+      name: "",
+      phase: mesocycle.phase,
+      startDate: mesocycle.startDate,
+      endDate: mesocycle.endDate,
+      targetMileageStart: mesocycle.targetMileageStart,
+      targetMileageEnd: mesocycle.targetMileageEnd,
+      longRunStart: mesocycle.longRunStart,
+      longRunEnd: mesocycle.longRunEnd,
+      downWeekCadence: mesocycle.downWeekCadence,
+      downWeekReductionPct: mesocycle.downWeekReductionPct,
+      notes: ""
+    })),
+    recurringGoals: []
   };
 }
 

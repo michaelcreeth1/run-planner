@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
@@ -74,6 +75,31 @@ def make_plan_payload(
     if goal_race_id:
         payload["goalRaceId"] = goal_race_id
     return payload
+
+
+PROJECTED_WEEK_FIELDS = (
+    "weekStartDate",
+    "weekEndDate",
+    "mesocycleName",
+    "mesocyclePhase",
+    "weekIndexInMesocycle",
+    "mesocycleWeekCount",
+    "plannedMileage",
+    "actualMileage",
+    "targetMileage",
+    "targetLongRunDistance",
+    "purpose",
+    "purposeSource",
+    "targetMileageSource",
+    "targetLongRunSource",
+    "isDownWeek",
+    "hasManualOverride",
+    "warning",
+)
+
+
+def projected_week_fields(weeks: list[dict]) -> list[dict]:
+    return [{field: week[field] for field in PROJECTED_WEEK_FIELDS} for week in weeks]
 
 
 def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
@@ -153,6 +179,74 @@ def test_goal_race_plan_scaffolding_and_goal_derivation() -> None:
         reopened = client.get(f"/api/plans/{plan['id']}")
         assert reopened.status_code == 200
         assert reopened.json()["endDate"] == "2099-03-24"
+
+
+def test_generated_week_preview_matches_create_and_update_with_canonical_rounding() -> None:
+    with TestClient(app) as client:
+        login(client)
+        payload = make_plan_payload(
+            name="Canonical rounding build",
+            start_date="2099-03-02",
+            end_date="2099-03-29",
+        )
+        payload["mesocycles"] = [
+            {
+                "orderIndex": 0,
+                "name": "Build",
+                "phase": "build",
+                "startDate": "2099-03-02",
+                "endDate": "2099-03-29",
+                "targetMileageStart": 25,
+                "targetMileageEnd": 35,
+                "longRunStart": 8,
+                "longRunEnd": 12,
+                "downWeekCadence": 2,
+                "downWeekReductionPct": 25,
+            }
+        ]
+        payload["recurringGoals"] = []
+
+        preview = client.post("/api/plans/preview", json=payload)
+        assert preview.status_code == 200
+        preview_weeks = preview.json()["weekSummaries"]
+        assert [week["targetMileage"] for week in preview_weeks] == [25, 18.8, 35, 26.2]
+        assert [week["targetLongRunDistance"] for week in preview_weeks] == [8, 6, 12, 9]
+        assert [week["isDownWeek"] for week in preview_weeks] == [False, True, False, True]
+        assert [week["purpose"] for week in preview_weeks] == [
+            "aerobic_build",
+            "down_week",
+            "aerobic_build",
+            "down_week",
+        ]
+        assert [week["weekIndexInMesocycle"] for week in preview_weeks] == [1, 2, 3, 4]
+        assert all(week["mesocycleWeekCount"] == 4 for week in preview_weeks)
+
+        created = client.post("/api/plans", json=payload)
+        assert created.status_code == 201
+        plan = created.json()
+        assert projected_week_fields(preview_weeks) == projected_week_fields(
+            plan["weekSummaries"]
+        )
+
+        replacement = deepcopy(payload)
+        replacement["name"] = "Updated canonical rounding build"
+        replacement["mesocycles"][0].update(
+            {
+                "id": plan["mesocycles"][0]["id"],
+                "targetMileageStart": 26,
+                "targetMileageEnd": 38,
+                "longRunStart": 9,
+                "longRunEnd": 13,
+                "downWeekReductionPct": 20,
+            }
+        )
+        edit_preview = client.post(f"/api/plans/{plan['id']}/preview", json=replacement)
+        assert edit_preview.status_code == 200
+        updated = client.put(f"/api/plans/{plan['id']}", json=replacement)
+        assert updated.status_code == 200
+        assert projected_week_fields(edit_preview.json()["weekSummaries"]) == (
+            projected_week_fields(updated.json()["weekSummaries"])
+        )
 
 
 def test_updating_race_date_resizes_linked_plan_and_phase_timeline() -> None:
@@ -280,15 +374,143 @@ def test_plan_preview_and_replace_preserve_manual_week_overrides() -> None:
             item for item in preview.json()["weeks"] if item["weekStartDate"] == second_week_start
         )
         assert preview_week["action"] == "skip_overridden"
+        preview_summary = next(
+            item
+            for item in preview.json()["weekSummaries"]
+            if item["weekStartDate"] == second_week_start
+        )
+        assert preview_summary["purpose"] == "recovery"
+        assert preview_summary["purposeSource"] == "manual"
+        assert preview_summary["targetMileage"] == 20
+        assert preview_summary["targetMileageSource"] == "manual"
+        assert preview_summary["isDownWeek"] is False
+        assert preview_summary["hasManualOverride"] is True
 
         updated = client.put(f"/api/plans/{plan['id']}", json=replacement)
         assert updated.status_code == 200
+        updated_summary = next(
+            item
+            for item in updated.json()["weekSummaries"]
+            if item["weekStartDate"] == second_week_start
+        )
+        assert projected_week_fields([preview_summary]) == projected_week_fields(
+            [updated_summary]
+        )
 
         refreshed_week = client.get(f"/api/weeks/{second_week_start}").json()
         assert refreshed_week["purpose"] == "recovery"
         assert refreshed_week["purposeSource"] == "manual"
         assert refreshed_week["targetMileage"] == 20
         assert refreshed_week["targetMileageSource"] == "manual"
+
+
+def test_plan_read_keeps_manually_cleared_targets_until_the_plan_is_reapplied() -> None:
+    with TestClient(app) as client:
+        login(client)
+        payload = make_plan_payload(
+            name="Manual target clear",
+            start_date="2099-05-04",
+            end_date="2099-05-31",
+        )
+        created = client.post("/api/plans", json=payload)
+        assert created.status_code == 201
+        plan = created.json()
+        first_summary = plan["weekSummaries"][0]
+        week = client.get(f"/api/weeks/{first_summary['weekStartDate']}").json()
+
+        cleared = client.patch(
+            f"/api/weeks/{week['id']}",
+            json={"targetMileage": None, "targetLongRunDistance": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["targetMileageSource"] == "manual"
+        assert cleared.json()["targetLongRunSource"] == "manual"
+
+        reopened = client.get(f"/api/plans/{plan['id']}")
+        assert reopened.status_code == 200
+        reopened_summary = reopened.json()["weekSummaries"][0]
+        assert reopened_summary["targetMileage"] is None
+        assert reopened_summary["targetMileageSource"] == "manual"
+        assert reopened_summary["targetLongRunDistance"] is None
+        assert reopened_summary["targetLongRunSource"] == "manual"
+
+        preview = client.post(f"/api/plans/{plan['id']}/preview", json=payload)
+        assert preview.status_code == 200
+        preview_summary = preview.json()["weekSummaries"][0]
+        assert preview_summary["targetMileage"] == first_summary["targetMileage"]
+        assert preview_summary["targetMileageSource"] == "plan"
+        assert preview_summary["targetLongRunDistance"] == first_summary["targetLongRunDistance"]
+        assert preview_summary["targetLongRunSource"] == "plan"
+
+        updated = client.put(f"/api/plans/{plan['id']}", json=payload)
+        assert updated.status_code == 200
+        assert projected_week_fields([preview_summary]) == projected_week_fields(
+            [updated.json()["weekSummaries"][0]]
+        )
+
+
+def test_race_phase_down_week_flag_updates_when_purpose_text_is_unchanged() -> None:
+    with TestClient(app) as client:
+        login(client)
+        payload = make_plan_payload(
+            name="Race phase cadence",
+            start_date="2099-05-04",
+            end_date="2099-05-31",
+        )
+        created = client.post("/api/plans", json=payload)
+        assert created.status_code == 201
+        plan = created.json()
+        original_race_weeks = [
+            week for week in plan["weekSummaries"] if week["mesocyclePhase"] == "race"
+        ]
+        assert [week["purpose"] for week in original_race_weeks] == [
+            "race_week",
+            "race_week",
+        ]
+        assert [week["isDownWeek"] for week in original_race_weeks] == [False, False]
+
+        replacement = deepcopy(payload)
+        replacement["mesocycles"][0]["id"] = plan["mesocycles"][0]["id"]
+        replacement["mesocycles"][1]["id"] = plan["mesocycles"][1]["id"]
+        replacement["mesocycles"][1]["downWeekCadence"] = 2
+
+        preview = client.post(f"/api/plans/{plan['id']}/preview", json=replacement)
+        assert preview.status_code == 200
+        preview_race_weeks = [
+            week
+            for week in preview.json()["weekSummaries"]
+            if week["mesocyclePhase"] == "race"
+        ]
+        assert [week["purpose"] for week in preview_race_weeks] == [
+            "race_week",
+            "race_week",
+        ]
+        assert [week["isDownWeek"] for week in preview_race_weeks] == [False, True]
+        final_week_diff = next(
+            week
+            for week in preview.json()["weeks"]
+            if week["weekStartDate"] == preview_race_weeks[-1]["weekStartDate"]
+        )
+        assert any(change["field"] == "isDownWeek" for change in final_week_diff["changes"])
+
+        updated = client.put(f"/api/plans/{plan['id']}", json=replacement)
+        assert updated.status_code == 200
+        saved_race_weeks = [
+            week
+            for week in updated.json()["weekSummaries"]
+            if week["mesocyclePhase"] == "race"
+        ]
+        assert projected_week_fields(preview_race_weeks) == projected_week_fields(
+            saved_race_weeks
+        )
+        assert [week["isDownWeek"] for week in saved_race_weeks] == [False, True]
+
+        saved_final_week = client.get(
+            f"/api/weeks/{saved_race_weeks[-1]['weekStartDate']}"
+        )
+        assert saved_final_week.status_code == 200
+        assert saved_final_week.json()["purpose"] == "race_week"
+        assert saved_final_week.json()["isDownWeek"] is True
 
 
 def test_overlapping_active_plans_are_rejected() -> None:

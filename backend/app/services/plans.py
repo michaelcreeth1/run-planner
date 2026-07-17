@@ -594,6 +594,11 @@ def scaffold_weeks(
     recurring_goals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scheduled_weeks = materialize_scaffold_weeks(mesocycles)
+    projected_week_summaries = project_scaffold_week_summaries(
+        scheduled_weeks,
+        existing_weeks,
+        athlete_account_id,
+    )
     scheduled_by_start = {week.week_start_date: week for week in scheduled_weeks}
     diffs: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -629,6 +634,7 @@ def scaffold_weeks(
         )
         if purpose_action["changed"]:
             change_list.append(change("purpose", purpose_action["from"], scheduled.purpose))
+        if purpose_action["writable"]:
             if bool(existing.is_down_week) != scheduled.is_down_week:
                 change_list.append(
                     change("isDownWeek", bool(existing.is_down_week), scheduled.is_down_week)
@@ -728,7 +734,11 @@ def scaffold_weeks(
 
     if preserved_manual_count:
         warnings.append(f"{preserved_manual_count} manual field overrides will be preserved.")
-    return {"weeks": sorted(diffs, key=lambda item: item["week_start_date"]), "warnings": warnings}
+    return {
+        "weeks": sorted(diffs, key=lambda item: item["week_start_date"]),
+        "week_summaries": projected_week_summaries,
+        "warnings": warnings,
+    }
 
 
 def materialize_scaffold_weeks(mesocycles: list[dict[str, Any]]) -> list[ScaffoldWeek]:
@@ -843,17 +853,45 @@ def apply_scaffolded_field(
     empty_value: Any,
     apply_changes: bool,
 ) -> dict[str, Any]:
+    action = scaffolded_field_action(
+        week,
+        field_name,
+        source_field_name,
+        next_value,
+        empty_value=empty_value,
+    )
+    if action["changed"] and apply_changes:
+        setattr(week, field_name, next_value)
+        setattr(week, source_field_name, "plan")
+    return action
+
+
+def scaffolded_field_action(
+    week: TrainingWeek,
+    field_name: str,
+    source_field_name: str,
+    next_value: Any,
+    *,
+    empty_value: Any,
+) -> dict[str, Any]:
     current_value = getattr(week, field_name)
     current_source = getattr(week, source_field_name)
     is_empty = current_value == empty_value
     can_write = current_source == "plan" or is_empty
     if not can_write:
-        return {"changed": False, "blocked": current_value != next_value, "from": current_value}
+        return {
+            "changed": False,
+            "blocked": current_value != next_value,
+            "from": current_value,
+            "writable": False,
+        }
     changed = current_value != next_value or current_source != "plan"
-    if changed and apply_changes:
-        setattr(week, field_name, next_value)
-        setattr(week, source_field_name, "plan")
-    return {"changed": changed, "blocked": False, "from": current_value}
+    return {
+        "changed": changed,
+        "blocked": False,
+        "from": current_value,
+        "writable": True,
+    }
 
 
 def change(field: str, from_value: Any, to_value: Any) -> dict[str, Any]:
@@ -917,6 +955,137 @@ def blank_scaffold_week(athlete_account_id: str, scheduled: ScaffoldWeek) -> Tra
         is_down_week=0,
         notes="",
     )
+
+
+def project_scaffold_week_summaries(
+    scheduled_weeks: list[ScaffoldWeek],
+    existing_weeks: dict[date, TrainingWeek],
+    athlete_account_id: str,
+    *,
+    project_plan_changes: bool = True,
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for scheduled in scheduled_weeks:
+        existing = existing_weeks.get(scheduled.week_start_date)
+        week = existing or blank_scaffold_week(athlete_account_id, scheduled)
+
+        if project_plan_changes or existing is None:
+            purpose, purpose_source, purpose_writable = projected_scaffolded_field(
+                week,
+                "purpose",
+                "purpose_source",
+                scheduled.purpose,
+                empty_value="",
+            )
+            target_mileage, target_mileage_source, _ = projected_scaffolded_field(
+                week,
+                "target_mileage",
+                "target_mileage_source",
+                scheduled.target_mileage,
+                empty_value=None,
+            )
+            target_long_run_distance, target_long_run_source, _ = projected_scaffolded_field(
+                week,
+                "target_long_run_distance",
+                "target_long_run_source",
+                scheduled.target_long_run_distance,
+                empty_value=None,
+            )
+            is_down_week = (
+                scheduled.is_down_week if purpose_writable else bool(week.is_down_week)
+            )
+            has_manual_override = bool(
+                (
+                    purpose_source == "manual"
+                    or target_mileage_source == "manual"
+                    or target_long_run_source == "manual"
+                )
+                and (
+                    purpose
+                    or target_mileage is not None
+                    or target_long_run_distance is not None
+                )
+            )
+        else:
+            purpose = week.purpose or scheduled.purpose
+            purpose_source = week.purpose_source
+            target_mileage = week.target_mileage
+            target_mileage_source = week.target_mileage_source
+            target_long_run_distance = week.target_long_run_distance
+            target_long_run_source = week.target_long_run_source
+            is_down_week = bool(week.is_down_week)
+            has_manual_override = bool(
+                (
+                    week.purpose_source == "manual"
+                    or week.target_mileage_source == "manual"
+                    or week.target_long_run_source == "manual"
+                )
+                and (
+                    week.purpose
+                    or week.target_mileage is not None
+                    or week.target_long_run_distance is not None
+                )
+            )
+
+        summaries.append(
+            {
+                "week_start_date": scheduled.week_start_date,
+                "week_end_date": scheduled.week_end_date,
+                "mesocycle_id": scheduled.mesocycle_id,
+                "mesocycle_name": scheduled.mesocycle_name,
+                "mesocycle_phase": scheduled.mesocycle_phase,
+                "week_index_in_mesocycle": scheduled.week_index_in_mesocycle,
+                "mesocycle_week_count": scheduled.mesocycle_week_count,
+                "planned_mileage": week.planned_mileage,
+                "actual_mileage": week.actual_mileage,
+                "target_mileage": target_mileage,
+                "target_long_run_distance": target_long_run_distance,
+                "purpose": purpose,
+                "purpose_source": purpose_source,
+                "target_mileage_source": target_mileage_source,
+                "target_long_run_source": target_long_run_source,
+                "is_down_week": is_down_week,
+                "has_manual_override": has_manual_override,
+                "warning": plan_week_summary_warning(existing, scheduled),
+            }
+        )
+    return summaries
+
+
+def projected_scaffolded_field(
+    week: TrainingWeek,
+    field_name: str,
+    source_field_name: str,
+    next_value: Any,
+    *,
+    empty_value: Any,
+) -> tuple[Any, str, bool]:
+    action = scaffolded_field_action(
+        week,
+        field_name,
+        source_field_name,
+        next_value,
+        empty_value=empty_value,
+    )
+    if action["writable"]:
+        return next_value, "plan", True
+    return getattr(week, field_name), getattr(week, source_field_name), False
+
+
+def plan_week_summary_warning(
+    existing: TrainingWeek | None,
+    scheduled: ScaffoldWeek,
+) -> str | None:
+    if (
+        existing is not None
+        and scheduled.target_mileage is not None
+        and existing.planned_mileage > scheduled.target_mileage
+    ):
+        return (
+            f"{existing.planned_mileage:.1f} planned miles against a "
+            f"{scheduled.target_mileage:.1f} target."
+        )
+    return None
 
 
 def serialize_goal_race(race: GoalRace) -> dict[str, Any]:
@@ -1005,7 +1174,7 @@ def serialize_plan_week_summaries(plan: TrainingPlan) -> list[dict[str, Any]]:
     weeks_by_start = {
         week.week_start_date: week for mesocycle in plan.mesocycles for week in mesocycle.weeks
     }
-    scaffold_weeks = materialize_scaffold_weeks(
+    scheduled_weeks = materialize_scaffold_weeks(
         [
             {
                 "id": mesocycle.id,
@@ -1023,57 +1192,12 @@ def serialize_plan_week_summaries(plan: TrainingPlan) -> list[dict[str, Any]]:
             for mesocycle in plan.mesocycles
         ]
     )
-    summaries = []
-    for scheduled in scaffold_weeks:
-        week = weeks_by_start.get(scheduled.week_start_date)
-        has_manual_override = bool(
-            week
-            and (
-                week.purpose_source == "manual"
-                or week.target_mileage_source == "manual"
-                or week.target_long_run_source == "manual"
-            )
-            and (
-                week.purpose
-                or week.target_mileage is not None
-                or week.target_long_run_distance is not None
-            )
-        )
-        warning = None
-        if (
-            week
-            and scheduled.target_mileage is not None
-            and week.planned_mileage > scheduled.target_mileage
-        ):
-            warning = (
-                f"{week.planned_mileage:.1f} planned miles against a "
-                f"{scheduled.target_mileage:.1f} target."
-            )
-        summaries.append(
-            {
-                "week_start_date": scheduled.week_start_date,
-                "week_end_date": scheduled.week_end_date,
-                "mesocycle_id": scheduled.mesocycle_id,
-                "mesocycle_name": scheduled.mesocycle_name,
-                "mesocycle_phase": scheduled.mesocycle_phase,
-                "week_index_in_mesocycle": scheduled.week_index_in_mesocycle,
-                "mesocycle_week_count": scheduled.mesocycle_week_count,
-                "planned_mileage": week.planned_mileage if week else 0,
-                "actual_mileage": week.actual_mileage if week else 0,
-                "target_mileage": week.target_mileage if week else scheduled.target_mileage,
-                "target_long_run_distance": (
-                    week.target_long_run_distance if week else scheduled.target_long_run_distance
-                ),
-                "purpose": week.purpose if week and week.purpose else scheduled.purpose,
-                "purpose_source": week.purpose_source if week else "plan",
-                "target_mileage_source": week.target_mileage_source if week else "plan",
-                "target_long_run_source": week.target_long_run_source if week else "plan",
-                "is_down_week": bool(week.is_down_week) if week else scheduled.is_down_week,
-                "has_manual_override": has_manual_override,
-                "warning": warning,
-            }
-        )
-    return summaries
+    return project_scaffold_week_summaries(
+        scheduled_weeks,
+        weeks_by_start,
+        plan.athlete_account_id,
+        project_plan_changes=False,
+    )
 
 
 def today_for_plan_reads(plan: TrainingPlan) -> date:

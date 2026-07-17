@@ -7712,6 +7712,129 @@ button.goal-impact-cell:focus-visible {
   margin-top: 0.85rem;
 }
 
+.mesocycle-week-preview {
+  display: grid;
+  gap: 0.65rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.85rem;
+}
+
+.mesocycle-week-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mesocycle-week-preview-header > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.mesocycle-week-preview-header > div > span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.mesocycle-week-preview-list {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mesocycle-week-preview-card {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.85rem;
+  background: var(--bg-surface);
+  padding: 0.6rem 0.7rem;
+}
+
+.mesocycle-week-preview-card--down {
+  border-color: var(--tint-success-border);
+}
+
+.mesocycle-week-preview-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.mesocycle-week-preview-card-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesocycle-week-preview-targets {
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.mesocycle-week-preview-targets > div {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.mesocycle-week-preview-targets dt {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+}
+
+.mesocycle-week-preview-targets dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesocycle-week-preview-message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.mesocycle-week-preview-message--error {
+  border: 1px solid var(--tint-danger-border);
+  border-radius: 0.65rem;
+  background: var(--tint-danger-bg);
+  color: var(--tint-danger-text);
+  padding: 0.5rem 0.65rem;
+}
+
+@media (max-width: 620px) {
+  .mesocycle-week-preview-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mesocycle-week-preview-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 390px) {
+  .mesocycle-week-preview-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .mesocycle-editor-card-header {
   display: flex;
   justify-content: space-between;

@@ -96,6 +96,9 @@ function useAuthenticatedAppHandlers(onCreateWorkout = vi.fn()) {
     ),
     http.get(apiUrl("/api/plans"), () => HttpResponse.json([])),
     http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([])),
+    http.post(apiUrl("/api/plans/preview"), () =>
+      HttpResponse.json({ weeks: [], weekSummaries: [], warnings: [] })
+    ),
     http.get(apiUrl("/api/auth/strava/status"), () =>
       HttpResponse.json({
         connected: false,

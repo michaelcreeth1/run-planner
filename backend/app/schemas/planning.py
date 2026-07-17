@@ -477,24 +477,6 @@ class TrainingPlanMetadataPatch(ApiModel):
     notes: str | None = None
 
 
-class ScaffoldPreviewChangeRead(ApiModel):
-    field: str
-    from_value: str | float | int | bool | None = Field(default=None, alias="from")
-    to_value: str | float | int | bool | None = Field(default=None, alias="to")
-
-
-class ScaffoldPreviewWeekRead(ApiModel):
-    week_start_date: date
-    action: PlanPreviewAction
-    changes: list[ScaffoldPreviewChangeRead] = []
-    warnings: list[str] = []
-
-
-class ScaffoldPreviewRead(ApiModel):
-    weeks: list[ScaffoldPreviewWeekRead]
-    warnings: list[str] = []
-
-
 class PlanWeekSummaryRead(ApiModel):
     week_start_date: date
     week_end_date: date
@@ -514,6 +496,25 @@ class PlanWeekSummaryRead(ApiModel):
     is_down_week: bool
     has_manual_override: bool
     warning: str | None = None
+
+
+class ScaffoldPreviewChangeRead(ApiModel):
+    field: str
+    from_value: str | float | int | bool | None = Field(default=None, alias="from")
+    to_value: str | float | int | bool | None = Field(default=None, alias="to")
+
+
+class ScaffoldPreviewWeekRead(ApiModel):
+    week_start_date: date
+    action: PlanPreviewAction
+    changes: list[ScaffoldPreviewChangeRead] = []
+    warnings: list[str] = []
+
+
+class ScaffoldPreviewRead(ApiModel):
+    weeks: list[ScaffoldPreviewWeekRead]
+    week_summaries: list[PlanWeekSummaryRead]
+    warnings: list[str] = []
 
 
 class TrainingPlanSummaryRead(ApiModel):

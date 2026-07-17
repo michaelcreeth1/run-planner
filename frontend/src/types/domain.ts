@@ -477,6 +477,25 @@ export type PlanWeekSummary = {
   warning: string | null;
 };
 
+export type ScaffoldPreviewChange = {
+  field: string;
+  from: string | number | boolean | null;
+  to: string | number | boolean | null;
+};
+
+export type ScaffoldPreviewWeek = {
+  weekStartDate: string;
+  action: "create" | "annotate" | "update" | "skip_overridden" | "unlink";
+  changes: ScaffoldPreviewChange[];
+  warnings: string[];
+};
+
+export type ScaffoldPreview = {
+  weeks: ScaffoldPreviewWeek[];
+  warnings: string[];
+  weekSummaries: PlanWeekSummary[];
+};
+
 export type TrainingPlanSummary = {
   id: string;
   athleteAccountId: string;
