@@ -1,7 +1,7 @@
 import { formatNumber, formatShortDate, formatWeekday } from "../../lib/formatters";
 import type { TrainingWeek, Workout } from "../../types/domain";
 
-export type WeekNextUpAction = "edit_workout" | "open_plan" | "open_progress" | "plan_week";
+export type WeekNextUpAction = "edit_workout" | "open_plan" | "open_progress" | "plan_week" | "skip_review";
 
 export type WeekNextUpViewModel = {
   action: WeekNextUpAction;
@@ -23,6 +23,15 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
         detail: `${formatNumber(week.actualMileage)} miles completed. The review is saved and your history is unchanged.`,
         eyebrow: "Reviewed",
         title: `Week of ${formatShortDate(week.weekStartDate)} complete`
+      };
+    }
+    if (isCompletelyEmptyWeek(week)) {
+      return {
+        action: "skip_review",
+        actionLabel: "Nothing to review — skip",
+        detail: "No sessions were planned and no activities were logged. Close this week in one step.",
+        eyebrow: "Nothing to review",
+        title: `Close the week of ${formatShortDate(week.weekStartDate)}`
       };
     }
     return {
@@ -100,6 +109,14 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
     eyebrow: "Next up",
     title: "Close the gap in the schedule"
   };
+}
+
+export function isCompletelyEmptyWeek(week: TrainingWeek) {
+  return (
+    !hasWeekPlan(week) &&
+    week.actualActivities.length === 0 &&
+    week.actualMileage === 0
+  );
 }
 
 function hasEnoughStructureForGoalAlarm(week: TrainingWeek) {

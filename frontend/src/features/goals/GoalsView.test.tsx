@@ -51,9 +51,10 @@ describe("GoalsView race management", () => {
     await screen.findByText("No races yet");
     await user.click(screen.getByRole("button", { name: "Add race" }));
     expect(screen.getByRole("button", { name: "Create race" })).toBeVisible();
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    expect(screen.getByLabelText("Race date")).toHaveValue("");
 
     await user.type(screen.getByLabelText("Name"), "Boulder Half");
-    await user.clear(screen.getByLabelText("Race date"));
     await user.type(screen.getByLabelText("Race date"), "2026-10-04");
     await user.type(screen.getByLabelText("Target time"), "1:40:00");
     await user.click(screen.getByRole("button", { name: "Create race" }));

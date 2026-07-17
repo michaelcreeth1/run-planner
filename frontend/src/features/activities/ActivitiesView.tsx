@@ -1,13 +1,15 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Link } from "lucide-react";
 import type { StravaActivity } from "../../types/domain";
 import { formatDateTime, formatPace } from "../../lib/formatters";
 import { parseDate, startOfWeek } from "../../lib/dates";
 
 export function ActivitiesView({
   activities,
+  onOpenStravaSettings,
   onSelectWeek
 }: {
   activities: StravaActivity[];
+  onOpenStravaSettings: () => void;
   onSelectWeek: (weekStartDate: string) => void;
 }) {
   return (
@@ -18,6 +20,18 @@ export function ActivitiesView({
           <h2>{activities.length} activities</h2>
         </div>
       </header>
+      {activities.length === 0 ? (
+        <div className="activities-empty-state">
+          <Link size={22} aria-hidden="true" />
+          <div>
+            <strong>No activities yet</strong>
+            <span>Connect Strava to import your runs and see them here.</span>
+          </div>
+          <button className="primary-button" type="button" onClick={onOpenStravaSettings}>
+            Connect Strava
+          </button>
+        </div>
+      ) : (
       <div className="activity-table">
         <div className="activity-table-head" aria-hidden="true">
           <span>Activity</span>
@@ -51,6 +65,7 @@ export function ActivitiesView({
           </article>
         ))}
       </div>
+      )}
     </section>
   );
 }

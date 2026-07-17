@@ -576,7 +576,7 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 }
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
-  if (mode !== "review") {
+  if (mode !== "review" || isUnplannedWeek(week)) {
     return [];
   }
 

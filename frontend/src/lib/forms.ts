@@ -23,7 +23,7 @@ export function formToPayload(form: WorkoutForm) {
   const sessionType = sessionTypeForWorkout(form);
   return {
     plannedDate: form.plannedDate,
-    title: form.title,
+    title: form.title.trim() || sessionType.label,
     sport: sessionType.sport,
     workoutType: sessionType.workoutType,
     intensityCategory: sessionType.intensityCategory,

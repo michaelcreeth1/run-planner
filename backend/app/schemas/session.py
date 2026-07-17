@@ -54,3 +54,8 @@ class UserCreate(ApiModel):
 class ProfileCreate(ApiModel):
     display_name: str = Field(min_length=1, max_length=120)
     timezone: str = Field(default="America/Denver", max_length=80)
+
+
+class ProfileUpdate(ApiModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)

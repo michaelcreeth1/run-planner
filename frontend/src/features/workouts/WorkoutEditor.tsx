@@ -42,10 +42,12 @@ export function WorkoutEditor({
           <label>
             <span>Title</span>
             <input
-              required
+              aria-label="Title"
+              placeholder={selectedSessionType.label}
               value={editor.title}
               onChange={(event) => setEditor({ ...editor, title: event.target.value })}
             />
+            <small className="field-help">Optional — defaults to {selectedSessionType.label}.</small>
           </label>
           <label>
             <span>Session type</span>

@@ -61,6 +61,7 @@ describe("buildWeekCommandCenterViewModel", () => {
 
     expect(viewModel.modeLabel).toBe("Not planned yet");
     expect(viewModel.isUnplanned).toBe(true);
+    expect(viewModel.actionButtons).toEqual([]);
     expect(viewModel.compactStats?.find((stat) => stat.label === "Recovery")?.value).toBe("Not planned");
     expect(viewModel.compactStats?.some((stat) => stat.outcome === "missed")).toBe(false);
   });

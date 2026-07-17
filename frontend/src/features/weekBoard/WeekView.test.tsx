@@ -110,6 +110,7 @@ function makeProps(
     onPlanNextWeek: vi.fn(),
     onSelectTimeWeek: vi.fn(),
     onSelectWeek: vi.fn(),
+    onSkipReview: vi.fn(),
     selectedWeekStart: week.weekStartDate,
     reviewHandoff: null,
     timelineIndex: {

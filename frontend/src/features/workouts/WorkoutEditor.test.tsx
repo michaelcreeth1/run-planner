@@ -66,6 +66,18 @@ describe("WorkoutEditor", () => {
     );
   });
 
+  it("allows a workout to be submitted without a custom title", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<EditorHarness onSave={onSave} onClose={vi.fn()} />);
+
+    expect(screen.getByLabelText("Title")).not.toBeRequired();
+    expect(screen.getByPlaceholderText("Easy run")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledOnce();
+  });
+
   it("calculates pace from miles and time", async () => {
     const user = userEvent.setup();
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);

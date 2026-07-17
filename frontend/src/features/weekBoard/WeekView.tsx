@@ -46,6 +46,7 @@ export function WeekView({
   onPlanNextWeek,
   onSelectTimeWeek,
   onSelectWeek,
+  onSkipReview,
   selectedWeekStart,
   reviewHandoff,
   timelineIndex,
@@ -80,8 +81,9 @@ export function WeekView({
   onPlanNextWeek: (weekStartDate: string) => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
+  onSkipReview: (weekId: string) => void;
   selectedWeekStart: string;
-  reviewHandoff: { nextWeekStart: string; reviewedWeekStart: string } | null;
+  reviewHandoff: { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean } | null;
   timelineIndex: TrainingTimelineIndex;
   today: string;
   week: TrainingWeek | null;
@@ -165,6 +167,7 @@ export function WeekView({
           nextWeekStart={reviewHandoff.nextWeekStart}
           onDismiss={onDismissReviewHandoff}
           onPlanNextWeek={onPlanNextWeek}
+          wasEmpty={reviewHandoff.wasEmpty}
         />
       ) : week ? (
         <WeekNextUpCard
@@ -172,6 +175,7 @@ export function WeekView({
           onOpenPlan={onOpenPlan}
           onOpenPlanWeek={onOpenPlanWeek}
           onOpenProgress={onOpenProgress}
+          onSkipReview={onSkipReview}
           today={today}
           week={week}
         />

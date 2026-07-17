@@ -1,9 +1,8 @@
 import { CalendarDays, Flag, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "../../lib/api";
-import { toDateInputValue } from "../../lib/dates";
 import { queryKeys, useGoalRacesQuery } from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
 import type { GoalRace, RaceDistance } from "../../types/domain";
@@ -73,7 +72,18 @@ export function GoalsView({
   const [raceSuccess, setRaceSuccess] = useState<string | null>(null);
   const [raceForm, setRaceForm] = useState<GoalRaceFormState | null>(null);
   const [isSavingRace, setIsSavingRace] = useState(false);
+  const [raceFormOpenRequest, setRaceFormOpenRequest] = useState(0);
+  const raceFormRef = useRef<HTMLFormElement | null>(null);
+  const raceNameInputRef = useRef<HTMLInputElement | null>(null);
   const sortedRaces = [...races].sort((left, right) => left.raceDate.localeCompare(right.raceDate));
+
+  useEffect(() => {
+    if (!raceFormOpenRequest) {
+      return;
+    }
+    raceNameInputRef.current?.focus({ preventScroll: true });
+    raceFormRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [raceFormOpenRequest]);
 
   function invalidateDependentProfileData() {
     return Promise.all([
@@ -87,12 +97,14 @@ export function GoalsView({
     setRacesError(null);
     setRaceSuccess(null);
     setRaceForm(defaultGoalRaceForm());
+    setRaceFormOpenRequest((current) => current + 1);
   }
 
   function openEditRace(race: GoalRace) {
     setRacesError(null);
     setRaceSuccess(null);
     setRaceForm(goalRaceToForm(race));
+    setRaceFormOpenRequest((current) => current + 1);
   }
 
   async function saveRace(event: FormEvent<HTMLFormElement>) {
@@ -171,7 +183,7 @@ export function GoalsView({
       </header>
 
       {raceForm ? (
-        <form className="settings-card plan-form goal-race-editor" onSubmit={saveRace}>
+        <form className="settings-card plan-form goal-race-editor" onSubmit={saveRace} ref={raceFormRef}>
           <div className="plan-form-header">
             <div>
               <strong>{raceForm.id ? "Edit race" : "Create race"}</strong>
@@ -185,6 +197,7 @@ export function GoalsView({
             <label>
               <span>Name</span>
               <input
+                ref={raceNameInputRef}
                 value={raceForm.name}
                 onChange={(event) => setRaceForm((current) => current ? { ...current, name: event.target.value } : current)}
                 required
@@ -367,7 +380,7 @@ export function GoalsView({
 function defaultGoalRaceForm(): GoalRaceFormState {
   return {
     name: "",
-    raceDate: toDateInputValue(new Date()),
+    raceDate: "",
     distance: "half_marathon",
     distanceMiles: "",
     targetTime: "",

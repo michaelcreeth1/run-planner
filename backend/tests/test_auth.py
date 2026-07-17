@@ -156,6 +156,31 @@ def test_profile_switch_requires_ownership_and_preserves_active_profile_on_failu
     assert status["activeAthleteAccountId"] == bob_profile_id
 
 
+def test_profiles_can_be_updated_and_inactive_profiles_deleted() -> None:
+    with TestClient(app) as client:
+        session = login(client)
+        active_profile_id = session["activeAthleteAccountId"]
+        extra_profile = client.post(
+            "/api/auth/profiles",
+            json={"displayName": "Second profile", "timezone": "America/New_York"},
+        ).json()
+
+        updated = client.patch(
+            f"/api/auth/profiles/{extra_profile['id']}",
+            json={"displayName": "Trail profile", "timezone": "America/Los_Angeles"},
+        )
+        active_delete = client.delete(f"/api/auth/profiles/{active_profile_id}")
+        deleted = client.delete(f"/api/auth/profiles/{extra_profile['id']}")
+        refreshed = client.get("/api/auth/session/status").json()
+
+    assert updated.status_code == 200
+    assert updated.json()["displayName"] == "Trail profile"
+    assert updated.json()["timezone"] == "America/Los_Angeles"
+    assert active_delete.status_code == 409
+    assert deleted.status_code == 204
+    assert [profile["id"] for profile in refreshed["profiles"]] == [active_profile_id]
+
+
 def test_disabled_user_loses_existing_session() -> None:
     with TestClient(app) as client:
         login(client)

@@ -12,6 +12,7 @@ export function ProgressView({
   isLoading,
   lookbackWeeks,
   onChangeSection,
+  onOpenStravaSettings,
   onSelectWeek,
   section,
   setFutureWeeks,
@@ -23,6 +24,7 @@ export function ProgressView({
   isLoading: boolean;
   lookbackWeeks: number;
   onChangeSection: (section: ProgressSection) => void;
+  onOpenStravaSettings: () => void;
   onSelectWeek: (weekStartDate: string) => void;
   section: ProgressSection;
   setFutureWeeks: Dispatch<SetStateAction<number>>;
@@ -63,7 +65,11 @@ export function ProgressView({
           setLookbackWeeks={setLookbackWeeks}
         />
       ) : (
-        <ActivitiesView activities={activities} onSelectWeek={onSelectWeek} />
+        <ActivitiesView
+          activities={activities}
+          onOpenStravaSettings={onOpenStravaSettings}
+          onSelectWeek={onSelectWeek}
+        />
       )}
     </section>
   );

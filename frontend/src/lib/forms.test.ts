@@ -25,6 +25,17 @@ describe("form payload helpers", () => {
     expect(payload).toMatchObject({ sport: "run", workoutType: "race", intensityCategory: "race" });
   });
 
+  it("defaults an empty title from the selected session type", () => {
+    const payload = formToPayload({
+      ...defaultForm("2026-07-01"),
+      title: "  ",
+      workoutType: "tempo",
+      intensityCategory: "workout"
+    });
+
+    expect(payload.title).toBe("Tempo run");
+  });
+
   it("keeps non-running activities non-running when normalizing legacy metadata", () => {
     const payload = formToPayload({
       ...defaultForm("2026-07-01"),

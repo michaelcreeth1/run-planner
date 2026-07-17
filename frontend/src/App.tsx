@@ -4,6 +4,7 @@ import {
   PanelLeftOpen,
   RefreshCw,
   Route,
+  Settings,
   ShieldAlert,
   TrendingUp,
   WifiOff
@@ -21,6 +22,7 @@ import { ProgressView } from "./features/progress/ProgressView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
+import { isCompletelyEmptyWeek } from "./features/weekBoard/buildWeekNextUp";
 import { buildPlanRules } from "./features/goals/ruleEvaluation";
 import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlanner/planWeekDrafts";
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
@@ -59,11 +61,12 @@ const WEEK_STACK_LOAD_BATCH = 6;
 const primaryTabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
-  { id: "progress", label: "Progress", icon: TrendingUp }
+  { id: "progress", label: "Progress", icon: TrendingUp },
+  { id: "settings", label: "Settings", icon: Settings }
 ] as const;
 
 type Theme = "light" | "dark";
-type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string };
+type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("theme");
@@ -568,6 +571,7 @@ function AppShell() {
     }
     setIsSavingPlanWeek(true);
     try {
+      const sourceWeek = Object.values(weekStack).find((candidate) => candidate.id === weekId);
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${weekId}/review`, {
         method: "POST"
       });
@@ -578,7 +582,8 @@ function AppShell() {
       setPlanWeekDraft(null);
       setWeekReviewHandoff({
         reviewedWeekStart: savedWeek.weekStartDate,
-        nextWeekStart: addDays(savedWeek.weekStartDate, 7)
+        nextWeekStart: addDays(savedWeek.weekStartDate, 7),
+        wasEmpty: sourceWeek ? isCompletelyEmptyWeek(sourceWeek) : false
       });
       loadTrainingTimeline();
       loadAnalyticsPlanning();
@@ -902,6 +907,7 @@ function AppShell() {
               onPlanNextWeek={planNextWeek}
               onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
               onSelectWeek={(start) => selectWeek(start, "week-stack")}
+              onSkipReview={completeWeekReview}
               selectedWeekStart={weekStart}
               timelineIndex={timelineIndex}
               today={todayDateString()}
@@ -952,6 +958,7 @@ function AppShell() {
               onSelectWeek={(start) => {
                 selectWeek(start, "time-rail");
               }}
+              onOpenStravaSettings={() => navigate("/settings#strava-settings")}
               onChangeSection={navigateProgressSection}
               section={progressSection}
             />

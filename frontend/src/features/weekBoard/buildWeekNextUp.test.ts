@@ -26,6 +26,26 @@ describe("buildWeekNextUp", () => {
     ).toMatchObject({ action: "open_progress", actionLabel: "View review" });
   });
 
+  it("offers a one-click skip for a completely empty past week", () => {
+    expect(
+      buildWeekNextUp(
+        makeWeek({
+          weekStartDate: "2026-06-29",
+          weekEndDate: "2026-07-05",
+          plannedMileage: 0,
+          actualMileage: 0,
+          purpose: "",
+          targetMileage: null
+        }),
+        "2026-07-09"
+      )
+    ).toMatchObject({
+      action: "skip_review",
+      actionLabel: "Nothing to review — skip",
+      eyebrow: "Nothing to review"
+    });
+  });
+
   it("prompts an empty future week to be planned", () => {
     expect(
       buildWeekNextUp(

@@ -7,6 +7,7 @@ export function WeekNextUpCard({
   onOpenPlan,
   onOpenPlanWeek,
   onOpenProgress,
+  onSkipReview,
   today,
   week
 }: {
@@ -14,6 +15,7 @@ export function WeekNextUpCard({
   onOpenPlan: () => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onOpenProgress: () => void;
+  onSkipReview: (weekId: string) => void;
   today: string;
   week: TrainingWeek;
 }) {
@@ -39,6 +41,10 @@ export function WeekNextUpCard({
     }
     if (viewModel.action === "open_progress") {
       onOpenProgress();
+      return;
+    }
+    if (viewModel.action === "skip_review") {
+      onSkipReview(week.id);
       return;
     }
     onOpenPlanWeek(week);

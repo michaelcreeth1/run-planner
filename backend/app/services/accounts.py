@@ -5,10 +5,28 @@ import os
 from collections.abc import Iterable
 
 from fastapi import HTTPException, status
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models import (
+    GoalRace,
+    Mesocycle,
+    PlannedWorkout,
+    PlannedWorkoutStep,
+    RecurringGoal,
+    StravaActivity,
+    StravaOAuthToken,
+    StravaWebhookEvent,
+    SyncJob,
+    TrainingPlan,
+    TrainingWeek,
+    WeekGoal,
+    WeeklyMetricSnapshot,
+    WorkoutTemplate,
+)
 from app.models.planning import AthleteAccount, UserAccount
 from app.services import planning
 
@@ -156,6 +174,64 @@ def create_profile(
         db.commit()
         db.refresh(profile)
     return profile
+
+
+def update_profile(
+    db: Session,
+    owner_user_id: str,
+    profile_id: str,
+    *,
+    display_name: str | None = None,
+    timezone: str | None = None,
+) -> AthleteAccount:
+    profile = require_owned_profile(db, owner_user_id, profile_id)
+    if display_name is not None:
+        profile.display_name = display_name.strip() or "Runner"
+    if timezone is not None:
+        profile.timezone = timezone.strip() or "America/Denver"
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+def delete_profile(db: Session, owner_user_id: str, profile_id: str) -> None:
+    profile = require_owned_profile(db, owner_user_id, profile_id)
+    if len(profiles_for_user(db, owner_user_id)) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account must keep at least one profile.",
+        )
+
+    workout_ids = select(PlannedWorkout.id).where(
+        PlannedWorkout.athlete_account_id == profile.id
+    )
+    db.execute(
+        sql_delete(PlannedWorkoutStep).where(
+            PlannedWorkoutStep.planned_workout_id.in_(workout_ids)
+        )
+    )
+    for model in (
+        WeeklyMetricSnapshot,
+        WeekGoal,
+        PlannedWorkout,
+        TrainingWeek,
+        RecurringGoal,
+        Mesocycle,
+        TrainingPlan,
+        GoalRace,
+        WorkoutTemplate,
+        StravaOAuthToken,
+        StravaActivity,
+        SyncJob,
+    ):
+        db.execute(sql_delete(model).where(model.athlete_account_id == profile.id))
+    db.execute(
+        sql_update(StravaWebhookEvent)
+        .where(StravaWebhookEvent.athlete_account_id == profile.id)
+        .values(athlete_account_id=None)
+    )
+    db.delete(profile)
+    db.commit()
 
 
 def profiles_for_user(db: Session, user_id: str) -> list[AthleteAccount]:
