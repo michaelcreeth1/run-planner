@@ -36,7 +36,7 @@ export function WeekChecksCard({
 
   const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
   const pendingCount = evaluations.filter((evaluation) => evaluation.status === "pending").length;
-  const attentionEvaluations = evaluations.filter((evaluation) => visibleStatuses.has(evaluation.status));
+  const visibleEvaluations = selectVisibleWeekChecks(evaluations);
   const [isOpen, setIsOpen] = useState(issueCount > 0);
 
   // Start each selected week in its useful default state: open for exceptions, closed for a clean slate.
@@ -69,26 +69,29 @@ export function WeekChecksCard({
           <ChevronDown aria-hidden="true" size={16} />
         </span>
       </summary>
-      {attentionEvaluations.length ? (
-        <ul className="week-checks-list">
-          {attentionEvaluations.map((evaluation) => (
-            <WeekCheckRow
-              key={evaluation.ruleId}
-              evaluation={evaluation}
-              onOpen={() => {
-                const workout = firstRelatedWorkout(evaluation, week);
-                if (workout) {
-                  onEditWorkout(workout);
-                } else {
-                  onOpenPlanWeek(week);
-                }
-              }}
-            />
-          ))}
-        </ul>
-      ) : null}
+      <ul className="week-checks-list">
+        {visibleEvaluations.map((evaluation) => (
+          <WeekCheckRow
+            key={evaluation.ruleId}
+            evaluation={evaluation}
+            onOpen={() => {
+              const workout = firstRelatedWorkout(evaluation, week);
+              if (workout) {
+                onEditWorkout(workout);
+              } else {
+                onOpenPlanWeek(week);
+              }
+            }}
+          />
+        ))}
+      </ul>
     </details>
   );
+}
+
+export function selectVisibleWeekChecks(evaluations: RuleEvaluation[]) {
+  const attentionEvaluations = evaluations.filter((evaluation) => visibleStatuses.has(evaluation.status));
+  return attentionEvaluations.length ? attentionEvaluations : evaluations;
 }
 
 export function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {
