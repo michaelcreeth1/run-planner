@@ -28,6 +28,8 @@ describe("WeekView workout completion", () => {
       </QueryClientProvider>
     );
 
+    expect(screen.getByRole("button", { name: "Edit current week" })).toBeVisible();
+
     await user.click(screen.getByRole("button", { name: "Mark Untracked strength session complete" }));
 
     expect(onSetCompletion).toHaveBeenCalledWith(workout, true);
@@ -88,6 +90,77 @@ describe("WeekView workout completion", () => {
     expect(preview?.getAttribute("aria-label")).toContain("Mon —");
     expect(preview?.getAttribute("aria-label")).toContain("Not planned yet");
     expect(preview?.getAttribute("aria-label")).not.toContain("rest");
+  });
+
+  it("shows the plan target and phase on an unplanned future week row", () => {
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    const selectedWeek = makeWeek(makeWorkout());
+    const futureWeek: TrainingWeek = {
+      ...selectedWeek,
+      id: "week-future",
+      weekStartDate: "2026-07-20",
+      weekEndDate: "2026-07-26",
+      plannedTime: null,
+      targetMileage: 28,
+      targetMileageSource: "plan",
+      workouts: [],
+      weekState: "future"
+    };
+    const props = makeProps(selectedWeek, vi.fn());
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView
+            {...props}
+            activePlan={{
+              weekSummaries: [{
+                weekStartDate: futureWeek.weekStartDate,
+                mesocycleName: "Base",
+                weekIndexInMesocycle: 1,
+                targetMileage: 28
+              }]
+            } as ComponentProps<typeof WeekView>["activePlan"]}
+            weekStack={{
+              [selectedWeek.weekStartDate]: selectedWeek,
+              [futureWeek.weekStartDate]: futureWeek
+            }}
+            weekStarts={[selectedWeek.weekStartDate, futureWeek.weekStartDate]}
+          />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText("Not planned yet · target 28 mi · Base W1")).toBeVisible();
+  });
+
+  it("keeps historical day cards read-only", () => {
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    const pastWeek = {
+      ...makeWeek(makeWorkout()),
+      weekStartDate: "2026-07-06",
+      weekEndDate: "2026-07-12",
+      weekState: "past" as const
+    };
+    const props = makeProps(pastWeek, vi.fn());
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...props} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.queryByRole("button", { name: "Edit Untracked strength session" })).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Edit workout")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Duplicate workout")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delete workout")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add session")).not.toBeInTheDocument();
   });
 });
 

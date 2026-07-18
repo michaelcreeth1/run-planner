@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
@@ -185,6 +185,7 @@ export function WeekView({
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
+            activePlan={activePlan}
             key={start}
             isExpanded={start === selectedWeekStart}
             isLoading={isLoading && start === selectedWeekStart}
@@ -222,6 +223,7 @@ export function WeekView({
 }
 
 function WeekRow({
+  activePlan,
   contextState,
   isExpanded,
   isLoading,
@@ -243,6 +245,7 @@ function WeekRow({
   week,
   weekStart
 }: {
+  activePlan: TrainingPlan | null;
   contextState: "active" | "onboarding" | "loading";
   isExpanded: boolean;
   isLoading: boolean;
@@ -311,6 +314,7 @@ function WeekRow({
           />
         ) : (
           <CollapsedWeekCard
+            activePlan={activePlan}
             onSelectWeek={onSelectWeek}
             previousWeek={previousWeek}
             tone={tone}
@@ -326,12 +330,14 @@ function WeekRow({
 type CollapsedWeekTone = "past" | "current" | "future";
 
 function CollapsedWeekCard({
+  activePlan,
   onSelectWeek,
   previousWeek,
   tone,
   week,
   weekStart
 }: {
+  activePlan: TrainingPlan | null;
   onSelectWeek: (weekStart: string) => void;
   previousWeek?: TrainingWeek;
   tone: CollapsedWeekTone;
@@ -339,7 +345,7 @@ function CollapsedWeekCard({
   weekStart: string;
 }) {
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
-  const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
+  const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone, activePlan);
   const mileageTrend = getCollapsedMileageTrend(week, previousWeek);
   const detail = formatCollapsedWeekDetail(week);
   const dayBadges = collapsedWeekDayBadges(week, weekStart);
@@ -528,6 +534,7 @@ function WeekSlate({
           onEdit={onEdit}
           onSetCompletion={onSetCompletion}
           today={today}
+          readOnly={week.weekState === "past"}
           workouts={workouts}
         />
       ) : null}
@@ -543,6 +550,7 @@ function WeekSchedule({
   onDuplicate,
   onEdit,
   onSetCompletion,
+  readOnly,
   today,
   workouts
 }: {
@@ -553,6 +561,7 @@ function WeekSchedule({
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
   onSetCompletion: (workout: Workout, completed: boolean) => void;
+  readOnly: boolean;
   today: string;
   workouts: Workout[];
 }) {
@@ -588,9 +597,6 @@ function WeekSchedule({
                   <span>{isToday ? "Today" : formatWeekdayShort(dateValue)}</span>
                   <strong>{formatDayNumber(dateValue)}</strong>
                 </div>
-                <button type="button" title="Add workout" onClick={() => onCreate(dateValue)}>
-                  <Plus size={15} />
-                </button>
               </header>
               <div className="workout-stack">
                 {entries.map((entry) =>
@@ -606,13 +612,14 @@ function WeekSchedule({
                       onDuplicate={onDuplicate}
                       onEdit={onEdit}
                       onSetCompletion={onSetCompletion}
+                      readOnly={readOnly}
                     />
                   )
                 )}
                 {isEmpty && dateValue < today ? (
                   <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
-                {isEmpty && dateValue >= today ? (
+                {isEmpty && dateValue >= today && !readOnly ? (
                   <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
                     Add session
                   </button>
@@ -797,7 +804,8 @@ function WorkoutItem({
   onEdit,
   onSetCompletion,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  readOnly
 }: {
   workout: Workout;
   actual: ActualActivity | null;
@@ -806,11 +814,12 @@ function WorkoutItem({
   onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  readOnly: boolean;
 }) {
   const state = workoutState(workout, actual, today);
   const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
   const isManuallyCompleted = !actual && workout.status === "completed_as_planned";
-  const canSetCompletion = !actual && !isRest && (isManuallyCompleted || state !== "done");
+  const canSetCompletion = !readOnly && !actual && !isRest && (isManuallyCompleted || state !== "done");
   const plannedMeta = formatWorkoutMeta(workout);
   const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
 
@@ -844,25 +853,34 @@ function WorkoutItem({
   const detail = detailPieces.join(" · ");
 
   const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
+  const primaryContent = (
+    <>
+      <span className="workout-title-row">
+        <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
+        <strong>{workout.title}</strong>
+      </span>
+      <span className={`workout-status-line workout-status-line--${state}`}>
+        {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+        <span>{statusLine}</span>
+      </span>
+      {detail ? <small>{detail}</small> : null}
+    </>
+  );
 
   return (
-    <div className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
-      <button
-        type="button"
-        className="workout-primary-action"
-        aria-label={`Edit ${workout.title}`}
-        onClick={() => onEdit(workout)}
-      >
-        <span className="workout-title-row">
-          <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
-          <strong>{workout.title}</strong>
-        </span>
-        <span className={`workout-status-line workout-status-line--${state}`}>
-          {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
-          <span>{statusLine}</span>
-        </span>
-        {detail ? <small>{detail}</small> : null}
-      </button>
+    <div className={`workout-item workout-item--${state}${readOnly ? " workout-item--read-only" : ""} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
+      {readOnly ? (
+        <div className="workout-primary-action">{primaryContent}</div>
+      ) : (
+        <button
+          type="button"
+          className="workout-primary-action"
+          aria-label={`Edit ${workout.title}`}
+          onClick={() => onEdit(workout)}
+        >
+          {primaryContent}
+        </button>
+      )}
       {canSetCompletion ? (
         <button
           type="button"
@@ -875,22 +893,28 @@ function WorkoutItem({
           <Check size={14} strokeWidth={2.75} aria-hidden="true" />
         </button>
       ) : null}
-      <div className="workout-controls">
-        {actual ? (
-          <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
-            <ExternalLink size={15} />
-          </button>
-        ) : null}
-        <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
-          <Edit3 size={15} />
-        </button>
-        <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
-          <Copy size={15} />
-        </button>
-        <button type="button" title="Delete workout" onClick={() => onDelete(workout)}>
-          <Trash2 size={15} />
-        </button>
-      </div>
+      {actual || !readOnly ? (
+        <div className="workout-controls">
+          {actual ? (
+            <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
+              <ExternalLink size={15} />
+            </button>
+          ) : null}
+          {!readOnly ? (
+            <>
+              <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
+                <Edit3 size={15} />
+              </button>
+              <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
+                <Copy size={15} />
+              </button>
+              <button type="button" title="Delete workout" onClick={() => onDelete(workout)}>
+                <Trash2 size={15} />
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -977,7 +1001,12 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
   });
 }
 
-function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: CollapsedWeekTone) {
+function formatCollapsedMileageSummary(
+  week: TrainingWeek | undefined,
+  weekStart: string,
+  tone: CollapsedWeekTone,
+  activePlan: TrainingPlan | null
+) {
   if (!week) {
     return "loading";
   }
@@ -998,7 +1027,13 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
     return `${formatNumber(planned)} mi planned`;
   }
 
-  return "Not planned yet";
+  const target = week.targetMileage ?? activePlan?.weekSummaries.find((summary) => summary.weekStartDate === weekStart)?.targetMileage;
+  const planWeek = activePlan?.weekSummaries.find((summary) => summary.weekStartDate === weekStart);
+  const targetLabel = target !== null && target !== undefined ? ` · target ${formatNumber(target)} mi` : "";
+  const phaseLabel = planWeek?.mesocycleName && planWeek.weekIndexInMesocycle
+    ? ` · ${planWeek.mesocycleName} W${planWeek.weekIndexInMesocycle}`
+    : "";
+  return `Not planned yet${targetLabel}${phaseLabel}`;
 }
 
 function formatCollapsedWeekDetail(week: TrainingWeek | undefined) {

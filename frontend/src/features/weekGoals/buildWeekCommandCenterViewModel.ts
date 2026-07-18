@@ -351,7 +351,10 @@ function buildCompactStats(
     return [
       {
         label: "Mileage",
-        value: mileage?.primaryValue ?? `${formatNumber(week.plannedMileage)} mi planned`,
+        value:
+          week.targetMileage !== null
+            ? `${formatNumber(week.plannedMileage)} / ${formatNumber(week.targetMileage)} mi planned`
+            : mileage?.primaryValue ?? `${formatNumber(week.plannedMileage)} mi planned`,
         severity: mileage?.severity
       },
       {
@@ -576,7 +579,28 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 }
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
-  if (mode !== "review" || isUnplannedWeek(week)) {
+  if (mode === "execution") {
+    return [
+      { id: "edit_plan", label: "Edit current week", variant: "primary", icon: "calendar" }
+    ];
+  }
+
+  if (mode === "planning") {
+    const hasScheduledPlan =
+      week.workouts.length > 0 ||
+      week.goals.length > 0 ||
+      week.notes.trim().length > 0;
+    return [
+      {
+        id: hasScheduledPlan ? "edit_plan" : "plan_week",
+        label: hasScheduledPlan ? "Edit upcoming week" : "Plan upcoming week",
+        variant: "primary",
+        icon: "calendar"
+      }
+    ];
+  }
+
+  if (isUnplannedWeek(week)) {
     return [];
   }
 
@@ -610,7 +634,10 @@ function primaryValueForGoal(
 
   if (goal.category === "mileage") {
     if (mode === "planning") {
-      return `${formatNumber(planned || week.plannedMileage)} mi planned`;
+      const plannedMileage = planned || week.plannedMileage;
+      return week.targetMileage !== null
+        ? `${formatNumber(plannedMileage)} / ${formatNumber(week.targetMileage)} mi planned`
+        : `${formatNumber(plannedMileage)} mi planned`;
     }
     return `${formatNumber(mode === "review" ? completedMileage(week) : actual)} / ${formatNumber(target || week.plannedMileage)} mi`;
   }

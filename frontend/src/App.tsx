@@ -29,7 +29,8 @@ import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
 import { WorkoutEditor } from "./features/workouts/WorkoutEditor";
 import type { TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
-import { fetchJson } from "./lib/api";
+import { fetchJson, toApiErrorPresentation } from "./lib/api";
+import type { ApiErrorPresentation } from "./lib/api";
 import { addDays, parseDate, startOfWeek, todayDateString } from "./lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "./lib/forms";
 import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
@@ -93,7 +94,7 @@ function AppShell() {
   }, [theme]);
 
   const [apiVersion, setApiVersion] = useState<ApiVersion | null>(null);
-  const [apiError, setApiError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorPresentation | null>(null);
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [loginForm, setLoginForm] = useState<LoginForm>({ username: "", password: "" });
@@ -190,7 +191,7 @@ function AppShell() {
         }));
         setApiError(null);
       })
-      .catch((error: Error) => setApiError(error.message))
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load training weeks.")))
       .finally(() => {
         setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
       });
@@ -207,7 +208,7 @@ function AppShell() {
         setAnalyticsPlanning(body);
         setApiError(null);
       })
-      .catch((error: Error) => setApiError(error.message))
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load progress.")))
       .finally(() => setAnalyticsLoading(false));
   }, [analyticsFutureWeeks, analyticsLookbackWeeks]);
 
@@ -223,8 +224,8 @@ function AppShell() {
         setApiVersion(body);
         setApiError(null);
       })
-      .catch((error: Error) => {
-        setApiError(error.message);
+      .catch((error: unknown) => {
+        setApiError(toApiErrorPresentation(error, "Could not check app compatibility."));
       });
   }, []);
 
@@ -326,8 +327,8 @@ function AppShell() {
         setSession(body);
         setLoginError(null);
       })
-      .catch((error: Error) => {
-        setApiError(error.message);
+      .catch((error: unknown) => {
+        setApiError(toApiErrorPresentation(error, "Could not load your session."));
       })
       .finally(() => setSessionLoading(false));
   }
@@ -356,7 +357,7 @@ function AppShell() {
       setSession(body);
       clearAppData();
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Logout failed.");
+      setApiError(toApiErrorPresentation(error, "Could not log out."));
     }
   }
 
@@ -373,7 +374,7 @@ function AppShell() {
       setSession(body);
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Profile switch failed.");
+      setApiError(toApiErrorPresentation(error, "Could not switch profiles."));
     } finally {
       setIsSwitchingProfile(false);
     }
@@ -382,7 +383,7 @@ function AppShell() {
   function refreshSession() {
     fetchJson<SessionStatus>("/api/auth/session/status")
       .then(setSession)
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not refresh your session.")));
   }
 
   function refreshVisibleWeeks() {
@@ -532,7 +533,7 @@ function AppShell() {
     if (!staleFrontend) {
       return false;
     }
-    setApiError(`Reload required before ${action}.`);
+    setApiError({ kind: "response", title: "Action unavailable", detail: `Reload required before ${action}.` });
     return true;
   }
 
@@ -541,7 +542,11 @@ function AppShell() {
       return;
     }
     if (draft.weekState === "past") {
-      setApiError("Past weeks can only be completed through the read-only review flow.");
+      setApiError({
+        kind: "response",
+        title: "Past week is read-only",
+        detail: "Past weeks can only be completed through the review flow."
+      });
       return;
     }
     setIsSavingPlanWeek(true);
@@ -559,7 +564,7 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Could not save the week plan.");
+      setApiError(toApiErrorPresentation(error, "Could not save the week plan."));
     } finally {
       setIsSavingPlanWeek(false);
     }
@@ -589,7 +594,7 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Could not complete the week review.");
+      setApiError(toApiErrorPresentation(error, "Could not complete the week review."));
     } finally {
       setIsSavingPlanWeek(false);
     }
@@ -708,7 +713,7 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Could not update workout completion.");
+      setApiError(toApiErrorPresentation(error, "Could not update workout completion."));
     }
   }
 
@@ -734,7 +739,7 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Could not copy the prior week.");
+      setApiError(toApiErrorPresentation(error, "Could not copy the prior week."));
     } finally {
       setCopyingPriorWeekId(null);
     }
@@ -756,7 +761,7 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Could not refresh weekly goals.");
+      setApiError(toApiErrorPresentation(error, "Could not refresh weekly goals."));
     }
   }
 
@@ -766,19 +771,19 @@ function AppShell() {
         setTimelineSummary(body);
         setApiError(null);
       })
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load the training timeline.")));
   }
 
   function loadStravaStatus() {
     fetchJson<StravaStatus>("/api/auth/strava/status")
       .then(setStravaStatus)
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load Strava status.")));
   }
 
   function loadActivities() {
     fetchJson<StravaActivity[]>("/api/activities")
       .then(setActivities)
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load activities.")));
   }
 
   async function runBackfill() {
@@ -796,7 +801,7 @@ function AppShell() {
       loadStravaStatus();
       loadTrainingTimeline();
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Strava sync failed.");
+      setApiError(toApiErrorPresentation(error, "Could not sync Strava."));
     } finally {
       setIsSyncing(false);
     }
@@ -880,7 +885,12 @@ function AppShell() {
             onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
           />
           {apiError ? (
-            <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
+            <StatusBanner
+              tone="warning"
+              icon={apiError.kind === "network" ? <WifiOff size={18} /> : <ShieldAlert size={18} />}
+              title={apiError.title}
+              detail={apiError.detail}
+            />
           ) : null}
           {staleFrontend ? (
             <StatusBanner

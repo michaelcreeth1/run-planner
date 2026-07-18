@@ -219,6 +219,7 @@ export type AnalyticsWeekSummary = {
   weekEndDate: string;
   weekState: WeekState;
   plannedMileage: number;
+  targetMileage: number | null;
   actualMileage: number;
   comparisonMileage: number;
   hardDays: number;

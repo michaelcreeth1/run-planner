@@ -43,6 +43,7 @@ def planning_analytics(
             workouts_by_week.get(week_start, []),
             activities_by_week.get(week_start, []),
             today,
+            weeks_by_start.get(week_start),
         )
         for week_start in week_starts
     ]
@@ -129,6 +130,7 @@ def summarize_week(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     today: date,
+    metadata_week: TrainingWeek | None = None,
 ) -> dict:
     week_end = planning.week_end_for(week_start)
     week_state = (
@@ -153,6 +155,7 @@ def summarize_week(
         "week_end_date": week_end,
         "week_state": week_state,
         "planned_mileage": planned_mileage,
+        "target_mileage": metadata_week.target_mileage if metadata_week else None,
         "actual_mileage": actual_mileage,
         "comparison_mileage": comparison_mileage,
         "hard_days": int(hard_days.planned),

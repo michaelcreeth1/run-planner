@@ -2,6 +2,7 @@ import { RefreshCw, ShieldAlert, UserCircle, WifiOff } from "lucide-react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import type { LoginForm } from "../types/domain";
 import { StatusBanner } from "./shared/StatusBanner";
+import type { ApiErrorPresentation } from "../lib/api";
 
 export function LoginView({
   apiError,
@@ -12,7 +13,7 @@ export function LoginView({
   setForm,
   onSubmit
 }: {
-  apiError: string | null;
+  apiError: ApiErrorPresentation | null;
   form: LoginForm;
   isConfigured: boolean;
   isLoggingIn: boolean;
@@ -36,7 +37,7 @@ export function LoginView({
           />
         ) : null}
         {apiError ? (
-          <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
+          <StatusBanner tone="warning" icon={<WifiOff size={18} />} title={apiError.title} detail={apiError.detail} />
         ) : null}
         {loginError ? (
           <StatusBanner tone="danger" icon={<ShieldAlert size={18} />} title="Login failed" detail={loginError} />

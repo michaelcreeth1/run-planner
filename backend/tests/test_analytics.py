@@ -158,6 +158,36 @@ def test_analytics_anchor_uses_athlete_timezone(monkeypatch: pytest.MonkeyPatch)
         db.close()
 
 
+def test_analytics_surfaces_week_mileage_targets() -> None:
+    db = make_session()
+    try:
+        athlete = planning.ensure_default_athlete(db)
+        anchor = date(2026, 6, 29)
+        week = TrainingWeek(
+            athlete_account_id=athlete.id,
+            week_start_date=anchor,
+            week_end_date=anchor + timedelta(days=6),
+            target_mileage=28,
+            target_mileage_source="plan",
+        )
+        db.add(week)
+        db.commit()
+
+        body = analytics.planning_analytics(
+            db,
+            athlete.id,
+            lookback_weeks=1,
+            future_weeks=1,
+            anchor_week_start_date=anchor,
+        )
+
+        current = next(summary for summary in body["weeks"] if summary["week_start_date"] == anchor)
+        assert current["planned_mileage"] == 0
+        assert current["target_mileage"] == 28
+    finally:
+        db.close()
+
+
 def test_analytics_flags_hard_day_spacing_and_no_rest() -> None:
     db = make_session()
     try:

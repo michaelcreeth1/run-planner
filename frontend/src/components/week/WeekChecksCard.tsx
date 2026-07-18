@@ -91,31 +91,42 @@ export function WeekChecksCard({
   );
 }
 
-function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {
+export function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {
   const needsAttention = attentionStatuses.has(evaluation.status);
   const detail = evaluation.metrics ? `${evaluation.reason} ${evaluation.metrics}` : evaluation.reason;
-
-  return (
-    <li className={`week-check-row week-check-row--${evaluation.status}`}>
+  const contents = (
+    <>
       <span className="week-check-dot" aria-hidden="true" />
-      <div className="week-check-copy">
+      <span className="week-check-copy">
         <strong>{evaluation.ruleLabel}</strong>
         <span title={detail}>{evaluation.reason}</span>
-      </div>
+      </span>
       <span className={`week-check-status week-check-status--${evaluation.status}`}>
         {ruleStatusLabels[evaluation.status]}
       </span>
       {needsAttention ? (
+        <span className="week-check-action" aria-hidden="true">
+          Fix <ChevronRight size={15} />
+        </span>
+      ) : null}
+    </>
+  );
+
+  return (
+    <li className={`week-check-row week-check-row--${evaluation.status}`}>
+      {needsAttention ? (
         <button
           type="button"
-          className="week-check-action"
+          className="week-check-row-action"
           title={`Fix "${evaluation.ruleLabel}"`}
           aria-label={`Fix "${evaluation.ruleLabel}" in this week`}
           onClick={onOpen}
         >
-          <ChevronRight size={15} />
+          {contents}
         </button>
-      ) : null}
+      ) : (
+        <span className="week-check-row-content">{contents}</span>
+      )}
     </li>
   );
 }

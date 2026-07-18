@@ -34,6 +34,7 @@ describe("buildWeekCommandCenterViewModel", () => {
     });
 
     expect(viewModel.narrative).toBe("Keep this easy after travel.");
+    expect(viewModel.compactStats?.find((stat) => stat.label === "Mileage")?.value).toBe("0 / 42 mi planned");
   });
 
   it("uses plain week-state language and never derives a conflicting purpose", () => {
@@ -50,7 +51,9 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(viewModel.modeLabel).toBe("This week");
     expect(viewModel.purposeTag).toBe("Purpose not set");
     expect(viewModel.purposeTag).not.toBe("Recovery");
-    expect(viewModel.actionButtons).toEqual([]);
+    expect(viewModel.actionButtons).toEqual([
+      { id: "edit_plan", label: "Edit current week", variant: "primary", icon: "calendar" }
+    ]);
   });
 
   it("treats an empty historical week as unplanned rather than completed rest", () => {
@@ -94,6 +97,29 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(current.compactStats?.find((stat) => stat.label === "Mileage")?.detail).toBe("5 mi completed");
     expect(current.compactStats?.find((stat) => stat.label === "Long run")?.detail).toContain("Completed:");
     expect(reviewed.modeLabel).toBe("Reviewed");
+  });
+
+  it("offers planning for target-only upcoming weeks and editing once sessions exist", () => {
+    const targetOnly = buildWeekCommandCenterViewModel({
+      today: "2026-07-05",
+      week: makeWeek({ targetMileage: 28, targetMileageSource: "plan" })
+    });
+    const scheduled = buildWeekCommandCenterViewModel({
+      today: "2026-07-05",
+      week: makeWeek({
+        plannedMileage: 5,
+        targetMileage: 28,
+        targetMileageSource: "plan",
+        workouts: [makeWorkout({ plannedDate: "2026-07-13", plannedDistance: 5 })]
+      })
+    });
+
+    expect(targetOnly.actionButtons).toEqual([
+      { id: "plan_week", label: "Plan upcoming week", variant: "primary", icon: "calendar" }
+    ]);
+    expect(scheduled.actionButtons).toEqual([
+      { id: "edit_plan", label: "Edit upcoming week", variant: "primary", icon: "calendar" }
+    ]);
   });
 });
 

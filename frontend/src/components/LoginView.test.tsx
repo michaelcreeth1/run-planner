@@ -58,7 +58,7 @@ describe("LoginView", () => {
   it("shows backend and credential failures", () => {
     render(
       <LoginView
-        apiError="Failed to fetch"
+        apiError={{ kind: "network", title: "Backend unreachable", detail: "Failed to fetch" }}
         form={{ username: "", password: "" }}
         isConfigured
         isLoggingIn={false}
