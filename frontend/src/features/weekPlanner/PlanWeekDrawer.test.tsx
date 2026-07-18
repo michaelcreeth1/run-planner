@@ -28,6 +28,25 @@ function PlannerHarness({
 }
 
 describe("PlanWeekDrawer", () => {
+  it("matches its title to unplanned and already-planned current weeks", () => {
+    const draft = { ...mismatchedDraft(), weekState: "current" as const, hasExistingPlan: false };
+    const props = {
+      isSaving: false,
+      onClose: vi.fn(),
+      onCompleteReview: vi.fn(),
+      onSave: vi.fn(),
+      setDraft: vi.fn(),
+      weekStack: {}
+    };
+    const { rerender } = render(<PlanWeekDrawer {...props} draft={draft} />);
+
+    expect(screen.getByRole("heading", { name: "Plan week" })).toBeVisible();
+
+    rerender(<PlanWeekDrawer {...props} draft={{ ...draft, hasExistingPlan: true }} />);
+
+    expect(screen.getByRole("heading", { name: "Adjust rest of week" })).toBeVisible();
+  });
+
   it("allows a plan to be saved when its schedule does not meet its goals", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
@@ -36,7 +55,7 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByText("2 checks pending")).toBeInTheDocument();
     expect(screen.getByText("1 needs attention")).toBeInTheDocument();
     expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
-    expect(screen.getByText(/goals are advisory and never prevent you from saving/i)).toBeInTheDocument();
+    expect(screen.queryByText(/goals are advisory and never prevent you from saving/i)).not.toBeInTheDocument();
 
     const saveButton = screen.getByRole("button", { name: "Save plan" });
     expect(saveButton).toBeEnabled();

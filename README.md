@@ -99,7 +99,9 @@ docker compose up --build
 ```
 
 The API is available at `http://localhost:8000`; the frontend is available at `http://localhost:5173`.
-The compose stack expects `DATABASE_URL` to point at the shared Postgres instance.
+The compose stack expects `DATABASE_URL` to point at the shared Postgres instance. API,
+worker, and frontend containers use `unless-stopped` restart policies and must all pass their
+health checks for a normal deployment to succeed.
 
 ## Deployment
 
@@ -117,9 +119,28 @@ remote bundle untouched. `--dry-run` only previews the archive and does not run
 the verification gate. Local databases, coverage reports, development-only env
 files, and editor/agent configuration are excluded from the remote archive.
 
+The remote sync builds a complete staged bundle beside the current release and
+swaps it into place only after bundle validation. Existing targets must carry
+the Run Planner deployment sentinel (legacy bundles are recognized by their app
+structure), which prevents a mistyped path from replacing an unrelated tree.
+The prior release is retained until the remote deployment succeeds, including
+all health checks in normal mode; a failed deployment restores and redeploys
+that release automatically. This restores application source and containers; it
+does not reverse database migrations that may already have run, so migrations
+must remain backward-compatible with the prior release. Existing app-local
+`data`, `backend/data`, and `backups` directories are copied into the
+staged release without nesting them. The shared production Postgres project
+remains external to this bundle. The synced `.env` is installed with mode
+`0600`.
+
 Remote deploy refuses local-only database URLs such as `localhost` or `127.0.0.1`;
 the local `.env` must use the same Docker-network or remote-reachable database host
-that the deployed containers will use.
+that the deployed containers will use. It also requires `APP_ENV=production` by
+default. For an intentional remote development deployment, opt in explicitly:
+
+```sh
+scripts/deploy-remote.sh --allow-development
+```
 
 Preview the sync without changing the server:
 
@@ -153,8 +174,10 @@ scripts/deploy.sh
 ```
 
 The script validates the env file, requires production-safe cookie settings when
-`APP_ENV=production`, runs `docker compose up -d --build`, and waits for the API
-health check before returning.
+`APP_ENV=production`, runs `docker compose up -d --build`, and waits for API,
+worker, and frontend health checks before returning. The worker health check
+requires both an independently refreshed process heartbeat and a ready database
+connection, so a valid long-running sync does not appear stalled.
 
 `APP_USERNAME` and `APP_PASSWORD` bootstrap the first admin account when the database has
 no users. After that, users and athlete profiles are managed in the app, and each request

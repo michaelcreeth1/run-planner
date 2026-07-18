@@ -68,3 +68,12 @@ def run_migrations(target_engine: Engine = engine) -> None:
                 text("INSERT INTO schema_migrations (version) VALUES (:version)"),
                 {"version": version},
             )
+
+
+def applied_schema_version(target_engine: Engine = engine) -> str:
+    """Return the migration version actually applied to the target database."""
+    with target_engine.connect() as connection:
+        version = connection.execute(
+            text("SELECT MAX(version) FROM schema_migrations")
+        ).scalar_one_or_none()
+    return version or "unmigrated"

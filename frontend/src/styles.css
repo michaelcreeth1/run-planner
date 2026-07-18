@@ -631,6 +631,11 @@ h1 {
   margin-top: 2px;
 }
 
+.status-banner-action {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .mileage-trend {
   align-items: center;
   border: 1px solid transparent;

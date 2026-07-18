@@ -6,11 +6,23 @@ import { defaultForm } from "../../lib/forms";
 import type { WorkoutForm } from "../../types/domain";
 import { WorkoutEditor } from "./WorkoutEditor";
 
-function EditorHarness({ onSave, onClose }: { onSave: (form: WorkoutForm) => void; onClose: () => void }) {
+function EditorHarness({
+  error = null,
+  isSaving = false,
+  onSave,
+  onClose
+}: {
+  error?: string | null;
+  isSaving?: boolean;
+  onSave: (form: WorkoutForm) => void;
+  onClose: () => void;
+}) {
   const [editor, setEditor] = useState(() => defaultForm("2026-07-13"));
   return (
     <WorkoutEditor
       editor={editor}
+      error={error}
+      isSaving={isSaving}
       setEditor={setEditor}
       onClose={onClose}
       onSubmit={(event) => {
@@ -118,5 +130,20 @@ describe("WorkoutEditor", () => {
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("disables and relabels submit while saving and shows a save failure", () => {
+    render(
+      <EditorHarness
+        error="Workout save failed."
+        isSaving
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    expect(screen.getByTitle("Close")).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Workout save failed.");
   });
 });

@@ -52,7 +52,19 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(viewModel.purposeTag).toBe("Purpose not set");
     expect(viewModel.purposeTag).not.toBe("Recovery");
     expect(viewModel.actionButtons).toEqual([
-      { id: "edit_plan", label: "Edit current week", variant: "primary", icon: "calendar" }
+      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }
+    ]);
+  });
+
+  it("offers planning when the current week is actually unplanned", () => {
+    const viewModel = buildWeekCommandCenterViewModel({
+      today: "2026-07-15",
+      week: makeWeek({ weekState: "current" })
+    });
+
+    expect(viewModel.isUnplanned).toBe(true);
+    expect(viewModel.actionButtons).toEqual([
+      { id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }
     ]);
   });
 
@@ -115,10 +127,10 @@ describe("buildWeekCommandCenterViewModel", () => {
     });
 
     expect(targetOnly.actionButtons).toEqual([
-      { id: "plan_week", label: "Plan upcoming week", variant: "primary", icon: "calendar" }
+      { id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }
     ]);
     expect(scheduled.actionButtons).toEqual([
-      { id: "edit_plan", label: "Edit upcoming week", variant: "primary", icon: "calendar" }
+      { id: "edit_plan", label: "Edit plan", variant: "primary", icon: "calendar" }
     ]);
   });
 });

@@ -475,10 +475,6 @@ export function PlansView({
                 </span>
               </div>
             </div>
-            <p className="plan-form-hint">
-              Add goals that apply every week, such as strength training or rest days. They add to
-              the weekly mileage and long-run targets set by the phases above.
-            </p>
             <GoalListEditor
               addButtonLabel="Add recurring goal"
               drafts={planEditor.recurringGoals}
@@ -520,7 +516,7 @@ export function PlansView({
             <div>
               <p className="eyebrow">{selectedPlan.status.replaceAll("_", " ")}</p>
               <h2>{selectedPlan.name}</h2>
-              <p>{selectedPlan.description || "Long-range structure for week planning."}</p>
+              {selectedPlan.description ? <p>{selectedPlan.description}</p> : null}
             </div>
             <div className="plans-toolbar-actions">
               <button type="button" className="ghost-button" onClick={() => openEditPlan(selectedPlan)} disabled={writesBlocked}>
@@ -1009,11 +1005,11 @@ function MesocycleInspector({
         <header className="mesocycle-week-preview-header">
           <div>
             <strong>Generated weeks</strong>
-            <span>
-              {selectedPreviewWeeks.length > 0
-                ? `${selectedPreviewWeeks.length} ${selectedPreviewWeeks.length === 1 ? "week" : "weeks"} in this phase`
-                : "Exact targets from the current phase settings"}
-            </span>
+            {selectedPreviewWeeks.length > 0 ? (
+              <span>
+                {selectedPreviewWeeks.length} {selectedPreviewWeeks.length === 1 ? "week" : "weeks"} in this phase
+              </span>
+            ) : null}
           </div>
         </header>
         {previewError ? (

@@ -1,9 +1,14 @@
 from copy import deepcopy
 from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.db.session import SessionLocal
 from app.main import app
+from app.models.planning import GoalRace, TrainingPlan, TrainingWeek
+from app.services import planning
 
 
 def login(client: TestClient, username: str = "michael", password: str = "test-password") -> None:
@@ -339,6 +344,195 @@ def test_goal_race_update_persists_race_date_with_full_form_payload() -> None:
         assert listed.status_code == 200
         matching = next(race for race in listed.json() if race["id"] == goal_race_id)
         assert matching["raceDate"] == "2099-04-19"
+
+
+def test_past_plan_preview_is_allowed_but_create_persists_no_plan_or_weeks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        planning,
+        "today_for_timezone",
+        lambda _timezone_name, now=None: date(2100, 1, 1),
+    )
+    payload = make_plan_payload(
+        name="Historical preview only",
+        start_date="2099-03-02",
+        end_date="2099-03-29",
+    )
+    payload["goalRace"] = {
+        "name": "Historical inline race",
+        "raceDate": "2099-03-29",
+        "distance": "half_marathon",
+    }
+
+    with TestClient(app) as client:
+        login(client)
+
+        preview = client.post("/api/plans/preview", json=payload)
+        assert preview.status_code == 200
+        assert len(preview.json()["weeks"]) == 4
+
+        rejected = client.post("/api/plans", json=payload)
+        assert rejected.status_code == 409
+        assert rejected.json()["detail"] == planning.PAST_WEEK_READ_ONLY_DETAIL
+        assert client.get("/api/plans").json() == []
+
+    with SessionLocal() as db:
+        assert db.scalars(select(GoalRace)).all() == []
+        assert db.scalars(select(TrainingPlan)).all() == []
+        historical_weeks = db.scalars(
+            select(TrainingWeek).where(
+                TrainingWeek.week_start_date >= date(2099, 3, 2),
+                TrainingWeek.week_start_date <= date(2099, 3, 29),
+            )
+        ).all()
+        assert historical_weeks == []
+
+
+def test_past_plan_replace_race_move_and_delete_preserve_saved_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TestClient(app) as client:
+        login(client)
+        created_race = client.post(
+            "/api/goal-races",
+            json={
+                "name": "Protected Summer Half",
+                "raceDate": "2099-06-24",
+                "distance": "half_marathon",
+                "targetTime": 6000,
+                "priority": "A",
+            },
+        )
+        assert created_race.status_code == 201
+        race = created_race.json()
+        payload = make_plan_payload(
+            name="Protected build",
+            goal_race_id=race["id"],
+            start_date="2099-06-01",
+            end_date="2099-06-28",
+        )
+        created_plan = client.post("/api/plans", json=payload)
+        assert created_plan.status_code == 201
+        original_plan = created_plan.json()
+        first_week_start = original_plan["weekSummaries"][0]["weekStartDate"]
+        original_week = client.get(f"/api/weeks/{first_week_start}").json()
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda _timezone_name, now=None: date(2100, 1, 1),
+        )
+
+        replacement = deepcopy(payload)
+        replacement["name"] = "This name must not persist"
+        replacement["mesocycles"][0]["targetMileageStart"] = 40
+        preview = client.post(
+            f"/api/plans/{original_plan['id']}/preview",
+            json=replacement,
+        )
+        assert preview.status_code == 200
+
+        rejected_replace = client.put(
+            f"/api/plans/{original_plan['id']}",
+            json=replacement,
+        )
+        assert rejected_replace.status_code == 409
+        assert rejected_replace.json()["detail"] == planning.PAST_WEEK_READ_ONLY_DETAIL
+
+        rejected_race_move = client.patch(
+            f"/api/goal-races/{race['id']}",
+            json={"raceDate": "2099-07-08"},
+        )
+        assert rejected_race_move.status_code == 409
+        assert rejected_race_move.json()["detail"] == planning.PAST_WEEK_READ_ONLY_DETAIL
+
+        rejected_delete = client.delete(
+            f"/api/plans/{original_plan['id']}?clearScaffolding=true"
+        )
+        assert rejected_delete.status_code == 409
+        assert rejected_delete.json()["detail"] == planning.PAST_WEEK_READ_ONLY_DETAIL
+
+        reopened_plan = client.get(f"/api/plans/{original_plan['id']}")
+        assert reopened_plan.status_code == 200
+        saved_plan = reopened_plan.json()
+        assert saved_plan["name"] == original_plan["name"]
+        assert saved_plan["endDate"] == original_plan["endDate"]
+        assert [item["id"] for item in saved_plan["mesocycles"]] == [
+            item["id"] for item in original_plan["mesocycles"]
+        ]
+
+        saved_race = next(
+            item for item in client.get("/api/goal-races").json() if item["id"] == race["id"]
+        )
+        assert saved_race["raceDate"] == race["raceDate"]
+
+        saved_week = client.get(f"/api/weeks/{first_week_start}").json()
+        for field in (
+            "mesocycleId",
+            "purpose",
+            "purposeSource",
+            "targetMileage",
+            "targetMileageSource",
+            "targetLongRunDistance",
+            "targetLongRunSource",
+        ):
+            assert saved_week[field] == original_week[field]
+        assert [
+            (goal["id"], goal["label"], goal["source"]) for goal in saved_week["goals"]
+        ] == [
+            (goal["id"], goal["label"], goal["source"]) for goal in original_week["goals"]
+        ]
+
+    with SessionLocal() as db:
+        assert db.get(TrainingPlan, original_plan["id"]) is not None
+        added_extension_weeks = db.scalars(
+            select(TrainingWeek).where(
+                TrainingWeek.week_start_date.in_([date(2099, 6, 29), date(2099, 7, 6)])
+            )
+        ).all()
+        assert added_extension_weeks == []
+
+
+def test_race_and_plan_patches_reject_required_nulls_and_preserve_patch_semantics() -> None:
+    with TestClient(app) as client:
+        login(client)
+        created_race = client.post(
+            "/api/goal-races",
+            json={
+                "name": "Spring Half",
+                "raceDate": "2099-04-19",
+                "distance": "half_marathon",
+                "targetTime": 6000,
+            },
+        )
+        assert created_race.status_code == 201
+        race = created_race.json()
+
+        rejected_race = client.patch(
+            f"/api/goal-races/{race['id']}", json={"name": None}
+        )
+        assert rejected_race.status_code == 422
+        cleared_target = client.patch(
+            f"/api/goal-races/{race['id']}", json={"targetTime": None}
+        )
+        assert cleared_target.status_code == 200
+        assert cleared_target.json()["targetTime"] is None
+        assert cleared_target.json()["name"] == "Spring Half"
+
+        created_plan = client.post("/api/plans", json=make_plan_payload())
+        assert created_plan.status_code == 201
+        plan = created_plan.json()
+        rejected_plan = client.patch(
+            f"/api/plans/{plan['id']}", json={"name": None}
+        )
+        assert rejected_plan.status_code == 422
+        updated_plan = client.patch(
+            f"/api/plans/{plan['id']}", json={"notes": "Keep the name"}
+        )
+        assert updated_plan.status_code == 200
+        assert updated_plan.json()["name"] == plan["name"]
+        assert updated_plan.json()["notes"] == "Keep the name"
 
 
 def test_plan_preview_and_replace_preserve_manual_week_overrides() -> None:

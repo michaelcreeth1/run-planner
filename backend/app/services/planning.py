@@ -80,6 +80,7 @@ WEEK_PURPOSE_IDS = frozenset(
         "custom",
     }
 )
+PAST_WEEK_READ_ONLY_DETAIL = "Past weeks are read-only. Complete a review instead."
 
 
 def week_start_for(day: date) -> date:
@@ -272,7 +273,8 @@ def training_timeline(db: Session, athlete_account_id: str | None = None) -> dic
         month_key = (activity_date.year, activity_date.month)
         summary = month_summaries[month_key]
         summary["has_activities"] = True
-        summary["actual_miles"] += activity.distance / 1609.344
+        if is_run_activity(activity):
+            summary["actual_miles"] += activity.distance / 1609.344
         data_week_starts.add(week_start)
 
     metadata_weeks = db.scalars(
@@ -385,6 +387,9 @@ def update_week_goal(
     athlete_account_id: str | None = None,
 ) -> WeekGoal:
     goal = get_week_goal(db, goal_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
+    )
     updates = payload.model_dump(exclude_unset=True)
     current = {
         field: getattr(goal, field)
@@ -418,6 +423,9 @@ def update_week_goal(
 
 def delete_week_goal(db: Session, goal_id: str, athlete_account_id: str | None = None) -> None:
     goal = get_week_goal(db, goal_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
+    )
     db.delete(goal)
     db.commit()
 
@@ -611,11 +619,66 @@ def get_or_create_week_for_mutation(
     db: Session,
     week_id: str,
     athlete_account_id: str | None = None,
+    *,
+    allow_past: bool = False,
 ) -> TrainingWeek:
     virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
     if virtual_week_start is not None:
+        if not allow_past:
+            ensure_week_start_is_mutable(db, virtual_week_start, athlete_account_id)
         return get_or_create_week(db, virtual_week_start, athlete_account_id)
-    return get_week_by_id(db, week_id, athlete_account_id)
+    week = get_week_by_id(db, week_id, athlete_account_id)
+    if not allow_past:
+        ensure_week_is_mutable(week)
+    return week
+
+
+def get_or_create_mutable_week(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    normalized_start = week_start_for(week_start)
+    ensure_week_start_is_mutable(db, normalized_start, athlete_account_id)
+    return get_or_create_week(db, normalized_start, athlete_account_id)
+
+
+def ensure_week_start_is_mutable(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> None:
+    if week_state_for_start(db, week_start, athlete_account_id) == "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PAST_WEEK_READ_ONLY_DETAIL,
+        )
+
+
+def week_state_for_start(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> str:
+    normalized_start = week_start_for(week_start)
+    athlete = (
+        ensure_default_athlete(db)
+        if athlete_account_id is None
+        else db.get(AthleteAccount, athlete_account_id)
+    )
+    return get_week_state_from_dates(
+        normalized_start,
+        week_end_for(normalized_start),
+        timezone_name=athlete.timezone if athlete else None,
+    )
+
+
+def ensure_week_is_mutable(week: TrainingWeek) -> None:
+    if get_week_state(week) == "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PAST_WEEK_READ_ONLY_DETAIL,
+        )
 
 
 def recalculate_week(
@@ -648,7 +711,7 @@ def create_workout(
 ) -> PlannedWorkout:
     athlete = ensure_default_athlete(db) if athlete_account_id is None else None
     active_athlete_id = athlete_account_id or athlete.id
-    week = get_or_create_week(db, week_start_for(payload.planned_date), active_athlete_id)
+    week = get_or_create_mutable_week(db, payload.planned_date, active_athlete_id)
     workout = PlannedWorkout(
         athlete_account_id=active_athlete_id,
         training_week_id=week.id,
@@ -701,17 +764,23 @@ def update_workout(
 ) -> PlannedWorkout:
     workout = get_workout(db, workout_id, athlete_account_id)
     original_week_id = workout.training_week_id
+    ensure_week_is_mutable(
+        get_week_by_id(db, original_week_id, workout.athlete_account_id)
+    )
     updates = payload.model_dump(exclude_unset=True)
+
+    new_week = None
+    if "planned_date" in updates:
+        new_week = get_or_create_mutable_week(
+            db,
+            updates["planned_date"],
+            workout.athlete_account_id,
+        )
 
     for field, value in updates.items():
         setattr(workout, field, value)
 
-    if payload.planned_date is not None:
-        new_week = get_or_create_week(
-            db,
-            week_start_for(payload.planned_date),
-            workout.athlete_account_id,
-        )
+    if new_week is not None:
         workout.training_week_id = new_week.id
 
     db.commit()
@@ -744,6 +813,9 @@ def duplicate_workout(
     athlete_account_id: str | None = None,
 ) -> PlannedWorkout:
     source = get_workout(db, workout_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, source.training_week_id, source.athlete_account_id)
+    )
     clone = clone_workout(
         source,
         source.training_week_id,
@@ -766,15 +838,30 @@ def copy_prior_week(
     week_id: str,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
-    source_start = target.week_start_date - timedelta(days=7)
-    source = get_or_create_week(db, source_start, target.athlete_account_id)
+    virtual_target_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    target: TrainingWeek | None = None
+    if virtual_target_start is not None:
+        ensure_week_start_is_mutable(db, virtual_target_start, athlete_account_id)
+        active_athlete_id = (
+            athlete_account_id or ensure_default_athlete(db).id
+        )
+        target_start = virtual_target_start
+    else:
+        target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
+        active_athlete_id = target.athlete_account_id
+        target_start = target.week_start_date
 
-    if not source.workouts:
+    source_start = target_start - timedelta(days=7)
+    source = find_week(db, source_start, active_athlete_id)
+
+    if source is None or not source.workouts:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Prior week has no planned workouts to copy.",
         )
+
+    if target is None:
+        target = get_or_create_week(db, target_start, active_athlete_id)
 
     if not target.purpose:
         target.purpose = source.purpose
@@ -815,12 +902,13 @@ def save_week_plan(
     payload: PlanWeekSave,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
+    virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    if virtual_week_start is not None:
+        ensure_week_start_is_mutable(db, virtual_week_start, athlete_account_id)
+        validate_plan_workout_dates(payload, virtual_week_start)
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
-    if get_week_state(week) == "past":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Past weeks are read-only. Complete a review instead.",
-        )
+    if virtual_week_start is None:
+        validate_plan_workout_dates(payload, week.week_start_date)
     if payload.purpose is not None:
         normalized_purpose = normalize_week_purpose(payload.purpose)
         week.purpose = normalized_purpose
@@ -865,7 +953,22 @@ def complete_week_review(
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
     """Persist a past-week review without modifying its plan or outcomes."""
-    week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
+    virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    if virtual_week_start is not None and week_state_for_start(
+        db,
+        virtual_week_start,
+        athlete_account_id,
+    ) != "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only completed weeks can be reviewed.",
+        )
+    week = get_or_create_week_for_mutation(
+        db,
+        week_id,
+        athlete_account_id,
+        allow_past=True,
+    )
     if get_week_state(week) != "past":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -968,7 +1071,11 @@ def clone_week_goal(source: WeekGoal, target: TrainingWeek) -> WeekGoal:
         evaluation_mode=source.evaluation_mode,
         priority=source.priority,
         status="not_started" if source.status != "waived" else "waived",
-        source="template" if source.source == "manual" else source.source,
+        source=(
+            source.source
+            if source.source in {"plan", "workouts", "default"}
+            else "manual"
+        ),
         is_editable=source.is_editable,
         is_enabled=source.is_enabled,
     )
@@ -978,6 +1085,7 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
     workout = get_workout(db, workout_id, athlete_account_id)
     week_id = workout.training_week_id
     active_athlete_id = workout.athlete_account_id
+    ensure_week_is_mutable(get_week_by_id(db, week_id, active_athlete_id))
     db.delete(workout)
     db.commit()
     recalculate_week(
@@ -985,6 +1093,24 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
         get_week_by_id(db, week_id, active_athlete_id),
         refresh_existing_workout_goals=True,
     )
+
+
+def validate_plan_workout_dates(payload: PlanWeekSave, week_start: date) -> None:
+    week_end = week_end_for(week_start)
+    invalid_dates = sorted(
+        workout.planned_date
+        for workout in payload.workouts
+        if not week_start <= workout.planned_date <= week_end
+    )
+    if invalid_dates:
+        formatted_dates = ", ".join(day.isoformat() for day in invalid_dates)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Workout plannedDate must fall between {week_start.isoformat()} and "
+                f"{week_end.isoformat()}; received {formatted_dates}."
+            ),
+        )
 
 
 def recalculate_impacted_weeks(
@@ -1165,7 +1291,11 @@ def week_totals(workouts: list[PlannedWorkout], activities: list[StravaActivity]
         workout.planned_distance or 0 for workout in workouts if workout.sport == "run"
     )
     planned_time = sum(workout.planned_duration or 0 for workout in workouts)
-    actual_mileage = sum(activity.distance / 1609.344 for activity in activities)
+    actual_mileage = sum(
+        activity.distance / 1609.344
+        for activity in activities
+        if is_run_activity(activity)
+    )
     actual_time = sum(activity.moving_time or 0 for activity in activities)
     return {
         "planned_mileage": round(planned_mileage, 2),

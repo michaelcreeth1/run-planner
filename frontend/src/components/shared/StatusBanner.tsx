@@ -4,12 +4,16 @@ export function StatusBanner({
   tone,
   icon,
   title,
-  detail
+  detail,
+  actionLabel,
+  onAction
 }: {
   tone: "warning" | "danger" | "success";
   icon: ReactNode;
   title: string;
   detail: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <section className={`status-banner ${tone}`} role="status">
@@ -18,6 +22,11 @@ export function StatusBanner({
         <strong>{title}</strong>
         <span>{detail}</span>
       </div>
+      {actionLabel && onAction ? (
+        <button className="status-banner-action" type="button" onClick={onAction}>
+          {actionLabel}
+        </button>
+      ) : null}
     </section>
   );
 }

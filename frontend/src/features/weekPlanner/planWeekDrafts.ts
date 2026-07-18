@@ -574,7 +574,7 @@ export function startingPointOptions(
 export function startingPointHelperText(draft: PlanWeekDraft) {
   const hasPriorWeek = Boolean(draft.priorWeekStartDate);
   if (draft.startingPoint === "existing") {
-    return "Using the sessions and week-specific targets already saved for this week.";
+    return "";
   }
   if (draft.startingPoint === "copy_prior") {
     return !hasPriorWeek
@@ -610,7 +610,7 @@ function planTargetLoad(targetMileage: number, priorMileage: number | null): Pro
   return {
     priorMileage,
     suggestedMileage: roundToTenth(targetMileage),
-    reason: "Using the week's plan target mileage."
+    reason: ""
   };
 }
 

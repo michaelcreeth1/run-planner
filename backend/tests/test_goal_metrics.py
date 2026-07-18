@@ -1,11 +1,11 @@
 from datetime import date, datetime
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base, SessionLocal
+from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
 from app.models import RecurringGoal, StravaActivity, WeekGoal, WeeklyMetricSnapshot
 from app.services import planning
@@ -20,11 +20,7 @@ def login(client: TestClient) -> None:
 
 
 def make_session() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = build_engine("sqlite://")
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
 
@@ -214,13 +210,15 @@ def test_invalid_legacy_default_goal_remains_readable_for_review() -> None:
         assert legacy_goal["evaluationMode"] == "manual"
 
 
-def test_manual_workout_completion_counts_toward_automatic_goal_metrics() -> None:
+def test_manual_workout_completion_counts_toward_automatic_goal_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with TestClient(app) as client:
         login(client)
         workout_response = client.post(
             "/api/planned-workouts",
             json={
-                "plannedDate": "2024-04-01",
+                "plannedDate": "2099-04-06",
                 "title": "Untracked long run",
                 "sport": "run",
                 "workoutType": "long_run",
@@ -230,7 +228,7 @@ def test_manual_workout_completion_counts_toward_automatic_goal_metrics() -> Non
         )
         assert workout_response.status_code == 201
 
-        week = client.get("/api/weeks/2024-04-01").json()
+        week = client.get("/api/weeks/2099-04-06").json()
         goal_response = client.post(
             f"/api/weeks/{week['id']}/goals",
             json={
@@ -246,7 +244,13 @@ def test_manual_workout_completion_counts_toward_automatic_goal_metrics() -> Non
         )
         assert goal_response.status_code == 201
 
-        refreshed_week = client.get("/api/weeks/2024-04-01").json()
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2100, 1, 1),
+        )
+
+        refreshed_week = client.get("/api/weeks/2099-04-06").json()
         evaluation = next(
             item
             for item in refreshed_week["goalEvaluations"]

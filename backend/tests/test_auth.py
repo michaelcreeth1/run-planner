@@ -181,6 +181,23 @@ def test_profiles_can_be_updated_and_inactive_profiles_deleted() -> None:
     assert [profile["id"] for profile in refreshed["profiles"]] == [active_profile_id]
 
 
+def test_profile_timezone_must_be_a_valid_iana_name() -> None:
+    with TestClient(app) as client:
+        login(client)
+        invalid_create = client.post(
+            "/api/auth/profiles",
+            json={"displayName": "Bad timezone", "timezone": "Not/A_Real_Zone"},
+        )
+        session = client.get("/api/auth/session/status").json()
+        invalid_update = client.patch(
+            f"/api/auth/profiles/{session['activeAthleteAccountId']}",
+            json={"timezone": "Still/Not_Real"},
+        )
+
+    assert invalid_create.status_code == 422
+    assert invalid_update.status_code == 422
+
+
 def test_disabled_user_loses_existing_session() -> None:
     with TestClient(app) as client:
         login(client)

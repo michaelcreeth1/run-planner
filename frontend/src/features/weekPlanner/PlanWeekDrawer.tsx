@@ -76,6 +76,7 @@ export function PlanWeekDrawer({
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+  const directionNote = [startingPointHelperText(draft), draft.load.reason].filter(Boolean).join(" ");
   const sharedEvaluations = useMemo(
     () => {
       const summary = plan?.weekSummaries.find((candidate) => candidate.weekStartDate === draft.weekStartDate) ?? null;
@@ -104,6 +105,8 @@ export function PlanWeekDrawer({
   const drawerTitle =
     draft.weekState === "past"
       ? "Review week"
+      : draft.weekState === "current" && draft.hasExistingPlan
+        ? "Adjust rest of week"
       : draft.hasExistingPlan
         ? "Edit week plan"
         : "Plan week";
@@ -347,14 +350,13 @@ export function PlanWeekDrawer({
                 />
               </label>
             ) : null}
-            <p className="plan-week-note">{startingPointHelperText(draft)} {draft.load.reason}</p>
+            {directionNote ? <p className="plan-week-note">{directionNote}</p> : null}
           </section>
 
           <section className="plan-week-section schedule-section">
             <div className="section-heading schedule-section-heading">
               <div>
                 <h3>Schedule</h3>
-                <small>Edit each session directly. Mileage only applies to running sessions.</small>
               </div>
             </div>
             <div className="schedule-draft-column-labels" aria-hidden="true">
@@ -470,9 +472,6 @@ export function PlanWeekDrawer({
                 <SharedRuleRow evaluation={evaluation} key={evaluation.ruleId} />
               ))}
             </div>
-            <p className="plan-week-footnote">
-              These checks use the same current standing goals shown on the week card and goal impact matrix.
-            </p>
           </section>
 
           <section className="plan-week-section rules-section">
@@ -542,9 +541,6 @@ export function PlanWeekDrawer({
             ) : (
               <p className="plan-week-note">No goals are set for this week.</p>
             )}
-            <p className="plan-week-footnote">
-              Saved targets apply only to this week. Week-specific goals are advisory and never prevent you from saving the plan.
-            </p>
           </section>
         </div>
 

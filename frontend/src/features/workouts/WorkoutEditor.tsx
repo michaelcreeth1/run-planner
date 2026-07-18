@@ -6,11 +6,15 @@ import { recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/wo
 
 export function WorkoutEditor({
   editor,
+  error,
+  isSaving,
   setEditor,
   onSubmit,
   onClose
 }: {
   editor: WorkoutForm;
+  error: string | null;
+  isSaving: boolean;
   setEditor: (editor: WorkoutForm) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
@@ -26,11 +30,12 @@ export function WorkoutEditor({
       <aside className="editor-panel" aria-label="Workout editor">
         <header>
           <h2>{editor.id ? "Edit workout" : "New workout"}</h2>
-          <button type="button" title="Close" onClick={onClose}>
+          <button type="button" title="Close" disabled={isSaving} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
-        <form onSubmit={onSubmit}>
+        <form aria-busy={isSaving} onSubmit={onSubmit}>
+          {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
           <label>
             <span>Date</span>
             <input
@@ -134,9 +139,9 @@ export function WorkoutEditor({
             />
           </label>
           <div className="editor-actions">
-            <button className="primary" type="submit">
+            <button className="primary" disabled={isSaving} type="submit">
               <Save size={17} />
-              <span>Save</span>
+              <span>{isSaving ? "Saving…" : "Save"}</span>
             </button>
           </div>
         </form>

@@ -68,6 +68,11 @@ const primaryTabs = [
 
 type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
+type CompatibilityState =
+  | { status: "checking" }
+  | { status: "compatible"; apiVersion: ApiVersion }
+  | { status: "error"; error: ApiErrorPresentation }
+  | { status: "incompatible"; apiVersion: ApiVersion };
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("theme");
@@ -93,7 +98,7 @@ function AppShell() {
     window.localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const [apiVersion, setApiVersion] = useState<ApiVersion | null>(null);
+  const [compatibility, setCompatibility] = useState<CompatibilityState>({ status: "checking" });
   const [apiError, setApiError] = useState<ApiErrorPresentation | null>(null);
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -110,7 +115,11 @@ function AppShell() {
   const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
   const [analyticsFutureWeeks, setAnalyticsFutureWeeks] = useState(4);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
+  const [isSavingWorkout, setIsSavingWorkout] = useState(false);
+  const [workoutSaveError, setWorkoutSaveError] = useState<string | null>(null);
   const [goalEditor, setGoalEditor] = useState<WeekGoalForm | null>(null);
+  const [isSavingGoal, setIsSavingGoal] = useState(false);
+  const [goalSaveError, setGoalSaveError] = useState<string | null>(null);
   const [planWeekDraft, setPlanWeekDraft] = useState<PlanWeekDraft | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
@@ -128,10 +137,15 @@ function AppShell() {
   const didApplyInitialTimelineRange = useRef(false);
   const weekStackRef = useRef(weekStack);
   const weekStartRef = useRef(weekStart);
+  const dataRequestEpochRef = useRef(0);
+  const dataRequestControllersRef = useRef(new Set<AbortController>());
+  const compatibilityControllerRef = useRef<AbortController | null>(null);
+  const mutationKeysRef = useRef(new Set<string>());
 
-  const staleFrontend = apiVersion
-    ? apiVersion.forceReload || compareVersions(FRONTEND_VERSION, apiVersion.frontendMinVersion) < 0
-    : false;
+  const apiVersion = compatibility.status === "compatible" || compatibility.status === "incompatible"
+    ? compatibility.apiVersion
+    : null;
+  const writesBlocked = compatibility.status !== "compatible";
   const week = weekStack[weekStart] ?? null;
   const isLoadingWeek = loadingWeekStarts.has(weekStart);
   const currentWeekStart = startOfWeek(new Date());
@@ -173,6 +187,51 @@ function AppShell() {
     weekStartRef.current = weekStart;
   }, [weekStart]);
 
+  const beginDataRequest = useCallback(() => {
+    const controller = new AbortController();
+    const epoch = dataRequestEpochRef.current;
+    dataRequestControllersRef.current.add(controller);
+    return {
+      signal: controller.signal,
+      isCurrent: () => !controller.signal.aborted && dataRequestEpochRef.current === epoch,
+      finish: () => dataRequestControllersRef.current.delete(controller)
+    };
+  }, []);
+
+  const invalidateDataRequests = useCallback(() => {
+    dataRequestEpochRef.current += 1;
+    dataRequestControllersRef.current.forEach((controller) => controller.abort());
+    dataRequestControllersRef.current.clear();
+  }, []);
+
+  const clearAppData = useCallback(() => {
+    weekStackRef.current = {};
+    setWeekStack({});
+    setTimelineSummary(null);
+    setAnalyticsPlanning(null);
+    setAnalyticsLoading(false);
+    setActivities([]);
+    setStravaStatus(null);
+    setLastSyncJob(null);
+    setEditor(null);
+    setIsSavingWorkout(false);
+    setWorkoutSaveError(null);
+    setGoalEditor(null);
+    setIsSavingGoal(false);
+    setGoalSaveError(null);
+    setPlanWeekDraft(null);
+    setIsSavingPlanWeek(false);
+    setPendingPlanWeekStart(null);
+    setWeekReviewHandoff(null);
+    setCopyingPriorWeekId(null);
+    setIsSyncing(false);
+    setLoadingWeekStarts(new Set());
+    pendingPrependScroll.current = null;
+    isPrependingWeeks.current = false;
+    isAppendingWeeks.current = false;
+    didApplyInitialTimelineRange.current = false;
+  }, []);
+
   const loadWeeks = useCallback((starts: string[], options: { force?: boolean } = {}) => {
     const uniqueStarts = Array.from(new Set(starts.map((start) => startOfWeek(parseDate(start)))));
     const startsToFetch = options.force
@@ -183,19 +242,34 @@ function AppShell() {
     }
 
     setLoadingWeekStarts((current) => mergeLoadingStarts(current, startsToFetch));
-    Promise.all(startsToFetch.map((weekDate) => fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`)))
+    const request = beginDataRequest();
+    Promise.all(
+      startsToFetch.map((weekDate) =>
+        fetchJson<TrainingWeek>(`/api/weeks/${weekDate}`, { signal: request.signal })
+      )
+    )
       .then((weeks) => {
+        if (!request.isCurrent()) {
+          return;
+        }
         setWeekStack((current) => ({
           ...current,
           ...Object.fromEntries(weeks.map((loadedWeek) => [loadedWeek.weekStartDate, loadedWeek]))
         }));
         setApiError(null);
       })
-      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load training weeks.")))
+      .catch((error: unknown) => {
+        if (request.isCurrent()) {
+          setApiError(toApiErrorPresentation(error, "Could not load training weeks."));
+        }
+      })
       .finally(() => {
-        setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
+        if (request.isCurrent()) {
+          setLoadingWeekStarts((current) => removeLoadingStarts(current, startsToFetch));
+        }
+        request.finish();
       });
-  }, []);
+  }, [beginDataRequest]);
 
   const loadAnalyticsPlanning = useCallback(() => {
     setAnalyticsLoading(true);
@@ -203,14 +277,77 @@ function AppShell() {
       lookbackWeeks: String(analyticsLookbackWeeks),
       futureWeeks: String(analyticsFutureWeeks)
     });
-    fetchJson<AnalyticsPlanning>(`/api/analytics/planning?${params.toString()}`)
+    const request = beginDataRequest();
+    fetchJson<AnalyticsPlanning>(`/api/analytics/planning?${params.toString()}`, { signal: request.signal })
       .then((body) => {
+        if (!request.isCurrent()) {
+          return;
+        }
         setAnalyticsPlanning(body);
         setApiError(null);
       })
-      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load progress.")))
-      .finally(() => setAnalyticsLoading(false));
-  }, [analyticsFutureWeeks, analyticsLookbackWeeks]);
+      .catch((error: unknown) => {
+        if (request.isCurrent()) {
+          setApiError(toApiErrorPresentation(error, "Could not load progress."));
+        }
+      })
+      .finally(() => {
+        if (request.isCurrent()) {
+          setAnalyticsLoading(false);
+        }
+        request.finish();
+      });
+  }, [analyticsFutureWeeks, analyticsLookbackWeeks, beginDataRequest]);
+
+  const loadTrainingTimeline = useCallback(() => {
+    const request = beginDataRequest();
+    fetchJson<TrainingTimelineSummary>("/api/training-timeline", { signal: request.signal })
+      .then((body) => {
+        if (!request.isCurrent()) {
+          return;
+        }
+        setTimelineSummary(body);
+        setApiError(null);
+      })
+      .catch((error: unknown) => {
+        if (request.isCurrent()) {
+          setApiError(toApiErrorPresentation(error, "Could not load the training timeline."));
+        }
+      })
+      .finally(request.finish);
+  }, [beginDataRequest]);
+
+  const loadStravaStatus = useCallback(() => {
+    const request = beginDataRequest();
+    fetchJson<StravaStatus>("/api/auth/strava/status", { signal: request.signal })
+      .then((body) => {
+        if (request.isCurrent()) {
+          setStravaStatus(body);
+        }
+      })
+      .catch((error: unknown) => {
+        if (request.isCurrent()) {
+          setApiError(toApiErrorPresentation(error, "Could not load Strava status."));
+        }
+      })
+      .finally(request.finish);
+  }, [beginDataRequest]);
+
+  const loadActivities = useCallback(() => {
+    const request = beginDataRequest();
+    fetchJson<StravaActivity[]>("/api/activities", { signal: request.signal })
+      .then((body) => {
+        if (request.isCurrent()) {
+          setActivities(body);
+        }
+      })
+      .catch((error: unknown) => {
+        if (request.isCurrent()) {
+          setApiError(toApiErrorPresentation(error, "Could not load activities."));
+        }
+      })
+      .finally(request.finish);
+  }, [beginDataRequest]);
 
   const recenterVisibleWeeks = useCallback((start: string, summary: TrainingTimelineSummary | null) => {
     const starts = boundedWeekRangeAround(start, summary);
@@ -218,16 +355,33 @@ function AppShell() {
     loadWeeks(starts);
   }, [loadWeeks]);
 
-  useEffect(() => {
-    fetchJson<ApiVersion>("/api/version")
+  const checkCompatibility = useCallback(() => {
+    compatibilityControllerRef.current?.abort();
+    const controller = new AbortController();
+    compatibilityControllerRef.current = controller;
+    setCompatibility({ status: "checking" });
+    fetchJson<ApiVersion>("/api/version", { signal: controller.signal })
       .then((body) => {
-        setApiVersion(body);
-        setApiError(null);
+        if (controller.signal.aborted) {
+          return;
+        }
+        const incompatible = body.forceReload || compareVersions(FRONTEND_VERSION, body.frontendMinVersion) < 0;
+        setCompatibility({ status: incompatible ? "incompatible" : "compatible", apiVersion: body });
       })
       .catch((error: unknown) => {
-        setApiError(toApiErrorPresentation(error, "Could not check app compatibility."));
+        if (!controller.signal.aborted) {
+          setCompatibility({
+            status: "error",
+            error: toApiErrorPresentation(error, "Could not check app compatibility.")
+          });
+        }
       });
   }, []);
+
+  useEffect(() => {
+    checkCompatibility();
+    return () => compatibilityControllerRef.current?.abort();
+  }, [checkCompatibility]);
 
   useEffect(() => {
     loadSession();
@@ -248,17 +402,28 @@ function AppShell() {
   }, [visibleWeekStarts]);
 
   useEffect(() => {
+    invalidateDataRequests();
+    clearAppData();
     if (!session?.authenticated || !session.activeAthleteAccountId) {
       return;
     }
-    clearAppData();
     const starts = weekRangeAround(weekStartRef.current);
     setVisibleWeekStarts(starts);
     loadWeeks(starts, { force: true });
     loadTrainingTimeline();
     loadStravaStatus();
     loadActivities();
-  }, [loadWeeks, session?.activeAthleteAccountId, session?.authenticated]);
+    return invalidateDataRequests;
+  }, [
+    clearAppData,
+    invalidateDataRequests,
+    loadActivities,
+    loadStravaStatus,
+    loadTrainingTimeline,
+    loadWeeks,
+    session?.activeAthleteAccountId,
+    session?.authenticated
+  ]);
 
   useEffect(() => {
     if (!session?.authenticated || !session.activeAthleteAccountId) {
@@ -304,28 +469,13 @@ function AppShell() {
     loadWeeks(starts);
   }, [activeTab, loadWeeks, session?.activeAthleteAccountId, session?.authenticated, timelineSummary, weekStart]);
 
-  function clearAppData() {
-    setWeekStack({});
-    setTimelineSummary(null);
-    setAnalyticsPlanning(null);
-    setActivities([]);
-    setStravaStatus(null);
-    setLastSyncJob(null);
-    setEditor(null);
-    setGoalEditor(null);
-    setPlanWeekDraft(null);
-    setPendingPlanWeekStart(null);
-    setWeekReviewHandoff(null);
-    setLoadingWeekStarts(new Set());
-    didApplyInitialTimelineRange.current = false;
-  }
-
   function loadSession() {
     setSessionLoading(true);
     fetchJson<SessionStatus>("/api/auth/session/status")
       .then((body) => {
         setSession(body);
         setLoginError(null);
+        setApiError(null);
       })
       .catch((error: unknown) => {
         setApiError(toApiErrorPresentation(error, "Could not load your session."));
@@ -342,7 +492,10 @@ function AppShell() {
         method: "POST",
         body: JSON.stringify(loginForm)
       });
+      invalidateDataRequests();
+      clearAppData();
       setSession(body);
+      setApiError(null);
       setLoginForm({ username: "", password: "" });
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Login failed.");
@@ -354,8 +507,10 @@ function AppShell() {
   async function logout() {
     try {
       const body = await fetchJson<SessionStatus>("/api/auth/session/logout", { method: "POST" });
-      setSession(body);
+      invalidateDataRequests();
       clearAppData();
+      setSession(body);
+      setApiError(null);
     } catch (error) {
       setApiError(toApiErrorPresentation(error, "Could not log out."));
     }
@@ -371,6 +526,8 @@ function AppShell() {
         method: "POST",
         body: JSON.stringify({ athleteAccountId })
       });
+      invalidateDataRequests();
+      clearAppData();
       setSession(body);
       setApiError(null);
     } catch (error) {
@@ -476,10 +633,12 @@ function AppShell() {
   }
 
   function openCreate(plannedDate: string) {
+    setWorkoutSaveError(null);
     setEditor(defaultForm(plannedDate));
   }
 
   function openEdit(workout: Workout) {
+    setWorkoutSaveError(null);
     setEditor({
       id: workout.id,
       plannedDate: workout.plannedDate,
@@ -502,10 +661,12 @@ function AppShell() {
   }
 
   function openCreateGoal(targetWeek: TrainingWeek) {
+    setGoalSaveError(null);
     setGoalEditor(defaultGoalForm(targetWeek.id));
   }
 
   function openEditGoal(goal: WeekGoal) {
+    setGoalSaveError(null);
     setGoalEditor({
       id: goal.id,
       weekId: goal.trainingWeekId,
@@ -530,11 +691,28 @@ function AppShell() {
   }
 
   function blockStaleWrite(action: string) {
-    if (!staleFrontend) {
+    if (!writesBlocked) {
       return false;
     }
-    setApiError({ kind: "response", title: "Action unavailable", detail: `Reload required before ${action}.` });
+    const detail = compatibility.status === "incompatible"
+      ? `Reload required before ${action}.`
+      : compatibility.status === "error"
+        ? `Retry the compatibility check before ${action}.`
+        : `Wait for the compatibility check before ${action}.`;
+    setApiError({ kind: "response", title: "Action unavailable", detail });
     return true;
+  }
+
+  function startMutation(key: string) {
+    if (mutationKeysRef.current.has(key)) {
+      return false;
+    }
+    mutationKeysRef.current.add(key);
+    return true;
+  }
+
+  function finishMutation(key: string) {
+    mutationKeysRef.current.delete(key);
   }
 
   async function savePlanWeek(draft: PlanWeekDraft) {
@@ -549,12 +727,21 @@ function AppShell() {
       });
       return;
     }
+    const mutationKey = "plan-week";
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     setIsSavingPlanWeek(true);
     try {
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${draft.weekId}/plan`, {
         method: "PUT",
-        body: JSON.stringify(planWeekDraftToPayload(draft))
+        body: JSON.stringify(planWeekDraftToPayload(draft)),
+        signal: request.signal
       });
+      if (!request.isCurrent()) {
+        return;
+      }
       setWeekStack((current) => ({
         ...current,
         [savedWeek.weekStartDate]: savedWeek
@@ -564,9 +751,16 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not save the week plan."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not save the week plan."));
+      }
     } finally {
-      setIsSavingPlanWeek(false);
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingPlanWeek(false);
+      }
     }
   }
 
@@ -574,12 +768,21 @@ function AppShell() {
     if (blockStaleWrite("completing the week review")) {
       return;
     }
+    const mutationKey = "plan-week";
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     setIsSavingPlanWeek(true);
     try {
       const sourceWeek = Object.values(weekStack).find((candidate) => candidate.id === weekId);
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${weekId}/review`, {
-        method: "POST"
+        method: "POST",
+        signal: request.signal
       });
+      if (!request.isCurrent()) {
+        return;
+      }
       setWeekStack((current) => ({
         ...current,
         [savedWeek.weekStartDate]: savedWeek
@@ -594,9 +797,16 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not complete the week review."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not complete the week review."));
+      }
     } finally {
-      setIsSavingPlanWeek(false);
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingPlanWeek(false);
+      }
     }
   }
 
@@ -618,23 +828,52 @@ function AppShell() {
     if (blockStaleWrite("saving a workout")) {
       return;
     }
-
-    const payload = formToPayload(editor);
-    if (editor.id) {
-      await fetchJson(`/api/planned-workouts/${editor.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload)
-      });
-    } else {
-      await fetchJson("/api/planned-workouts", {
-        method: "POST",
-        body: JSON.stringify(payload)
-      });
+    const mutationKey = "save-workout";
+    if (!startMutation(mutationKey)) {
+      return;
     }
-    setEditor(null);
-    refreshVisibleWeeks();
-    loadTrainingTimeline();
-    loadAnalyticsPlanning();
+
+    const request = beginDataRequest();
+    setIsSavingWorkout(true);
+    setWorkoutSaveError(null);
+    try {
+      const payload = formToPayload(editor);
+      if (editor.id) {
+        await fetchJson(`/api/planned-workouts/${editor.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+          signal: request.signal
+        });
+      } else {
+        await fetchJson("/api/planned-workouts", {
+          method: "POST",
+          body: JSON.stringify(payload),
+          signal: request.signal
+        });
+      }
+      if (!request.isCurrent()) {
+        return;
+      }
+      setEditor(null);
+      setWorkoutSaveError(null);
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        const presentation = toApiErrorPresentation(error, "Could not save workout.");
+        setWorkoutSaveError(presentation.detail);
+        setApiError(presentation);
+      }
+    } finally {
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingWorkout(false);
+      }
+    }
   }
 
   async function saveGoal(event: FormEvent<HTMLFormElement>) {
@@ -645,55 +884,135 @@ function AppShell() {
     if (blockStaleWrite("saving a goal")) {
       return;
     }
-
-    const payload = goalFormToPayload(goalEditor);
-    if (goalEditor.id) {
-      await fetchJson(`/api/week-goals/${goalEditor.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload)
-      });
-    } else {
-      await fetchJson(`/api/weeks/${goalEditor.weekId}/goals`, {
-        method: "POST",
-        body: JSON.stringify(payload)
-      });
+    const mutationKey = "save-goal";
+    if (!startMutation(mutationKey)) {
+      return;
     }
-    setGoalEditor(null);
-    refreshVisibleWeeks();
-    loadTrainingTimeline();
-    loadAnalyticsPlanning();
+
+    const request = beginDataRequest();
+    setIsSavingGoal(true);
+    setGoalSaveError(null);
+    try {
+      const payload = goalFormToPayload(goalEditor);
+      if (goalEditor.id) {
+        await fetchJson(`/api/week-goals/${goalEditor.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+          signal: request.signal
+        });
+      } else {
+        await fetchJson(`/api/weeks/${goalEditor.weekId}/goals`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+          signal: request.signal
+        });
+      }
+      if (!request.isCurrent()) {
+        return;
+      }
+      setGoalEditor(null);
+      setGoalSaveError(null);
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        const presentation = toApiErrorPresentation(error, "Could not save weekly goal.");
+        setGoalSaveError(presentation.detail);
+        setApiError(presentation);
+      }
+    } finally {
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingGoal(false);
+      }
+    }
   }
 
   async function deleteWorkout(workout: Workout) {
     if (blockStaleWrite("deleting a workout")) {
       return;
     }
+    const mutationKey = `workout:${workout.id}`;
+    if (mutationKeysRef.current.has(mutationKey)) {
+      return;
+    }
     if (!window.confirm(`Delete "${workout.title}"? This cannot be undone.`)) {
       return;
     }
-    await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE" });
-    refreshVisibleWeeks();
-    loadTrainingTimeline();
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      await fetchJson(`/api/planned-workouts/${workout.id}`, { method: "DELETE", signal: request.signal });
+      if (!request.isCurrent()) {
+        return;
+      }
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not delete workout."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
   }
 
   async function duplicateWorkout(workout: Workout) {
     if (blockStaleWrite("duplicating a workout")) {
       return;
     }
-    await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, { method: "POST" });
-    refreshVisibleWeeks();
-    loadTrainingTimeline();
+    const mutationKey = `workout:${workout.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, {
+        method: "POST",
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return;
+      }
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not duplicate workout."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
   }
 
   async function setWorkoutCompletion(workout: Workout, completed: boolean) {
     if (blockStaleWrite(completed ? "completing a workout" : "reopening a workout")) {
       return;
     }
+    const mutationKey = `workout:${workout.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     try {
       const updatedWorkout = await fetchJson<Workout>(`/api/planned-workouts/${workout.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: completed ? "completed_as_planned" : "planned" })
+        body: JSON.stringify({ status: completed ? "completed_as_planned" : "planned" }),
+        signal: request.signal
       });
+      if (!request.isCurrent()) {
+        return;
+      }
       setWeekStack((current) =>
         Object.fromEntries(
           Object.entries(current).map(([start, loadedWeek]) => [
@@ -713,12 +1032,21 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not update workout completion."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not update workout completion."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
     }
   }
 
   async function copyPriorWeek(targetWeek: TrainingWeek) {
     if (blockStaleWrite("copying the prior week")) {
+      return;
+    }
+    const mutationKey = "copy-prior-week";
+    if (mutationKeysRef.current.has(mutationKey)) {
       return;
     }
     if (
@@ -728,9 +1056,19 @@ function AppShell() {
       return;
     }
 
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     setCopyingPriorWeekId(targetWeek.id);
     try {
-      const copiedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/copy-prior`, { method: "POST" });
+      const copiedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/copy-prior`, {
+        method: "POST",
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return;
+      }
       setWeekStack((current) => ({
         ...current,
         [copiedWeek.weekStartDate]: copiedWeek
@@ -739,9 +1077,16 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not copy the prior week."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not copy the prior week."));
+      }
     } finally {
-      setCopyingPriorWeekId(null);
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setCopyingPriorWeekId((current) => current === targetWeek.id ? null : current);
+      }
     }
   }
 
@@ -749,10 +1094,19 @@ function AppShell() {
     if (blockStaleWrite("refreshing weekly goals")) {
       return;
     }
+    const mutationKey = `derive-goals:${targetWeek.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     try {
       const derivedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${targetWeek.id}/goals/derive`, {
-        method: "POST"
+        method: "POST",
+        signal: request.signal
       });
+      if (!request.isCurrent()) {
+        return;
+      }
       setWeekStack((current) => ({
         ...current,
         [derivedWeek.weekStartDate]: derivedWeek
@@ -761,49 +1115,50 @@ function AppShell() {
       loadAnalyticsPlanning();
       setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not refresh weekly goals."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not refresh weekly goals."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
     }
-  }
-
-  function loadTrainingTimeline() {
-    fetchJson<TrainingTimelineSummary>("/api/training-timeline")
-      .then((body) => {
-        setTimelineSummary(body);
-        setApiError(null);
-      })
-      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load the training timeline.")));
-  }
-
-  function loadStravaStatus() {
-    fetchJson<StravaStatus>("/api/auth/strava/status")
-      .then(setStravaStatus)
-      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load Strava status.")));
-  }
-
-  function loadActivities() {
-    fetchJson<StravaActivity[]>("/api/activities")
-      .then(setActivities)
-      .catch((error: unknown) => setApiError(toApiErrorPresentation(error, "Could not load activities.")));
   }
 
   async function runBackfill() {
     if (blockStaleWrite("syncing Strava")) {
       return;
     }
+    const mutationKey = "strava-sync";
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
     setIsSyncing(true);
     try {
       const job = await fetchJson<SyncJob>("/api/sync/strava/backfill", {
         method: "POST",
-        body: JSON.stringify({ days: 180 })
+        body: JSON.stringify({ days: 180 }),
+        signal: request.signal
       });
+      if (!request.isCurrent()) {
+        return;
+      }
       setLastSyncJob(job);
       loadActivities();
       loadStravaStatus();
       loadTrainingTimeline();
+      setApiError(null);
     } catch (error) {
-      setApiError(toApiErrorPresentation(error, "Could not sync Strava."));
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not sync Strava."));
+      }
     } finally {
-      setIsSyncing(false);
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSyncing(false);
+      }
     }
   }
 
@@ -816,10 +1171,11 @@ function AppShell() {
       <LoginView
         apiError={apiError}
         form={loginForm}
-        isConfigured={Boolean(session?.configured)}
+        isConfigured={session?.configured ?? null}
         isLoggingIn={isLoggingIn}
         loginError={loginError}
         setForm={setLoginForm}
+        onRetrySession={loadSession}
         onSubmit={login}
       />
     );
@@ -892,7 +1248,25 @@ function AppShell() {
               detail={apiError.detail}
             />
           ) : null}
-          {staleFrontend ? (
+          {compatibility.status === "checking" ? (
+            <StatusBanner
+              tone="warning"
+              icon={<RefreshCw size={18} />}
+              title="Checking compatibility"
+              detail="Changes are disabled until this frontend is confirmed compatible with the API."
+            />
+          ) : null}
+          {compatibility.status === "error" ? (
+            <StatusBanner
+              tone="danger"
+              icon={compatibility.error.kind === "network" ? <WifiOff size={18} /> : <ShieldAlert size={18} />}
+              title="Compatibility check failed"
+              detail={compatibility.error.detail}
+              actionLabel="Retry"
+              onAction={checkCompatibility}
+            />
+          ) : null}
+          {compatibility.status === "incompatible" ? (
             <StatusBanner
               tone="danger"
               icon={<ShieldAlert size={18} />}
@@ -941,8 +1315,9 @@ function AppShell() {
           ) : null}
           <div hidden={activeTab !== "plan"}>
             <PlanningWorkspace
+              key={session.activeAthleteAccountId}
               onChangeSection={navigatePlanningSection}
-              writesBlocked={staleFrontend}
+              writesBlocked={writesBlocked}
               section={planningSection}
               selectedPlanId={selectedPlanRouteId}
               onSelectPlan={navigatePlan}
@@ -984,7 +1359,7 @@ function AppShell() {
               onRefreshSession={refreshSession}
               stravaStatus={stravaStatus}
               session={session}
-              writesBlocked={staleFrontend}
+              writesBlocked={writesBlocked}
               frontendVersion={FRONTEND_VERSION}
             />
           ) : null}
@@ -993,18 +1368,28 @@ function AppShell() {
         {editor ? (
           <WorkoutEditor
             editor={editor}
+            error={workoutSaveError}
+            isSaving={isSavingWorkout}
             setEditor={setEditor}
             onSubmit={saveWorkout}
-            onClose={() => setEditor(null)}
+            onClose={() => {
+              setEditor(null);
+              setWorkoutSaveError(null);
+            }}
           />
         ) : null}
         {goalEditor ? (
           <WeekGoalEditor
             editor={goalEditor}
+            error={goalSaveError}
+            isSaving={isSavingGoal}
             metrics={goalMetricsQuery.data ?? []}
             setEditor={setGoalEditor}
             onSubmit={saveGoal}
-            onClose={() => setGoalEditor(null)}
+            onClose={() => {
+              setGoalEditor(null);
+              setGoalSaveError(null);
+            }}
           />
         ) : null}
         {planWeekDraft ? (

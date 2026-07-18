@@ -15,6 +15,7 @@ function LoginHarness({ onSubmit = vi.fn() }: { onSubmit?: () => void }) {
       isLoggingIn={false}
       loginError={null}
       setForm={setForm}
+      onRetrySession={vi.fn()}
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit();
@@ -47,6 +48,7 @@ describe("LoginView", () => {
         isLoggingIn={false}
         loginError={null}
         setForm={vi.fn()}
+        onRetrySession={vi.fn()}
         onSubmit={vi.fn()}
       />
     );
@@ -56,6 +58,7 @@ describe("LoginView", () => {
   });
 
   it("shows backend and credential failures", () => {
+    const onRetrySession = vi.fn();
     render(
       <LoginView
         apiError={{ kind: "network", title: "Backend unreachable", detail: "Failed to fetch" }}
@@ -64,11 +67,34 @@ describe("LoginView", () => {
         isLoggingIn={false}
         loginError="Invalid credentials."
         setForm={vi.fn()}
+        onRetrySession={onRetrySession}
         onSubmit={vi.fn()}
       />
     );
 
     expect(screen.getByText("Backend unreachable")).toBeVisible();
     expect(screen.getByText("Invalid credentials.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("allows retrying when session configuration could not be loaded", async () => {
+    const user = userEvent.setup();
+    const onRetrySession = vi.fn();
+    render(
+      <LoginView
+        apiError={{ kind: "network", title: "Backend unreachable", detail: "Try again." }}
+        form={{ username: "", password: "" }}
+        isConfigured={null}
+        isLoggingIn={false}
+        loginError={null}
+        setForm={vi.fn()}
+        onRetrySession={onRetrySession}
+        onSubmit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetrySession).toHaveBeenCalledOnce();
   });
 });

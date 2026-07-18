@@ -19,12 +19,16 @@ import {
 
 export function WeekGoalEditor({
   editor,
+  error,
+  isSaving,
   metrics,
   setEditor,
   onSubmit,
   onClose
 }: {
   editor: WeekGoalForm;
+  error: string | null;
+  isSaving: boolean;
   metrics: GoalMetricDefinition[];
   setEditor: (editor: WeekGoalForm) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -97,11 +101,12 @@ export function WeekGoalEditor({
       <aside className="editor-panel" aria-label="Weekly goal editor">
         <header>
           <h2>{editor.id ? "Edit week goal" : "New week goal"}</h2>
-          <button type="button" title="Close" onClick={onClose}>
+          <button type="button" title="Close" disabled={isSaving} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
-        <form onSubmit={onSubmit}>
+        <form aria-busy={isSaving} onSubmit={onSubmit}>
+          {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
           <div className="form-grid">
             <label>
               <span>Metric</span>
@@ -196,9 +201,9 @@ export function WeekGoalEditor({
             />
           </label>
           <div className="editor-actions">
-            <button className="primary" disabled={Boolean(validationError)} type="submit">
+            <button className="primary" disabled={Boolean(validationError) || isSaving} type="submit">
               <Save size={17} />
-              <span>Save</span>
+              <span>{isSaving ? "Saving…" : "Save"}</span>
             </button>
           </div>
         </form>

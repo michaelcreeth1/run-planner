@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "../../lib/api";
+import { useProfileId } from "../../lib/profileContext";
 import type { GoalMetricDefinition, RecurringGoal } from "../../types/domain";
 import { GoalListEditor } from "./GoalListEditor";
 import type { GoalDraft } from "./goalDrafts";
@@ -15,39 +16,84 @@ export function DefaultGoalsCard({
   onGoalsSaved?: () => void;
   writesBlocked: boolean;
 }) {
+  const profileId = useProfileId();
   const [drafts, setDrafts] = useState<GoalDraft[]>([]);
   const [metrics, setMetrics] = useState<GoalMetricDefinition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedDraftsRef = useRef(false);
   const lastSavedSnapshotRef = useRef("");
+  const failedSnapshotRef = useRef("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
+  const saveControllerRef = useRef<AbortController | null>(null);
+  const activeProfileIdRef = useRef(profileId);
+  activeProfileIdRef.current = profileId;
   const metricsByKey = useMemo(() => metricMap(metrics), [metrics]);
 
   useEffect(() => {
+    loadControllerRef.current?.abort();
+    saveControllerRef.current?.abort();
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    hasLoadedDraftsRef.current = false;
+    lastSavedSnapshotRef.current = "";
+    failedSnapshotRef.current = "";
+    setDrafts([]);
+    setMetrics([]);
+    setIsLoading(true);
+    setIsSaving(false);
+    setResolvedProfileId(null);
+    setMessage(null);
+    setError(null);
     Promise.all([
-      fetchJson<RecurringGoal[]>("/api/default-goals"),
-      fetchJson<GoalMetricDefinition[]>("/api/goal-metrics")
+      fetchJson<RecurringGoal[]>("/api/default-goals", { signal: controller.signal }),
+      fetchJson<GoalMetricDefinition[]>("/api/goal-metrics", { signal: controller.signal })
     ])
       .then(([goals, availableMetrics]) => {
+        if (controller.signal.aborted || activeProfileIdRef.current !== profileId) {
+          return;
+        }
         const loadedDrafts = goals.map(goalToDraft);
         setMetrics(availableMetrics);
         lastSavedSnapshotRef.current = serializeGoalDrafts(loadedDrafts);
         hasLoadedDraftsRef.current = true;
         setDrafts(loadedDrafts);
       })
-      .catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : "Could not load baseline goals.")
-      )
-      .finally(() => setIsLoading(false));
-  }, []);
+      .catch((loadError) => {
+        if (!controller.signal.aborted && activeProfileIdRef.current === profileId) {
+          setError(loadError instanceof Error ? loadError.message : "Could not load baseline goals.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && activeProfileIdRef.current === profileId) {
+          setResolvedProfileId(profileId);
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      controller.abort();
+      saveControllerRef.current?.abort();
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [profileId]);
 
   const saveDrafts = useCallback(
     async (draftsToSave: GoalDraft[]) => {
       const currentMetricMap = metricMap(metrics);
       if (
+        activeProfileIdRef.current !== profileId ||
+        resolvedProfileId !== profileId ||
         writesBlocked ||
         draftsToSave.some((draft) => goalDraftError(draft, currentMetricMap) !== null)
       ) {
@@ -58,19 +104,29 @@ export function DefaultGoalsCard({
         return;
       }
 
+      saveControllerRef.current?.abort();
+      const controller = new AbortController();
+      const savingProfileId = profileId;
+      saveControllerRef.current = controller;
+      failedSnapshotRef.current = "";
       setIsSaving(true);
       setMessage("Saving changes…");
       setError(null);
       try {
         const saved = await fetchJson<RecurringGoal[]>("/api/default-goals", {
           method: "PUT",
-          body: JSON.stringify(draftsToSave.map((draft) => goalDraftPayload(draft, currentMetricMap)))
+          body: JSON.stringify(draftsToSave.map((draft) => goalDraftPayload(draft, currentMetricMap))),
+          signal: controller.signal
         });
+        if (controller.signal.aborted || activeProfileIdRef.current !== savingProfileId) {
+          return;
+        }
         const savedDrafts = saved.map((goal, index) => ({
           ...goalToDraft(goal),
           key: draftsToSave[index]?.key ?? goal.id
         }));
         lastSavedSnapshotRef.current = serializeGoalDrafts(savedDrafts);
+        failedSnapshotRef.current = "";
         setDrafts((currentDrafts) => {
           if (serializeGoalDrafts(currentDrafts) === snapshotToSave) {
             return savedDrafts;
@@ -84,13 +140,21 @@ export function DefaultGoalsCard({
         setMessage("Goals saved.");
         onGoalsSaved?.();
       } catch (saveError) {
-        setError(saveError instanceof Error ? saveError.message : "Could not save baseline goals.");
-        setMessage(null);
+        if (!controller.signal.aborted && activeProfileIdRef.current === savingProfileId) {
+          failedSnapshotRef.current = snapshotToSave;
+          setError(saveError instanceof Error ? saveError.message : "Could not save baseline goals.");
+          setMessage(null);
+        }
       } finally {
-        setIsSaving(false);
+        if (saveControllerRef.current === controller) {
+          saveControllerRef.current = null;
+        }
+        if (!controller.signal.aborted && activeProfileIdRef.current === savingProfileId) {
+          setIsSaving(false);
+        }
       }
     },
-    [metrics, onGoalsSaved, writesBlocked]
+    [metrics, onGoalsSaved, profileId, resolvedProfileId, writesBlocked]
   );
 
   useEffect(() => {
@@ -98,11 +162,20 @@ export function DefaultGoalsCard({
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    if (isLoading || isSaving || !hasLoadedDraftsRef.current || metrics.length === 0) {
+    if (
+      resolvedProfileId !== profileId ||
+      isLoading ||
+      isSaving ||
+      !hasLoadedDraftsRef.current ||
+      metrics.length === 0
+    ) {
       return;
     }
     const currentSnapshot = serializeGoalDrafts(drafts);
     if (currentSnapshot === lastSavedSnapshotRef.current) {
+      return;
+    }
+    if (currentSnapshot === failedSnapshotRef.current) {
       return;
     }
     if (writesBlocked) {
@@ -125,17 +198,24 @@ export function DefaultGoalsCard({
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [drafts, isLoading, isSaving, metrics, metricsByKey, saveDrafts, writesBlocked]);
+  }, [drafts, isLoading, isSaving, metrics, metricsByKey, profileId, resolvedProfileId, saveDrafts, writesBlocked]);
+
+  const isLoadingCurrentProfile = isLoading || resolvedProfileId !== profileId;
+  const canRetrySave = Boolean(
+    error &&
+    !isSaving &&
+    !writesBlocked &&
+    serializeGoalDrafts(drafts) === failedSnapshotRef.current
+  );
 
   return (
     <section className="settings-card default-goals-card">
       <header className="settings-card-header goals-section-header">
         <div>
           <h2>Baseline goals</h2>
-          <p>Every training week is checked against these.</p>
         </div>
       </header>
-      {isLoading ? (
+      {isLoadingCurrentProfile ? (
         <div className="settings-note">Loading…</div>
       ) : (
         <>
@@ -152,6 +232,11 @@ export function DefaultGoalsCard({
               {isSaving ? <div className="settings-note">Saving changes…</div> : null}
               {!isSaving && message ? <div className="settings-note">{message}</div> : null}
               {error ? <div className="settings-note settings-note--danger">{error}</div> : null}
+              {canRetrySave ? (
+                <button className="text-action" type="button" onClick={() => void saveDrafts(drafts)}>
+                  Retry save
+                </button>
+              ) : null}
             </footer>
           ) : null}
         </>

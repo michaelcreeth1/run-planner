@@ -136,7 +136,6 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
       <header className="settings-card-header goals-section-header">
         <div>
           <h2>Goal impact</h2>
-          <p>See how your goals apply across the active plan.</p>
         </div>
         <div className="analytics-segmented-control goal-impact-history-control" aria-label="Matrix timeframe">
           <span>History</span>

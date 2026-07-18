@@ -580,9 +580,14 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "execution") {
-    return [
-      { id: "edit_plan", label: "Edit current week", variant: "primary", icon: "calendar" }
-    ];
+    const hasExistingPlan =
+      week.workouts.length > 0 ||
+      week.goals.length > 0 ||
+      week.notes.trim().length > 0 ||
+      hasStructuredPlanContext(week);
+    return hasExistingPlan
+      ? [{ id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }]
+      : [{ id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }];
   }
 
   if (mode === "planning") {
@@ -593,7 +598,7 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
     return [
       {
         id: hasScheduledPlan ? "edit_plan" : "plan_week",
-        label: hasScheduledPlan ? "Edit upcoming week" : "Plan upcoming week",
+        label: hasScheduledPlan ? "Edit plan" : "Plan week",
         variant: "primary",
         icon: "calendar"
       }

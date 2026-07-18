@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.goal_metrics import (
     GOAL_METRICS,
@@ -147,6 +147,24 @@ class PlannedWorkoutUpdate(ApiModel):
     notes: str | None = None
     status: WorkoutStatus | None = None
 
+    @field_validator(
+        "planned_date",
+        "title",
+        "sport",
+        "workout_type",
+        "intensity_category",
+        "purpose",
+        "instructions",
+        "notes",
+        "status",
+        mode="before",
+    )
+    @classmethod
+    def reject_null_required_fields(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null.")
+        return value
+
 
 class PlannedWorkoutMove(ApiModel):
     planned_date: date
@@ -239,6 +257,26 @@ class WeekGoalUpdate(ApiModel):
     is_editable: bool | None = None
     is_enabled: bool | None = None
 
+    @field_validator(
+        "category",
+        "goal_type",
+        "label",
+        "description",
+        "unit",
+        "evaluation_mode",
+        "priority",
+        "status",
+        "source",
+        "is_editable",
+        "is_enabled",
+        mode="before",
+    )
+    @classmethod
+    def reject_null_required_fields(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null.")
+        return value
+
 
 class WeekGoalEvaluationRead(ApiModel):
     goal_id: str
@@ -279,6 +317,13 @@ class TrainingWeekPatch(ApiModel):
     target_mileage: float | None = Field(default=None, ge=0)
     target_long_run_distance: float | None = Field(default=None, ge=0)
     is_down_week: bool | None = None
+
+    @field_validator("notes", "purpose", "is_down_week", mode="before")
+    @classmethod
+    def reject_null_required_fields(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null.")
+        return value
 
 
 class PlanWeekWorkout(PlannedWorkoutBase):
@@ -371,6 +416,22 @@ class GoalRaceUpdate(ApiModel):
     location: str | None = None
     altitude_context: str | None = None
     notes: str | None = None
+
+    @field_validator(
+        "name",
+        "race_date",
+        "distance",
+        "priority",
+        "location",
+        "altitude_context",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def reject_null_required_fields(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null.")
+        return value
 
 
 class GoalRaceRead(GoalRaceBase):
@@ -475,6 +536,13 @@ class TrainingPlanMetadataPatch(ApiModel):
     description: str | None = None
     status: PlanStatus | None = None
     notes: str | None = None
+
+    @field_validator("name", "description", "status", "notes", mode="before")
+    @classmethod
+    def reject_null_required_fields(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null.")
+        return value
 
 
 class PlanWeekSummaryRead(ApiModel):

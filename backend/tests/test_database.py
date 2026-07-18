@@ -2,6 +2,7 @@ import os
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.db.migrations import migration_files, run_migrations
 from app.db.session import engine
@@ -49,6 +50,27 @@ def test_all_dialect_migrations_are_recorded_and_idempotent() -> None:
         )
 
     assert applied == expected
+
+
+def test_database_enforces_foreign_keys() -> None:
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO training_weeks (
+                  id,
+                  athlete_account_id,
+                  week_start_date,
+                  week_end_date
+                ) VALUES (
+                  'orphaned-week',
+                  'missing-athlete',
+                  '2026-07-13',
+                  '2026-07-19'
+                )
+                """
+            )
+        )
 
 
 @pytest.mark.postgresql

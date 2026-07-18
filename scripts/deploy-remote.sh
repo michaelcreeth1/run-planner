@@ -14,12 +14,15 @@ Options:
   --remote-dir PATH   Server-side app bundle path. Default: /home/mike/compose/run-planner
   --dry-run           Show what would be archived and do not deploy
   --skip-checks       Skip the local make check pre-deploy gate
+  --allow-development
+                      Explicitly allow APP_ENV=development on the remote host
   -h, --help          Show this help text
 
 Examples:
   scripts/deploy-remote.sh
   scripts/deploy-remote.sh --dry-run
   scripts/deploy-remote.sh --skip-checks
+  scripts/deploy-remote.sh --allow-development
   scripts/deploy-remote.sh -- --skip-build
   scripts/deploy-remote.sh --host docker --remote-dir /home/mike/compose/run-planner
 
@@ -91,6 +94,7 @@ REMOTE_HOST="${DEPLOY_REMOTE_HOST:-docker}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/home/mike/compose/run-planner}"
 DRY_RUN=0
 SKIP_CHECKS=0
+ALLOW_DEVELOPMENT=0
 DEPLOY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -109,6 +113,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-checks)
       SKIP_CHECKS=1
+      shift
+      ;;
+    --allow-development)
+      ALLOW_DEVELOPMENT=1
       shift
       ;;
     --)
@@ -143,6 +151,22 @@ if [[ "$DATABASE_URL_VALUE" == *"@localhost:"* ]] || [[ "$DATABASE_URL_VALUE" ==
   exit 1
 fi
 
+APP_ENV_VALUE="$(load_env_value APP_ENV)"
+if [[ "$APP_ENV_VALUE" != "production" ]]; then
+  if (( ALLOW_DEVELOPMENT == 0 )); then
+    echo "Refusing remote deploy with APP_ENV=${APP_ENV_VALUE:-unset}." >&2
+    echo "Set APP_ENV=production, or pass --allow-development for an intentional development deploy." >&2
+    exit 1
+  fi
+
+  if [[ "$APP_ENV_VALUE" != "development" ]]; then
+    echo "--allow-development only permits APP_ENV=development, not ${APP_ENV_VALUE:-unset}." >&2
+    exit 1
+  fi
+
+  echo "WARNING: Explicitly allowing APP_ENV=development on the remote host." >&2
+fi
+
 fail_on_extra_env_files
 
 TAR_EXCLUDES=(
@@ -162,16 +186,13 @@ TAR_EXCLUDES=(
   --exclude "./.venv"
   --exclude "./*.egg-info"
   --exclude "./backend/data"
+  --exclude "./data"
   --exclude "./node_modules"
   --exclude "./dist"
   --exclude "./frontend/dist"
   --exclude "./frontend/.vite"
   --exclude "./frontend/.env.local"
   --exclude "./frontend/coverage"
-  --exclude "./data/*.db"
-  --exclude "./data/*.db-*"
-  --exclude "./data/*.sqlite"
-  --exclude "./data/*.sqlite-*"
   --exclude "./backups"
 )
 
@@ -213,38 +234,246 @@ fi
 REMOTE_SYNC_SCRIPT="
 set -euo pipefail
 
-remote_dir=$REMOTE_DIR_QUOTED
-staging=\$(mktemp -d)
-preserve_dir=\$(mktemp -d)
+remote_dir_input=$REMOTE_DIR_QUOTED
+if [[ \"\$remote_dir_input\" != /* ]] || [[ \"\$remote_dir_input\" == / ]]; then
+  echo \"Remote deploy path must be an absolute, non-root path: \$remote_dir_input\" >&2
+  exit 1
+fi
+
+remote_name=\$(basename -- \"\$remote_dir_input\")
+if [[ \"\$remote_name\" == . ]] || [[ \"\$remote_name\" == .. ]]; then
+  echo \"Remote deploy path has an unsafe basename: \$remote_dir_input\" >&2
+  exit 1
+fi
+
+remote_parent_input=\$(dirname -- \"\$remote_dir_input\")
+mkdir -p \"\$remote_parent_input\"
+remote_parent=\$(cd \"\$remote_parent_input\" && pwd -P)
+remote_home=\$(cd \"\$HOME\" && pwd -P)
+remote_dir=\"\$remote_parent/\$remote_name\"
+rollback_dir=\"\$remote_parent/.\${remote_name}.rollback\"
+
+if [[ \"\$remote_parent\" == / ]] || [[ \"\$remote_dir\" == \"\$remote_home\" ]]; then
+  echo \"Refusing broad remote deploy path: \$remote_dir\" >&2
+  exit 1
+fi
+
+is_run_planner_bundle() {
+  local bundle=\"\$1\"
+
+  if [[ -f \"\$bundle/.run-planner-deployment\" ]] \\
+    && grep -Fxq run-planner \"\$bundle/.run-planner-deployment\"; then
+    return 0
+  fi
+
+  [[ -f \"\$bundle/docker-compose.yml\" ]] \\
+    && [[ -f \"\$bundle/scripts/deploy.sh\" ]] \\
+    && [[ -f \"\$bundle/backend/app/workers/main.py\" ]] \\
+    && [[ -f \"\$bundle/frontend/package.json\" ]] \\
+    && grep -Fq running-planner \"\$bundle/scripts/deploy.sh\"
+}
+
+if [[ -L \"\$remote_dir\" ]]; then
+  echo \"Refusing to replace symlinked remote deploy path: \$remote_dir\" >&2
+  exit 1
+fi
+
+if [[ -e \"\$remote_dir\" ]] && [[ ! -d \"\$remote_dir\" ]]; then
+  echo \"Remote deploy path exists but is not a directory: \$remote_dir\" >&2
+  exit 1
+fi
+
+if [[ -d \"\$remote_dir\" ]] && ! is_run_planner_bundle \"\$remote_dir\"; then
+  echo \"Refusing to replace a directory that is not a Run Planner bundle: \$remote_dir\" >&2
+  exit 1
+fi
+
+if [[ -e \"\$rollback_dir\" ]]; then
+  echo \"A prior rollback bundle still exists: \$rollback_dir\" >&2
+  echo \"Resolve it before starting another deployment.\" >&2
+  exit 1
+fi
+
+staging=\$(mktemp -d \"\$remote_parent/.\${remote_name}.staging.XXXXXX\")
+previous_moved=0
 
 cleanup() {
-  rm -rf \"\$staging\" \"\$preserve_dir\"
+  status=\$?
+
+  if (( status != 0 && previous_moved == 1 )) \\
+    && [[ ! -e \"\$remote_dir\" ]] && [[ -e \"\$rollback_dir\" ]]; then
+    mv \"\$rollback_dir\" \"\$remote_dir\" || true
+  fi
+
+  if [[ -n \"\$staging\" ]]; then
+    rm -rf \"\$staging\"
+  fi
+
+  return \"\$status\"
 }
 trap cleanup EXIT
 
 tar -xzf - -C \"\$staging\"
-mkdir -p \"\$remote_dir\"
+for required_path in .run-planner-deployment .env docker-compose.yml scripts/deploy.sh; do
+  if [[ ! -e \"\$staging/\$required_path\" ]]; then
+    echo \"Synced bundle is missing required path: \$required_path\" >&2
+    exit 1
+  fi
+done
 
+if ! grep -Fxq run-planner \"\$staging/.run-planner-deployment\"; then
+  echo \"Synced bundle has an invalid Run Planner deployment sentinel.\" >&2
+  exit 1
+fi
+
+# These paths are app-local only. The production Postgres data and backups live
+# in the separate shared Postgres project and are never inside remote_dir.
 for path in backend/data data backups; do
   if [[ -e \"\$remote_dir/\$path\" ]]; then
-    mkdir -p \"\$preserve_dir/\$(dirname \"\$path\")\"
-    mv \"\$remote_dir/\$path\" \"\$preserve_dir/\$path\"
+    if [[ -e \"\$staging/\$path\" ]]; then
+      echo \"Synced bundle unexpectedly contains preserved path: \$path\" >&2
+      exit 1
+    fi
+    mkdir -p \"\$staging/\$(dirname \"\$path\")\"
+    cp -a \"\$remote_dir/\$path\" \"\$staging/\$path\"
   fi
 done
 
-find \"\$remote_dir\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-cp -a \"\$staging\"/. \"\$remote_dir\"/
+chmod 600 \"\$staging/.env\"
 
-for path in backend/data data backups; do
-  if [[ -e \"\$preserve_dir/\$path\" ]]; then
-    mkdir -p \"\$remote_dir/\$(dirname \"\$path\")\"
-    mv \"\$preserve_dir/\$path\" \"\$remote_dir/\$path\"
+if [[ -e \"\$remote_dir\" ]]; then
+  mv \"\$remote_dir\" \"\$rollback_dir\"
+  previous_moved=1
+fi
+
+if ! mv \"\$staging\" \"\$remote_dir\"; then
+  if (( previous_moved == 1 )) && [[ -e \"\$rollback_dir\" ]]; then
+    mv \"\$rollback_dir\" \"\$remote_dir\"
+    previous_moved=0
   fi
-done
+  exit 1
+fi
+staging=\"\"
+
+trap - EXIT
+"
+
+REMOTE_FINALIZE_SCRIPT="
+set -euo pipefail
+
+remote_dir_input=$REMOTE_DIR_QUOTED
+remote_name=\$(basename -- \"\$remote_dir_input\")
+remote_parent=\$(cd \"\$(dirname -- \"\$remote_dir_input\")\" && pwd -P)
+remote_dir=\"\$remote_parent/\$remote_name\"
+rollback_dir=\"\$remote_parent/.\${remote_name}.rollback\"
+
+is_run_planner_bundle() {
+  local bundle=\"\$1\"
+  if [[ -f \"\$bundle/.run-planner-deployment\" ]] \\
+    && grep -Fxq run-planner \"\$bundle/.run-planner-deployment\"; then
+    return 0
+  fi
+  [[ -f \"\$bundle/docker-compose.yml\" ]] \\
+    && [[ -f \"\$bundle/scripts/deploy.sh\" ]] \\
+    && [[ -f \"\$bundle/backend/app/workers/main.py\" ]] \\
+    && [[ -f \"\$bundle/frontend/package.json\" ]] \\
+    && grep -Fq running-planner \"\$bundle/scripts/deploy.sh\"
+}
+
+if [[ -e \"\$rollback_dir\" ]]; then
+  if ! is_run_planner_bundle \"\$remote_dir\" \\
+    || ! is_run_planner_bundle \"\$rollback_dir\"; then
+    echo \"Refusing to prune an unverified rollback bundle: \$rollback_dir\" >&2
+    exit 1
+  fi
+  rm -rf -- \"\$rollback_dir\"
+fi
+"
+
+REMOTE_ROLLBACK_SCRIPT="
+set -euo pipefail
+
+remote_dir_input=$REMOTE_DIR_QUOTED
+remote_name=\$(basename -- \"\$remote_dir_input\")
+remote_parent=\$(cd \"\$(dirname -- \"\$remote_dir_input\")\" && pwd -P)
+remote_dir=\"\$remote_parent/\$remote_name\"
+rollback_dir=\"\$remote_parent/.\${remote_name}.rollback\"
+
+is_run_planner_bundle() {
+  local bundle=\"\$1\"
+  if [[ -f \"\$bundle/.run-planner-deployment\" ]] \\
+    && grep -Fxq run-planner \"\$bundle/.run-planner-deployment\"; then
+    return 0
+  fi
+  [[ -f \"\$bundle/docker-compose.yml\" ]] \\
+    && [[ -f \"\$bundle/scripts/deploy.sh\" ]] \\
+    && [[ -f \"\$bundle/backend/app/workers/main.py\" ]] \\
+    && [[ -f \"\$bundle/frontend/package.json\" ]] \\
+    && grep -Fq running-planner \"\$bundle/scripts/deploy.sh\"
+}
+
+if [[ ! -d \"\$rollback_dir\" ]] || ! is_run_planner_bundle \"\$rollback_dir\"; then
+  echo \"No verified prior Run Planner release is available for rollback.\" >&2
+  exit 1
+fi
+
+if [[ -e \"\$remote_dir\" ]] && ! is_run_planner_bundle \"\$remote_dir\"; then
+  echo \"Refusing to replace an unverified failed release: \$remote_dir\" >&2
+  exit 1
+fi
+
+failed_root=\"\"
+cleanup() {
+  status=\$?
+  if (( status != 0 )) && [[ ! -e \"\$remote_dir\" ]] \\
+    && [[ -n \"\$failed_root\" ]] && [[ -e \"\$failed_root/release\" ]]; then
+    mv \"\$failed_root/release\" \"\$remote_dir\" || true
+  fi
+  if [[ -n \"\$failed_root\" ]] && [[ -d \"\$failed_root\" ]] \\
+    && [[ ! -e \"\$failed_root/release\" ]]; then
+    rmdir \"\$failed_root\" || true
+  fi
+  return \"\$status\"
+}
+trap cleanup EXIT
+
+if [[ -e \"\$remote_dir\" ]]; then
+  failed_root=\$(mktemp -d \"\$remote_parent/.\${remote_name}.failed.XXXXXX\")
+  mv \"\$remote_dir\" \"\$failed_root/release\"
+fi
+
+if ! mv \"\$rollback_dir\" \"\$remote_dir\"; then
+  exit 1
+fi
+
+if [[ -n \"\$failed_root\" ]]; then
+  rm -rf -- \"\$failed_root\"
+  failed_root=\"\"
+fi
+
+trap - EXIT
 "
 
 COPYFILE_DISABLE=1 tar -czf - "${TAR_EXCLUDES[@]}" -C "$ROOT_DIR" . | ssh "$REMOTE_HOST" "bash -lc $(shell_quote "$REMOTE_SYNC_SCRIPT")"
 
 echo
 echo "Running remote deploy on $REMOTE_HOST..."
-ssh "$REMOTE_HOST" "$REMOTE_DEPLOY_COMMAND"
+if ssh "$REMOTE_HOST" "$REMOTE_DEPLOY_COMMAND"; then
+  ssh "$REMOTE_HOST" "bash -lc $(shell_quote "$REMOTE_FINALIZE_SCRIPT")"
+else
+  deploy_status=$?
+  echo "Remote deploy failed; attempting to restore the prior release..." >&2
+
+  if ssh "$REMOTE_HOST" "bash -lc $(shell_quote "$REMOTE_ROLLBACK_SCRIPT")"; then
+    echo "Prior source release restored; redeploying it..." >&2
+    if ssh "$REMOTE_HOST" "$REMOTE_DEPLOY_COMMAND"; then
+      echo "Prior release is healthy again." >&2
+    else
+      echo "Prior source was restored, but its deployment did not become healthy." >&2
+    fi
+  else
+    echo "Automatic source rollback was unavailable or failed." >&2
+  fi
+
+  exit "$deploy_status"
+fi

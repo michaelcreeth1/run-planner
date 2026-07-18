@@ -97,6 +97,14 @@ def update_goal_race(
             "notes": updates.get("notes", race.notes),
         }
         updates = validated_goal_race_data(GoalRaceCreate(**merged))
+    proposed_race_date = updates.get("race_date", previous_race_date)
+    if proposed_race_date != previous_race_date:
+        preflight_linked_plans_to_race_date(
+            db,
+            race,
+            proposed_race_date,
+            athlete_account_id,
+        )
     for field, value in updates.items():
         setattr(race, field, value)
     if race.race_date != previous_race_date:
@@ -104,6 +112,71 @@ def update_goal_race(
     db.commit()
     db.refresh(race)
     return serialize_goal_race(race)
+
+
+def preflight_linked_plans_to_race_date(
+    db: Session,
+    race: GoalRace,
+    proposed_race_date: date,
+    athlete_account_id: str,
+) -> None:
+    linked_plans = db.scalars(
+        select(TrainingPlan)
+        .where(
+            TrainingPlan.goal_race_id == race.id,
+            TrainingPlan.athlete_account_id == athlete_account_id,
+        )
+        .options(*PLAN_RELATIONSHIPS)
+    ).all()
+    for plan in linked_plans:
+        if proposed_race_date < plan.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{race.name} cannot move before the start of its linked training plan."
+                ),
+            )
+        validate_no_overlap(
+            db,
+            athlete_account_id,
+            plan.start_date,
+            proposed_race_date,
+            existing_plan_id=plan.id,
+            incoming_status=plan.status,
+        )
+
+        retained_mesocycles = [
+            mesocycle
+            for mesocycle in plan.mesocycles
+            if mesocycle.start_date <= proposed_race_date
+        ]
+        if not retained_mesocycles:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Goal race date must fall on or after the first training phase.",
+            )
+        normalized_mesocycles = [
+            serialize_mesocycle(mesocycle) for mesocycle in retained_mesocycles
+        ]
+        normalized_mesocycles[-1] = {
+            **normalized_mesocycles[-1],
+            "end_date": proposed_race_date,
+        }
+        old_linked_weeks = linked_weeks_by_start(db, plan.id, athlete_account_id)
+        existing_weeks = weeks_for_preview(
+            db,
+            athlete_account_id,
+            plan.start_date,
+            proposed_race_date,
+            existing_plan_id=plan.id,
+        )
+        ensure_scaffold_weeks_are_mutable(
+            db,
+            athlete_account_id,
+            materialize_scaffold_weeks(normalized_mesocycles),
+            existing_weeks,
+            old_linked_weeks,
+        )
 
 
 def sync_linked_plans_to_race_date(
@@ -218,6 +291,19 @@ def preview_plan(
 
 def create_plan(db: Session, payload: TrainingPlanSpec, athlete_account_id: str) -> dict[str, Any]:
     normalized = normalize_plan_spec(db, payload, athlete_account_id)
+    existing_weeks = weeks_for_preview(
+        db,
+        athlete_account_id,
+        normalized["start_date"],
+        normalized["end_date"],
+    )
+    ensure_scaffold_weeks_are_mutable(
+        db,
+        athlete_account_id,
+        materialize_scaffold_weeks(normalized["mesocycles"]),
+        existing_weeks,
+        {},
+    )
     goal_race_id = resolve_goal_race_id(db, normalized, athlete_account_id)
     plan = TrainingPlan(
         athlete_account_id=athlete_account_id,
@@ -236,7 +322,7 @@ def create_plan(db: Session, payload: TrainingPlanSpec, athlete_account_id: str)
         db,
         athlete_account_id,
         normalized["mesocycles"],
-        weeks_for_preview(db, athlete_account_id, plan.start_date, plan.end_date),
+        existing_weeks,
         linked_weeks_by_start={},
         apply_changes=True,
         recurring_goals=normalized["recurring_goals"],
@@ -256,6 +342,20 @@ def replace_plan(
     plan = get_plan_model(db, plan_id, athlete_account_id)
     normalized = normalize_plan_spec(db, payload, athlete_account_id, existing_plan_id=plan_id)
     old_linked = linked_weeks_by_start(db, plan_id, athlete_account_id)
+    weeks = weeks_for_preview(
+        db,
+        athlete_account_id,
+        normalized["start_date"],
+        normalized["end_date"],
+        existing_plan_id=plan_id,
+    )
+    ensure_scaffold_weeks_are_mutable(
+        db,
+        athlete_account_id,
+        materialize_scaffold_weeks(normalized["mesocycles"]),
+        weeks,
+        old_linked,
+    )
     plan.name = normalized["name"]
     plan.description = normalized["description"]
     plan.start_date = normalized["start_date"]
@@ -265,13 +365,6 @@ def replace_plan(
     plan.goal_race_id = resolve_goal_race_id(db, normalized, athlete_account_id)
     db.add(plan)
     replace_plan_children(db, plan, normalized, athlete_account_id)
-    weeks = weeks_for_preview(
-        db,
-        athlete_account_id,
-        plan.start_date,
-        plan.end_date,
-        existing_plan_id=plan_id,
-    )
     scaffold_weeks(
         db,
         athlete_account_id,
@@ -308,6 +401,8 @@ def delete_plan(
 ) -> None:
     plan = get_plan_model(db, plan_id, athlete_account_id)
     weeks = list(linked_weeks_by_start(db, plan_id, athlete_account_id).values())
+    for week in weeks:
+        planning.ensure_week_is_mutable(week)
     for week in weeks:
         week.mesocycle_id = None
         if clear_scaffolding:
@@ -594,6 +689,14 @@ def scaffold_weeks(
     recurring_goals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scheduled_weeks = materialize_scaffold_weeks(mesocycles)
+    if apply_changes:
+        ensure_scaffold_weeks_are_mutable(
+            db,
+            athlete_account_id,
+            scheduled_weeks,
+            existing_weeks,
+            linked_weeks_by_start,
+        )
     projected_week_summaries = project_scaffold_week_summaries(
         scheduled_weeks,
         existing_weeks,
@@ -739,6 +842,31 @@ def scaffold_weeks(
         "week_summaries": projected_week_summaries,
         "warnings": warnings,
     }
+
+
+def ensure_scaffold_weeks_are_mutable(
+    db: Session,
+    athlete_account_id: str,
+    scheduled_weeks: list[ScaffoldWeek],
+    existing_weeks: dict[date, TrainingWeek],
+    linked_weeks_by_start: dict[date, TrainingWeek],
+) -> None:
+    weeks_by_start = dict(existing_weeks)
+    weeks_by_start.update(linked_weeks_by_start)
+    affected_week_starts = {
+        *(week.week_start_date for week in scheduled_weeks),
+        *linked_weeks_by_start,
+    }
+    for week_start_date in sorted(affected_week_starts):
+        existing = weeks_by_start.get(week_start_date)
+        if existing is not None:
+            planning.ensure_week_is_mutable(existing)
+        else:
+            planning.ensure_week_start_is_mutable(
+                db,
+                week_start_date,
+                athlete_account_id,
+            )
 
 
 def materialize_scaffold_weeks(mesocycles: list[dict[str, Any]]) -> list[ScaffoldWeek]:

@@ -29,11 +29,21 @@ const metrics: GoalMetricDefinition[] = [
   }
 ];
 
-function GoalHarness({ onSave }: { onSave: (form: WeekGoalForm) => void }) {
+function GoalHarness({
+  error = null,
+  isSaving = false,
+  onSave
+}: {
+  error?: string | null;
+  isSaving?: boolean;
+  onSave: (form: WeekGoalForm) => void;
+}) {
   const [editor, setEditor] = useState(() => defaultGoalForm("week-1"));
   return (
     <WeekGoalEditor
       editor={editor}
+      error={error}
+      isSaving={isSaving}
       metrics={metrics}
       setEditor={setEditor}
       onClose={vi.fn()}
@@ -99,5 +109,13 @@ describe("WeekGoalEditor", () => {
         priority: "guardrail"
       })
     );
+  });
+
+  it("disables and relabels submit while saving and shows a save failure", () => {
+    render(<GoalHarness error="Goal save failed." isSaving onSave={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    expect(screen.getByTitle("Close")).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Goal save failed.");
   });
 });

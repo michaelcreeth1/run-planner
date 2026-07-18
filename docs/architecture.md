@@ -6,7 +6,8 @@
 Browser / installed PWA
         |
         v
-React + Vite frontend
+Nginx serving the React/Vite build
+and proxying API/readiness requests
         |
         v
 FastAPI API container
@@ -22,11 +23,11 @@ Dedicated running_planner database
 on shared Postgres instance
 ```
 
-The worker and API share the same codebase and database URL. The database lives in a dedicated `running_planner` database on the shared Postgres instance, not in the default `postgres` database.
+The worker and API share the same codebase and database URL. The database lives in a dedicated `running_planner` database on the shared Postgres instance, not in the default `postgres` database. The repository SQLite database is test data, not a production datastore.
 
 ## Local Ports and Paths
 
-- Frontend dev/PWA shell: `http://localhost:5173`
+- Frontend: `http://localhost:5173` (Vite in local development; Nginx in the Compose image)
 - API: `http://localhost:8000`
 - Health: `http://localhost:8000/healthz`
 - Readiness: `http://localhost:8000/readyz`
@@ -61,7 +62,7 @@ Caddy LXC
         |
         v
 Docker host LXC
-        |-- frontend container or static files
+        |-- Nginx frontend container
         |-- backend API container
         |-- worker container
         `-- optional Redis container
@@ -80,7 +81,7 @@ The backend exposes:
 GET /api/version
 ```
 
-The frontend checks this endpoint on launch. If `forceReload` is true or the installed frontend version is below `frontendMinVersion`, unsafe writes should be blocked. The Phase 0 UI displays the warning; write blocking becomes meaningful when mutations land in Phase 1.
+The frontend checks this endpoint on launch. Writes remain blocked while compatibility is unknown or the check has failed, as well as when `forceReload` is true or the installed frontend version is below `frontendMinVersion`. The UI exposes a retry action so a transient version-check failure does not require a page reload.
 
 ## Sync
 
@@ -99,7 +100,7 @@ GET  /api/webhooks/strava
 POST /api/webhooks/strava
 ```
 
-Tokens are encrypted before storage. The sync implementation supports manual backfill, worker-driven reconciliation polling, and Strava webhooks. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. In webhook-enabled deployments, use Strava's app-level push subscription for normal activity freshness and stretch the worker poll interval to a slower reconciliation cadence.
+Tokens are encrypted before storage. The sync implementation supports manual backfill, worker-driven reconciliation polling, and Strava webhooks. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. An independent heartbeat plus a database probe backs the Compose worker health check, and transient cycle failures are retried without terminating the worker. In webhook-enabled deployments, use Strava's app-level push subscription for normal activity freshness and stretch the worker poll interval to a slower reconciliation cadence.
 
 The public webhook callback validates Strava's `hub.challenge` request with `STRAVA_WEBHOOK_VERIFY_TOKEN`. Pushed activity events are stored in `strava_webhook_events`, routed by Strava `owner_id` to `athlete_accounts.strava_athlete_id`, and processed after the API response. The worker retries queued or failed webhook events.
 
@@ -117,4 +118,4 @@ SQL migrations live in `backend/migrations` and are applied at API startup throu
 - `strava_webhook_events`
 - `sync_jobs`
 
-The runner records applied files in `schema_migrations`.
+The runner records applied files in `schema_migrations`, and `/api/version` reports the latest applied migration from that table. Deploy rollback restores source and containers but does not reverse migrations, so every deployed migration must remain compatible with the preceding application release.

@@ -11,7 +11,7 @@ import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCe
 import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
 import type { ActualActivity, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
-import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
+import { addDays, startOfWeek } from "../../lib/dates";
 import {
   formatCompactWeekRange,
   formatCompactWeekRangeFromStart,
@@ -205,6 +205,7 @@ export function WeekView({
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
             previousWeek={weekStack[addDays(start, -7)]}
+            today={today}
             week={start === selectedWeekStart ? week : weekStack[start]}
             weekStart={start}
           />
@@ -242,6 +243,7 @@ function WeekRow({
   onSelectWeek,
   selectedWeekStart,
   previousWeek,
+  today,
   week,
   weekStart
 }: {
@@ -264,6 +266,7 @@ function WeekRow({
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
   previousWeek?: TrainingWeek;
+  today: string;
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
@@ -309,6 +312,7 @@ function WeekRow({
             onOpenPlanWeek={onOpenPlanWeek}
             onSync={onSync}
             isCopyingPriorWeek={isCopyingPriorWeek}
+            today={today}
             week={week ?? null}
             weekStart={weekStart}
           />
@@ -395,6 +399,7 @@ function ExpandedWeekBoard({
   onOpenPlanWeek,
   onSync,
   isCopyingPriorWeek,
+  today,
 }: {
   days: string[];
   isLoading?: boolean;
@@ -412,10 +417,10 @@ function ExpandedWeekBoard({
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSync: () => void;
   isCopyingPriorWeek: boolean;
+  today: string;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
-  const today = todayDateString();
 
   if (isLoading) {
     return (

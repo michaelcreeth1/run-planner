@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HttpResponse, http } from "msw";
@@ -13,6 +13,7 @@ describe("WeekView workout completion", () => {
   it("marks an unmatched workout complete and allows undoing it", async () => {
     const user = userEvent.setup();
     const onSetCompletion = vi.fn();
+    const onOpenPlanWeek = vi.fn();
     const workout = makeWorkout();
     const week = makeWeek(workout);
     server.use(
@@ -23,12 +24,16 @@ describe("WeekView workout completion", () => {
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
         <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(week, onSetCompletion)} />
+          <WeekView {...makeProps(week, onSetCompletion)} onOpenPlanWeek={onOpenPlanWeek} />
         </ProfileProvider>
       </QueryClientProvider>
     );
 
-    expect(screen.getByRole("button", { name: "Edit current week" })).toBeVisible();
+    const weekActions = screen.getByLabelText("Week actions");
+    const adjustWeekButton = within(weekActions).getByRole("button", { name: "Adjust rest of week" });
+    expect(adjustWeekButton).toBeVisible();
+    await user.click(adjustWeekButton);
+    expect(onOpenPlanWeek).toHaveBeenCalledWith(week);
 
     await user.click(screen.getByRole("button", { name: "Mark Untracked strength session complete" }));
 
@@ -39,7 +44,7 @@ describe("WeekView workout completion", () => {
     rerender(
       <QueryClientProvider client={queryClient}>
         <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(completedWeek, onSetCompletion)} />
+          <WeekView {...makeProps(completedWeek, onSetCompletion)} onOpenPlanWeek={onOpenPlanWeek} />
         </ProfileProvider>
       </QueryClientProvider>
     );
@@ -50,6 +55,36 @@ describe("WeekView workout completion", () => {
     await user.click(undo);
 
     expect(onSetCompletion).toHaveBeenLastCalledWith(completedWorkout, false);
+  });
+
+  it("opens week planning from an actually unplanned current week", async () => {
+    const user = userEvent.setup();
+    const onOpenPlanWeek = vi.fn();
+    const week: TrainingWeek = {
+      ...makeWeek(makeWorkout()),
+      plannedTime: null,
+      purpose: "",
+      workouts: []
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week, vi.fn())} onOpenPlanWeek={onOpenPlanWeek} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const weekActions = screen.getByLabelText("Week actions");
+    const planWeekButton = within(weekActions).getByRole("button", { name: "Plan week" });
+    expect(planWeekButton).toBeVisible();
+    await user.click(planWeekButton);
+
+    expect(onOpenPlanWeek).toHaveBeenCalledWith(week);
   });
 
   it("renders an unplanned collapsed week as quiet empty days, not seven rest days", () => {

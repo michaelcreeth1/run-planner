@@ -1,6 +1,6 @@
 import { daysBetween } from "../../lib/dates";
 import { formatNumber, formatShortDate, formatWorkoutMeta } from "../../lib/formatters";
-import type { TrainingPlan, TrainingWeek } from "../../types/domain";
+import type { ActualActivity, TrainingPlan, TrainingWeek, Workout } from "../../types/domain";
 
 export type WeekContextSegment = {
   id: "race" | "phase" | "mileage";
@@ -175,13 +175,41 @@ function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContex
   }
 
   const done =
-    todaysActuals.length > 0 || primary.status.startsWith("completed") || primary.status === "partial";
+    matchActualActivities(todaysWorkouts, todaysActuals).has(primary.id) ||
+    primary.status.startsWith("completed") ||
+    primary.status === "partial";
   return {
     kind: "workout",
     title: primary.title,
     meta: formatWorkoutMeta(primary),
     status: done ? "done" : "upcoming"
   };
+}
+
+function matchActualActivities(
+  workouts: Workout[],
+  activities: ActualActivity[]
+): Map<string, ActualActivity> {
+  const matches = new Map<string, ActualActivity>();
+  for (const activity of activities) {
+    if (!activity.sportType.toLowerCase().includes("run")) {
+      continue;
+    }
+    const best = workouts
+      .filter((workout) => workout.sport === "run" && !matches.has(workout.id))
+      .map((workout) => ({
+        workout,
+        gap:
+          workout.plannedDistance === null
+            ? Number.MAX_SAFE_INTEGER
+            : Math.abs(workout.plannedDistance - activity.distanceMiles)
+      }))
+      .sort((left, right) => left.gap - right.gap)[0];
+    if (best) {
+      matches.set(best.workout.id, activity);
+    }
+  }
+  return matches;
 }
 
 function capitalize(value: string) {

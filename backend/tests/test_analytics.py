@@ -2,11 +2,10 @@ from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base, SessionLocal
+from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
 from app.models import AthleteAccount, StravaActivity, TrainingWeek
 from app.schemas.planning import PlannedWorkoutCreate
@@ -22,11 +21,7 @@ def login(client: TestClient, username: str = "michael", password: str = "test-p
 
 
 def make_session() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = build_engine("sqlite://")
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     return testing_session()
@@ -188,9 +183,16 @@ def test_analytics_surfaces_week_mileage_targets() -> None:
         db.close()
 
 
-def test_analytics_flags_hard_day_spacing_and_no_rest() -> None:
+def test_analytics_flags_hard_day_spacing_and_no_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = make_session()
     try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         anchor = date(2026, 6, 29)
         for index in range(7):
@@ -223,9 +225,14 @@ def test_analytics_flags_hard_day_spacing_and_no_rest() -> None:
         db.close()
 
 
-def test_analytics_keeps_profiles_isolated() -> None:
+def test_analytics_keeps_profiles_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
     db = make_session()
     try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         other = AthleteAccount(display_name="Other Runner", timezone="America/Denver")
         db.add(other)

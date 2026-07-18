@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from app.db.migrations import migration_files
+from app.db.session import engine
 from app.main import app
 
 
@@ -16,7 +18,7 @@ def test_version() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["backendVersion"]
-    assert body["schemaVersion"]
+    assert body["schemaVersion"] == migration_files(engine.dialect.name)[-1][0]
 
 
 def test_session_status() -> None:

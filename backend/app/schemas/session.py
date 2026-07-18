@@ -1,9 +1,28 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 
 def to_camel(value: str) -> str:
     first, *rest = value.split("_")
     return first + "".join(part.capitalize() for part in rest)
+
+
+def validate_timezone_name(value: str) -> str:
+    normalized = value.strip()
+    try:
+        ZoneInfo(normalized)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise ValueError("Timezone must be a valid IANA time-zone name.") from exc
+    return normalized
+
+
+TimezoneName = Annotated[
+    str,
+    Field(min_length=1, max_length=80),
+    AfterValidator(validate_timezone_name),
+]
 
 
 class ApiModel(BaseModel):
@@ -48,14 +67,14 @@ class UserCreate(ApiModel):
     password: str = Field(min_length=8, max_length=256)
     is_admin: bool = False
     initial_profile_name: str | None = Field(default=None, max_length=120)
-    timezone: str = Field(default="America/Denver", max_length=80)
+    timezone: TimezoneName = "America/Denver"
 
 
 class ProfileCreate(ApiModel):
     display_name: str = Field(min_length=1, max_length=120)
-    timezone: str = Field(default="America/Denver", max_length=80)
+    timezone: TimezoneName = "America/Denver"
 
 
 class ProfileUpdate(ApiModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
-    timezone: str | None = Field(default=None, min_length=1, max_length=80)
+    timezone: TimezoneName | None = None

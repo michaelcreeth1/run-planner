@@ -69,7 +69,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
   if (hasEnoughStructureForGoalAlarm(week) && week.goalEvaluations.some((evaluation) => attentionStatuses.has(evaluation.status))) {
     return {
       action: "plan_week",
-      actionLabel: "Edit week plan",
+      actionLabel: "Adjust rest of week",
       detail: "At least one weekly goal is at risk. Rebalance the remaining work while there is still time.",
       eyebrow: "Needs attention",
       title: "Bring the week back into alignment"
@@ -104,7 +104,7 @@ export function buildWeekNextUp(week: TrainingWeek, today: string): WeekNextUpVi
 
   return {
     action: "plan_week",
-    actionLabel: "Edit week plan",
+    actionLabel: "Adjust rest of week",
     detail: "There is no remaining session on the schedule. Decide whether the week is complete or needs another adjustment.",
     eyebrow: "Next up",
     title: "Close the gap in the schedule"

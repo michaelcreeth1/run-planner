@@ -96,7 +96,12 @@ def update_week(
 
 @router.post("/weeks/{week_id}/recalculate", response_model=TrainingWeekRead)
 def recalculate_week(week_id: str, db: DbSession, profile: CurrentProfile) -> dict:
-    week = planning.get_or_create_week_for_mutation(db, week_id, profile.id)
+    week = planning.get_or_create_week_for_mutation(
+        db,
+        week_id,
+        profile.id,
+        allow_past=True,
+    )
     planning.recalculate_week(db, week)
     return planning.serialize_week(week, db)
 

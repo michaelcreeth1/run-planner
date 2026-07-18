@@ -102,6 +102,28 @@ def test_strava_webhook_event_rejects_wrong_subscription(monkeypatch) -> None:
     assert response.status_code == 403
 
 
+def test_strava_webhook_event_rejects_when_subscription_is_not_configured(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "strava_webhook_enabled", True)
+    monkeypatch.setattr(settings, "strava_webhook_subscription_id", "")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/webhooks/strava",
+            json={
+                "object_type": "activity",
+                "object_id": 123,
+                "aspect_type": "create",
+                "owner_id": 456,
+                "subscription_id": "untrusted-subscription",
+                "event_time": 1810000002,
+            },
+        )
+
+    assert response.status_code == 403
+
+
 def test_process_webhook_event_imports_activity(monkeypatch) -> None:
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
@@ -160,3 +182,53 @@ def test_process_webhook_event_imports_activity(monkeypatch) -> None:
         assert job.status == "succeeded"
         assert job.activities_created == 1
         assert job.rate_limit_remaining == 98
+
+
+def test_pending_webhook_processing_reclaims_only_stale_leases(monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        stale_event = strava.enqueue_webhook_event(
+            db,
+            {
+                "object_type": "activity",
+                "object_id": "stale-activity",
+                "aspect_type": "update",
+                "owner_id": "owner-1",
+                "subscription_id": "sub-1",
+                "event_time": 1810000003,
+            },
+        )
+        stale_event.status = "processing"
+        stale_event.attempts = 1
+        stale_event.processed_at = now - timedelta(
+            seconds=strava.WEBHOOK_PROCESSING_LEASE_SECONDS + 1
+        )
+
+        fresh_event = strava.enqueue_webhook_event(
+            db,
+            {
+                "object_type": "activity",
+                "object_id": "fresh-activity",
+                "aspect_type": "update",
+                "owner_id": "owner-1",
+                "subscription_id": "sub-1",
+                "event_time": 1810000004,
+            },
+        )
+        fresh_event.status = "processing"
+        fresh_event.attempts = 1
+        fresh_event.processed_at = now
+        db.commit()
+        stale_event_id = stale_event.id
+
+        processed_ids: list[str] = []
+        monkeypatch.setattr(
+            strava,
+            "process_webhook_event",
+            lambda _db, event_id: processed_ids.append(event_id),
+        )
+
+        events = strava.process_pending_webhook_events(db)
+
+    assert [event.id for event in events] == [stale_event_id]
+    assert processed_ids == [stale_event_id]
