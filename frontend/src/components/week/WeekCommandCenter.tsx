@@ -41,8 +41,12 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
           </div>
         </header>
         <div className="week-empty-planning-state">
-          <strong>Start with a training purpose.</strong>
-          <p>{viewModel.narrative}</p>
+          <strong>{viewModel.mode === "review" ? "Nothing to review." : "Start with a training purpose."}</strong>
+          <p>
+            {viewModel.mode === "review"
+              ? "No sessions were planned and no activities were logged. Close this week in one step."
+              : viewModel.narrative}
+          </p>
         </div>
       </section>
     );

@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RuleEvaluation } from "../../features/goals/ruleEvaluation";
-import { selectVisibleWeekChecks, WeekCheckRow } from "./WeekChecksCard";
+import { WeekCheckRow } from "./WeekChecksCard";
+import { selectVisibleWeekChecks } from "./weekChecks";
 
 function evaluation(status: RuleEvaluation["status"], ruleId: string = status): RuleEvaluation {
   return {

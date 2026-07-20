@@ -6,9 +6,10 @@ type WeekContextStripProps = {
   viewModel: WeekContextStripViewModel | null;
   onOpenPlan: () => void;
   onJumpToToday: () => void;
+  onOpenWorkout: (workoutId: string) => void;
 };
 
-export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday }: WeekContextStripProps) {
+export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday, onOpenWorkout }: WeekContextStripProps) {
   const stripRef = useRef<HTMLElement | null>(null);
   const [isCompact, setIsCompact] = useState(false);
 
@@ -65,22 +66,26 @@ export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday }: WeekC
           </div>
         ))}
       </div>
-      {viewModel.today ? <TodayChip today={viewModel.today} onJumpToToday={onJumpToToday} /> : null}
+      {viewModel.today ? (
+        <TodayChip today={viewModel.today} onJumpToToday={onJumpToToday} onOpenWorkout={onOpenWorkout} />
+      ) : null}
     </section>
   );
 }
 
 function TodayChip({
   today,
-  onJumpToToday
+  onJumpToToday,
+  onOpenWorkout
 }: {
   today: NonNullable<Extract<WeekContextStripViewModel, { kind: "active" }>["today"]>;
   onJumpToToday: () => void;
+  onOpenWorkout: (workoutId: string) => void;
 }) {
   if (today.kind === "rest") {
     return (
       <button type="button" className="week-context-today week-context-today--rest" onClick={onJumpToToday}>
-        <span className="week-context-today-label">Today</span>
+        <span className="week-context-today-label">{today.label}</span>
         <span className="week-context-today-main">
           <Moon size={14} aria-hidden="true" />
           <strong>Rest day</strong>
@@ -93,7 +98,7 @@ function TodayChip({
   if (today.kind === "open") {
     return (
       <button type="button" className="week-context-today week-context-today--open" onClick={onJumpToToday}>
-        <span className="week-context-today-label">Today</span>
+        <span className="week-context-today-label">{today.label}</span>
         <span className="week-context-today-main">
           <strong>No session planned</strong>
         </span>
@@ -107,9 +112,9 @@ function TodayChip({
     <button
       type="button"
       className={`week-context-today week-context-today--${today.status}`}
-      onClick={onJumpToToday}
+      onClick={() => (today.workoutId ? onOpenWorkout(today.workoutId) : onJumpToToday())}
     >
-      <span className="week-context-today-label">Today</span>
+      <span className="week-context-today-label">{today.label}</span>
       <span className="week-context-today-main">
         <StatusIcon size={14} strokeWidth={2.75} aria-hidden="true" />
         <strong>{today.title}</strong>

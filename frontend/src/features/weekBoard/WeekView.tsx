@@ -5,7 +5,6 @@ import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
 import { WeekContextStrip } from "../../components/week/WeekContextStrip";
-import { WeekNextUpCard } from "../../components/week/WeekNextUpCard";
 import { WeekReviewHandoff } from "../../components/week/WeekReviewHandoff";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
 import { buildWeekContextStrip } from "./buildWeekContextStrip";
@@ -42,7 +41,6 @@ export function WeekView({
   onLoadOlderWeeks,
   onDismissReviewHandoff,
   onOpenPlan,
-  onOpenProgress,
   onPlanNextWeek,
   onSelectTimeWeek,
   onSelectWeek,
@@ -77,7 +75,6 @@ export function WeekView({
   onLoadOlderWeeks: () => void;
   onDismissReviewHandoff: () => void;
   onOpenPlan: () => void;
-  onOpenProgress: () => void;
   onPlanNextWeek: (weekStartDate: string) => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
@@ -161,23 +158,25 @@ export function WeekView({
 
   return (
     <>
-      <WeekContextStrip viewModel={contextStrip} onOpenPlan={onOpenPlan} onJumpToToday={onJumpToThisWeek} />
+      <WeekContextStrip
+        viewModel={contextStrip}
+        onJumpToToday={onJumpToThisWeek}
+        onOpenPlan={onOpenPlan}
+        onOpenWorkout={(workoutId) => {
+          const workout = weekStack[currentWeekStart]?.workouts.find((candidate) => candidate.id === workoutId);
+          if (workout) {
+            onEdit(workout);
+            return;
+          }
+          onJumpToThisWeek();
+        }}
+      />
       {reviewHandoff && reviewHandoff.reviewedWeekStart === week?.weekStartDate ? (
         <WeekReviewHandoff
           nextWeekStart={reviewHandoff.nextWeekStart}
           onDismiss={onDismissReviewHandoff}
           onPlanNextWeek={onPlanNextWeek}
           wasEmpty={reviewHandoff.wasEmpty}
-        />
-      ) : week ? (
-        <WeekNextUpCard
-          onEditWorkout={onEdit}
-          onOpenPlan={onOpenPlan}
-          onOpenPlanWeek={onOpenPlanWeek}
-          onOpenProgress={onOpenProgress}
-          onSkipReview={onSkipReview}
-          today={today}
-          week={week}
         />
       ) : null}
       <section className="week-stack-layout" aria-busy={isLoading}>
@@ -200,6 +199,7 @@ export function WeekView({
             onDeriveWeekGoals={onDeriveWeekGoals}
             onEditGoal={onEditGoal}
             onOpenPlanWeek={onOpenPlanWeek}
+            onSkipReview={onSkipReview}
             onSync={onSync}
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
@@ -238,6 +238,7 @@ function WeekRow({
   onDeriveWeekGoals,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   isCopyingPriorWeek,
   onSelectWeek,
@@ -261,6 +262,7 @@ function WeekRow({
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
@@ -310,6 +312,7 @@ function WeekRow({
             onDeriveWeekGoals={onDeriveWeekGoals}
             onEditGoal={onEditGoal}
             onOpenPlanWeek={onOpenPlanWeek}
+            onSkipReview={onSkipReview}
             onSync={onSync}
             isCopyingPriorWeek={isCopyingPriorWeek}
             today={today}
@@ -397,6 +400,7 @@ function ExpandedWeekBoard({
   onDeriveWeekGoals,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   isCopyingPriorWeek,
   today,
@@ -415,6 +419,7 @@ function ExpandedWeekBoard({
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   isCopyingPriorWeek: boolean;
   today: string;
@@ -459,6 +464,7 @@ function ExpandedWeekBoard({
       onSetCompletion={onSetCompletion}
       onEditGoal={onEditGoal}
       onOpenPlanWeek={onOpenPlanWeek}
+      onSkipReview={onSkipReview}
       onSync={onSync}
       today={today}
       week={week}
@@ -480,6 +486,7 @@ function WeekSlate({
   onSetCompletion,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   today,
   week,
@@ -497,6 +504,7 @@ function WeekSlate({
   onSetCompletion: (workout: Workout, completed: boolean) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   today: string;
   week: TrainingWeek | null | undefined;
@@ -519,6 +527,7 @@ function WeekSlate({
             onDeriveWeekGoals,
             onEditGoal,
             onOpenPlanWeek,
+            onSkipReview,
             onSync,
             week
           })
@@ -646,6 +655,7 @@ function handleWeekCommandAction(
     onDeriveWeekGoals,
     onEditGoal,
     onOpenPlanWeek,
+    onSkipReview,
     onSync,
     week
   }: {
@@ -654,10 +664,15 @@ function handleWeekCommandAction(
     onDeriveWeekGoals: (week: TrainingWeek) => void;
     onEditGoal: (goal: WeekGoal) => void;
     onOpenPlanWeek: (week: TrainingWeek) => void;
+    onSkipReview: (weekId: string) => void;
     onSync: () => void;
     week: TrainingWeek;
   }
 ) {
+  if (actionId === "skip_review") {
+    onSkipReview(week.id);
+    return;
+  }
   if (["plan_week", "edit_plan", "adjust_rest", "review_week", "edit_goals"].includes(actionId)) {
     onOpenPlanWeek(week);
     return;

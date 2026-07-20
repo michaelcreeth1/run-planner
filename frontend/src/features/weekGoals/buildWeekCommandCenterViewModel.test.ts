@@ -68,15 +68,35 @@ describe("buildWeekCommandCenterViewModel", () => {
     ]);
   });
 
+  it("offers planning for a current week with targets but no scheduled sessions", () => {
+    const viewModel = buildWeekCommandCenterViewModel({
+      today: "2026-07-15",
+      week: makeWeek({
+        weekState: "current",
+        purpose: "build",
+        purposeSource: "plan",
+        targetMileage: 42,
+        targetMileageSource: "plan"
+      })
+    });
+
+    expect(viewModel.isUnplanned).toBe(false);
+    expect(viewModel.actionButtons).toEqual([
+      { id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }
+    ]);
+  });
+
   it("treats an empty historical week as unplanned rather than completed rest", () => {
     const viewModel = buildWeekCommandCenterViewModel({
       today: "2026-07-20",
       week: makeWeek({ weekState: "past" })
     });
 
-    expect(viewModel.modeLabel).toBe("Not planned yet");
+    expect(viewModel.modeLabel).toBe("Empty week");
     expect(viewModel.isUnplanned).toBe(true);
-    expect(viewModel.actionButtons).toEqual([]);
+    expect(viewModel.actionButtons).toEqual([
+      { id: "skip_review", label: "Close empty week", variant: "primary", icon: "check" }
+    ]);
     expect(viewModel.compactStats?.find((stat) => stat.label === "Recovery")?.value).toBe("Not planned");
     expect(viewModel.compactStats?.some((stat) => stat.outcome === "missed")).toBe(false);
   });

@@ -86,7 +86,13 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toMatchObject({ kind: "workout", title: "Tempo 3x10min", status: "upcoming" });
+    expect(result.today).toMatchObject({
+      kind: "workout",
+      label: "Today",
+      title: "Tempo 3x10min",
+      status: "upcoming",
+      workoutId: "workout-1"
+    });
   });
 
   it("does not complete today's primary workout from an unrelated activity", () => {
@@ -139,7 +145,28 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toEqual({ kind: "rest" });
+    expect(result.today).toEqual({ kind: "rest", label: "Today" });
+  });
+
+  it("surfaces the next workout when today has no session", () => {
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: makeWeek({
+        workouts: [makeWorkout({ id: "next-workout", plannedDate: "2026-07-11", title: "Long run" })]
+      }),
+      currentWeekStart: "2026-07-06",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({
+      kind: "workout",
+      label: "Next up",
+      title: "Long run",
+      workoutId: "next-workout"
+    });
+    expect(result.today?.kind === "workout" ? result.today.meta : "").toContain("Sat");
   });
 
   it("marks today open when nothing is planned or logged", () => {
@@ -152,7 +179,7 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toEqual({ kind: "open" });
+    expect(result.today).toEqual({ kind: "open", label: "Today" });
   });
 });
 

@@ -22,7 +22,7 @@ import { ProgressView } from "./features/progress/ProgressView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
-import { isCompletelyEmptyWeek } from "./features/weekBoard/buildWeekNextUp";
+import { isCompletelyEmptyWeek } from "./features/weekBoard/weekState";
 import { buildPlanRules } from "./features/goals/ruleEvaluation";
 import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlanner/planWeekDrafts";
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
@@ -1287,7 +1287,6 @@ function AppShell() {
               onLoadOlderWeeks={prependOlderWeeks}
               onDismissReviewHandoff={() => setWeekReviewHandoff(null)}
               onOpenPlan={() => navigateToTab("plan")}
-              onOpenProgress={() => navigateToTab("progress")}
               onPlanNextWeek={planNextWeek}
               onSelectTimeWeek={(start) => selectWeek(start, "time-rail")}
               onSelectWeek={(start) => selectWeek(start, "week-stack")}

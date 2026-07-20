@@ -87,6 +87,37 @@ describe("WeekView workout completion", () => {
     expect(onOpenPlanWeek).toHaveBeenCalledWith(week);
   });
 
+  it("closes an empty past week from the selected week header", async () => {
+    const user = userEvent.setup();
+    const onSkipReview = vi.fn();
+    const week: TrainingWeek = {
+      ...makeWeek(makeWorkout()),
+      weekStartDate: "2026-07-06",
+      weekEndDate: "2026-07-12",
+      plannedTime: null,
+      purpose: "",
+      workouts: [],
+      weekState: "past"
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week, vi.fn())} onSkipReview={onSkipReview} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.queryByLabelText("Recommended next action")).not.toBeInTheDocument();
+    await user.click(within(screen.getByLabelText("Week actions")).getByRole("button", { name: "Close empty week" }));
+
+    expect(onSkipReview).toHaveBeenCalledWith(week.id);
+  });
+
   it("renders an unplanned collapsed week as quiet empty days, not seven rest days", () => {
     const selectedWeek = makeWeek(makeWorkout());
     const emptyWeek: TrainingWeek = {
@@ -214,7 +245,6 @@ function makeProps(
     onLoadOlderWeeks: vi.fn(),
     onDismissReviewHandoff: vi.fn(),
     onOpenPlan: vi.fn(),
-    onOpenProgress: vi.fn(),
     onPlanNextWeek: vi.fn(),
     onSelectTimeWeek: vi.fn(),
     onSelectWeek: vi.fn(),

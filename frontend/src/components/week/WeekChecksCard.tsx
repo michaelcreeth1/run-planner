@@ -5,9 +5,9 @@ import { buildPlanRules, evaluateRulesForWeek, ruleStatusLabels } from "../../fe
 import { useRuleContext } from "../../features/goals/useRuleContext";
 import { todayDateString } from "../../lib/dates";
 import type { TrainingWeek, Workout } from "../../types/domain";
+import { selectVisibleWeekChecks } from "./weekChecks";
 
 const attentionStatuses = new Set<RuleStatus>(["warning", "fail"]);
-const visibleStatuses = new Set<RuleStatus>(["warning", "fail", "pending"]);
 
 export function WeekChecksCard({
   week,
@@ -87,11 +87,6 @@ export function WeekChecksCard({
       </ul>
     </details>
   );
-}
-
-export function selectVisibleWeekChecks(evaluations: RuleEvaluation[]) {
-  const attentionEvaluations = evaluations.filter((evaluation) => visibleStatuses.has(evaluation.status));
-  return attentionEvaluations.length ? attentionEvaluations : evaluations;
 }
 
 export function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {

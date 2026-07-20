@@ -134,7 +134,13 @@ export function buildWeekCommandCenterViewModel({
     weekEndDate: week.weekEndDate,
     title: formatWeekRange(week.weekStartDate, week.weekEndDate),
     mode,
-    modeLabel: week.reviewedAt ? "Reviewed" : isUnplanned ? "Not planned yet" : modeLabel(mode),
+    modeLabel: week.reviewedAt
+      ? "Reviewed"
+      : isUnplanned && mode === "review"
+        ? "Empty week"
+        : isUnplanned
+          ? "Not planned yet"
+          : modeLabel(mode),
     purposeTag: buildPurposeTag(week, isUnplanned),
     purpose: buildPurpose(week, goalCards),
     narrative: buildNarrative(week, goalCards, mode, today, isUnplanned),
@@ -580,12 +586,7 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "execution") {
-    const hasExistingPlan =
-      week.workouts.length > 0 ||
-      week.goals.length > 0 ||
-      week.notes.trim().length > 0 ||
-      hasStructuredPlanContext(week);
-    return hasExistingPlan
+    return week.workouts.length > 0
       ? [{ id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }]
       : [{ id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }];
   }
@@ -606,7 +607,9 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
   }
 
   if (isUnplannedWeek(week)) {
-    return [];
+    return week.reviewedAt
+      ? []
+      : [{ id: "skip_review", label: "Close empty week", variant: "primary", icon: "check" }];
   }
 
   return week.reviewedAt
