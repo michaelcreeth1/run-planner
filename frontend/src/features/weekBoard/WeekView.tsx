@@ -1,5 +1,5 @@
 import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Trash2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
@@ -101,12 +101,35 @@ export function WeekView({
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const timelineRef = useRef<HTMLElement | null>(null);
+  const previousSelectedWeekRef = useRef<string | null>(null);
   const contextStrip = buildWeekContextStrip({
     plan: activePlan,
     currentWeek: weekStack[currentWeekStart] ?? null,
     currentWeekStart,
     today
   });
+  const selectedWeekIsVisible = weekStarts.includes(selectedWeekStart);
+  const selectedWeekIsLoaded = Boolean(weekStack[selectedWeekStart]);
+
+  useLayoutEffect(() => {
+    const timeline = timelineRef.current;
+    if (!timeline || !selectedWeekIsVisible) {
+      return;
+    }
+
+    const selectedRow = Array.from(timeline.querySelectorAll<HTMLElement>("[data-week-start]")).find(
+      (row) => row.dataset.weekStart === selectedWeekStart
+    );
+    if (!selectedRow) {
+      return;
+    }
+
+    const isNewSelection = previousSelectedWeekRef.current !== null &&
+      previousSelectedWeekRef.current !== selectedWeekStart;
+    scrollExpandedWeekIntoView(selectedRow, isNewSelection ? "smooth" : "auto");
+    previousSelectedWeekRef.current = selectedWeekStart;
+  }, [contextStrip?.kind, selectedWeekIsLoaded, selectedWeekIsVisible, selectedWeekStart]);
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
@@ -180,7 +203,7 @@ export function WeekView({
         />
       ) : null}
       <section className="week-stack-layout" aria-busy={isLoading}>
-        <section className="week-timeline" aria-label="Training week timeline">
+        <section className="week-timeline" aria-label="Training week timeline" ref={timelineRef}>
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
@@ -188,7 +211,6 @@ export function WeekView({
             key={start}
             isExpanded={start === selectedWeekStart}
             isLoading={isLoading && start === selectedWeekStart}
-            contextState={contextStrip?.kind ?? "loading"}
             onCreate={onCreate}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -225,7 +247,6 @@ export function WeekView({
 
 function WeekRow({
   activePlan,
-  contextState,
   isExpanded,
   isLoading,
   onCreate,
@@ -249,7 +270,6 @@ function WeekRow({
   weekStart
 }: {
   activePlan: TrainingPlan | null;
-  contextState: "active" | "onboarding" | "loading";
   isExpanded: boolean;
   isLoading: boolean;
   onCreate: (plannedDate: string) => void;
@@ -272,30 +292,14 @@ function WeekRow({
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const hasWeek = Boolean(week);
   const isPast = weekStart < selectedWeekStart;
   const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
-
-  useEffect(() => {
-    if (!isExpanded || !frameRef.current) {
-      return;
-    }
-
-    const frame = frameRef.current;
-    const scrollFrame = window.requestAnimationFrame(() => {
-      scrollExpandedWeekIntoView(frame);
-    });
-
-    return () => window.cancelAnimationFrame(scrollFrame);
-  }, [contextState, hasWeek, isExpanded, weekStart]);
 
   return (
     <div
       className={`week-row ${isExpanded ? "week-row--expanded" : ""}`}
       data-week-start={weekStart}
       data-testid="week-row"
-      ref={frameRef}
     >
       <div className="week-row-content">
         {isExpanded ? (
@@ -1080,7 +1084,7 @@ function stravaActivityUrl(stravaActivityId: string) {
   return `https://www.strava.com/activities/${encodeURIComponent(stravaActivityId)}`;
 }
 
-function scrollExpandedWeekIntoView(element: HTMLElement) {
+function scrollExpandedWeekIntoView(element: HTMLElement, behavior: ScrollBehavior) {
   const container = element.closest("main");
   if (!(container instanceof HTMLElement)) {
     return;
@@ -1091,13 +1095,13 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
   const header = container.querySelector<HTMLElement>(":scope > .app-header");
   const context = container.querySelector<HTMLElement>(":scope > .week-context-strip");
   const isMobile = window.matchMedia("(max-width: 860px)").matches;
-  const stickyOffset = (header?.offsetHeight ?? 0) + (isMobile ? 62 : context?.offsetHeight ?? 0) + 14;
-  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+  const stickyOffset = (header?.offsetHeight ?? 0) + (context?.offsetHeight ?? 0) + 14;
+  const resolvedBehavior = prefersReducedMotion() ? "auto" : behavior;
 
   if (isMobile) {
     window.scrollTo({
       top: Math.max(0, window.scrollY + rect.top - stickyOffset),
-      behavior
+      behavior: resolvedBehavior
     });
     return;
   }
@@ -1106,7 +1110,7 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
 
   container.scrollTo({
     top: Math.max(0, targetTop),
-    behavior
+    behavior: resolvedBehavior
   });
 }
 

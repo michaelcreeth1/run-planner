@@ -68,6 +68,9 @@ const primaryTabs = [
 
 type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
+type WeekScrollSnapshot =
+  | { container: "main"; scrollHeight: number; scrollTop: number }
+  | { container: "window"; scrollHeight: number; scrollTop: number };
 type CompatibilityState =
   | { status: "checking" }
   | { status: "compatible"; apiVersion: ApiVersion }
@@ -131,7 +134,7 @@ function AppShell() {
   const [pendingPlanWeekStart, setPendingPlanWeekStart] = useState<string | null>(null);
   const [weekReviewHandoff, setWeekReviewHandoff] = useState<WeekReviewHandoff | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
-  const pendingPrependScroll = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const pendingPrependScroll = useRef<WeekScrollSnapshot | null>(null);
   const isPrependingWeeks = useRef(false);
   const isAppendingWeeks = useRef(false);
   const didApplyInitialTimelineRange = useRef(false);
@@ -149,6 +152,9 @@ function AppShell() {
   const week = weekStack[weekStart] ?? null;
   const isLoadingWeek = loadingWeekStarts.has(weekStart);
   const currentWeekStart = startOfWeek(new Date());
+  const copyWeekSourceAnchor = planWeekDraft?.weekState === "past"
+    ? null
+    : planWeekDraft?.weekStartDate ?? null;
   const timelineIndex = useTrainingTimeline({
     currentWeekStartDate: currentWeekStart,
     selectedWeekStartDate: weekStart,
@@ -395,7 +401,7 @@ function AppShell() {
       return;
     }
 
-    main.scrollTop = pending.scrollTop + (main.scrollHeight - pending.scrollHeight);
+    restoreScrollAfterPrepend(main, pending);
     pendingPrependScroll.current = null;
     isPrependingWeeks.current = false;
     isAppendingWeeks.current = false;
@@ -454,6 +460,13 @@ function AppShell() {
   }, [pendingPlanWeekStart, weekStack]);
 
   useEffect(() => {
+    if (!copyWeekSourceAnchor) {
+      return;
+    }
+    loadWeeks(copyWeekStarts(copyWeekSourceAnchor));
+  }, [copyWeekSourceAnchor, loadWeeks]);
+
+  useEffect(() => {
     const canonicalPath = appRoutePath(route);
     if (location.pathname !== canonicalPath || location.search) {
       navigate(canonicalPath, { replace: true });
@@ -465,7 +478,7 @@ function AppShell() {
       return;
     }
     const starts = boundedWeekRangeAround(weekStart, timelineSummary);
-    setVisibleWeekStarts(starts);
+    setVisibleWeekStarts((current) => current.includes(weekStart) ? current : starts);
     loadWeeks(starts);
   }, [activeTab, loadWeeks, session?.activeAthleteAccountId, session?.authenticated, timelineSummary, weekStart]);
 
@@ -551,16 +564,16 @@ function AppShell() {
     navigate(appRoutePath({ ...route, ...overrides }), { replace });
   }
 
-  function selectWeek(start: string, _source: WeekSelectSource = "week-stack") {
+  function selectWeek(start: string, source: WeekSelectSource = "week-stack") {
     const normalizedStart = startOfWeek(parseDate(start));
     if (normalizedStart === weekStart && activeTab === "week") {
       return;
     }
     if (normalizedStart !== weekStart) {
-      if (_source === "week-stack") {
+      if (source === "week-stack") {
         setVisibleWeekStarts((current) => mergeWeekStarts([...current, normalizedStart]));
         loadWeeks([normalizedStart]);
-      } else {
+      } else if (source === "time-rail" || !visibleWeekStarts.includes(normalizedStart)) {
         recenterVisibleWeeks(normalizedStart, timelineSummary);
       }
     }
@@ -604,10 +617,7 @@ function AppShell() {
     }
 
     isPrependingWeeks.current = true;
-    pendingPrependScroll.current = {
-      scrollHeight: main.scrollHeight,
-      scrollTop: main.scrollTop
-    };
+    pendingPrependScroll.current = captureWeekScroll(main);
     setVisibleWeekStarts((current) => mergeWeekStarts([...olderStarts, ...current]));
     loadWeeks(olderStarts);
   }
@@ -1326,7 +1336,7 @@ function AppShell() {
                 loadAnalyticsPlanning();
               }}
               onSelectWeek={(start) => {
-                selectWeek(start, "time-rail");
+                selectWeek(start, "header");
               }}
             />
           </div>
@@ -1340,7 +1350,7 @@ function AppShell() {
               setFutureWeeks={setAnalyticsFutureWeeks}
               setLookbackWeeks={setAnalyticsLookbackWeeks}
               onSelectWeek={(start) => {
-                selectWeek(start, "time-rail");
+                selectWeek(start, "header");
               }}
               onOpenStravaSettings={() => navigate("/settings#strava-settings")}
               onChangeSection={navigateProgressSection}
@@ -1415,6 +1425,10 @@ function weekRangeAround(weekStart: string) {
   );
 }
 
+function copyWeekStarts(weekStart: string) {
+  return Array.from({ length: 12 }, (_, index) => addDays(weekStart, (index + 1) * -7));
+}
+
 function boundedWeekRangeAround(weekStart: string, timelineSummary: TrainingTimelineSummary | null) {
   const starts = weekRangeAround(weekStart);
   const oldestWeekStart = timelineSummary?.oldestWeekStartDate;
@@ -1470,6 +1484,35 @@ function mergeWeekStarts(starts: string[]) {
 
 function latestDateValue(values: Array<string | null | undefined>) {
   return values.filter(Boolean).sort().at(-1) ?? todayDateString();
+}
+
+function captureWeekScroll(main: HTMLElement): WeekScrollSnapshot {
+  if (window.matchMedia("(max-width: 860px)").matches) {
+    return {
+      container: "window",
+      scrollHeight: document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight,
+      scrollTop: window.scrollY
+    };
+  }
+
+  return {
+    container: "main",
+    scrollHeight: main.scrollHeight,
+    scrollTop: main.scrollTop
+  };
+}
+
+function restoreScrollAfterPrepend(main: HTMLElement, snapshot: WeekScrollSnapshot) {
+  if (snapshot.container === "window") {
+    const scrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight;
+    window.scrollTo({
+      top: snapshot.scrollTop + (scrollHeight - snapshot.scrollHeight),
+      behavior: "auto"
+    });
+    return;
+  }
+
+  main.scrollTop = snapshot.scrollTop + (main.scrollHeight - snapshot.scrollHeight);
 }
 
 function mergeLoadingStarts(current: Set<string>, starts: string[]) {

@@ -2,15 +2,18 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { PlanWeekDraft } from "../../types/domain";
+import { addDays } from "../../lib/dates";
+import type { PlanWeekDraft, TrainingWeek } from "../../types/domain";
 import { PlanWeekDrawer } from "./PlanWeekDrawer";
 
 function PlannerHarness({
   initialDraft = mismatchedDraft(),
-  onSave
+  onSave,
+  weekStack = {}
 }: {
   initialDraft?: PlanWeekDraft;
   onSave: (draft: PlanWeekDraft) => void;
+  weekStack?: Record<string, TrainingWeek>;
 }) {
   const [draft, setDraft] = useState<PlanWeekDraft | null>(() => initialDraft);
 
@@ -22,7 +25,7 @@ function PlannerHarness({
       onCompleteReview={vi.fn()}
       onSave={onSave}
       setDraft={setDraft}
-      weekStack={{}}
+      weekStack={weekStack}
     />
   ) : null;
 }
@@ -83,6 +86,7 @@ describe("PlanWeekDrawer", () => {
 
     expect(screen.getByText(/review is read-only/i)).toBeInTheDocument();
     expect(screen.queryByText("Starting point")).not.toBeInTheDocument();
+    expect(screen.queryByText("Purpose")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Complete review" }));
 
@@ -90,40 +94,64 @@ describe("PlanWeekDrawer", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("uses compact direction controls and labels the outcome-oriented rebalance option", () => {
-    render(<PlannerHarness onSave={vi.fn()} />);
+  it("offers the last 12 weeks with date ranges and mileage totals", async () => {
+    const user = userEvent.setup();
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
 
-    expect(screen.getByLabelText("Starting point")).toHaveValue("blank");
-    expect(screen.getByRole("option", { name: "Rebalance remaining days" })).toBeInTheDocument();
-    expect(screen.queryByText("Smart adjustment")).not.toBeInTheDocument();
-    expect(screen.getByText("Week direction")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Starting point")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Purpose")).not.toBeInTheDocument();
+    expect(screen.queryByText("Week direction")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+
+    expect(screen.getAllByRole("menuitem")).toHaveLength(12);
+    expect(screen.getByRole("menuitem", { name: "Copy Jul 6-12, 7 miles" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Copy Apr 20-26, 18 miles" })).toBeEnabled();
   });
 
-  it("disables starting points that need a prior week and explains why", () => {
-    const draft = mismatchedDraft();
-    draft.noPriorUsableWeek = true;
-    draft.priorWeekStartDate = null;
-    render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
+  it("copies any selected week into matching weekdays", async () => {
+    const user = userEvent.setup();
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
 
-    expect(screen.getByRole("option", { name: /copy prior week.*no prior usable week/i })).toBeDisabled();
-    expect(screen.getByRole("option", { name: /rebalance remaining days.*no prior usable week/i })).toBeDisabled();
-    expect(screen.getByText(/no prior usable week was found, so this draft starts blank/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy Jun 22-28, 9 miles" }));
+
+    expect(screen.queryByLabelText("Mon session 1 name")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Wed session 1 name")).toHaveValue("Aerobic run 3");
+    expect(screen.getByLabelText("Wed session 1 mileage")).toHaveValue(9);
   });
 
-  it("confirms before a starting-point change discards draft edits", async () => {
+  it("confirms before copying over unsaved draft edits", async () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<PlannerHarness onSave={vi.fn()} />);
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
 
     await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
     expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Starting point"), "copy_prior");
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy Jul 6-12, 7 miles" }));
 
     expect(confirm).toHaveBeenCalledWith(
-      "Change the starting point? Your unsaved schedule and target edits will be discarded."
+      "Copy this week? Your unsaved schedule and target edits will be discarded."
     );
-    expect(screen.getByLabelText("Starting point")).toHaveValue("blank");
     expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
     confirm.mockRestore();
   });
@@ -319,5 +347,71 @@ function mismatchedDraft(): PlanWeekDraft {
       }
     ],
     hasExistingPlan: false
+  };
+}
+
+function copyableWeeks() {
+  return Object.fromEntries(
+    Array.from({ length: 12 }, (_, index) => {
+      const weekStartDate = addDays("2026-07-13", (index + 1) * -7);
+      const mileage = index + 7;
+      const week = priorTrainingWeek(weekStartDate, mileage, `Aerobic run ${index + 1}`);
+      return [weekStartDate, week];
+    })
+  );
+}
+
+function priorTrainingWeek(
+  weekStartDate = "2026-07-06",
+  mileage = 7,
+  title = "Prior aerobic run"
+): TrainingWeek {
+  return {
+    id: `week-${weekStartDate}`,
+    weekStartDate,
+    weekEndDate: addDays(weekStartDate, 6),
+    plannedMileage: mileage,
+    actualMileage: 0,
+    plannedTime: null,
+    actualTime: null,
+    mesocycleId: null,
+    purpose: "maintain",
+    purposeSource: "plan",
+    targetMileage: mileage,
+    targetMileageSource: "plan",
+    targetLongRunDistance: null,
+    targetLongRunSource: "manual",
+    isDownWeek: false,
+    notes: "",
+    reviewedAt: null,
+    workouts: [
+      {
+        id: `workout-${weekStartDate}`,
+        trainingWeekId: `week-${weekStartDate}`,
+        athleteAccountId: "athlete-1",
+        plannedDate: addDays(weekStartDate, 2),
+        title,
+        sport: "run",
+        workoutType: "easy",
+        intensityCategory: "easy",
+        plannedDistance: mileage,
+        plannedDuration: null,
+        plannedPace: null,
+        plannedElevation: null,
+        plannedTss: null,
+        purpose: "Aerobic maintenance",
+        instructions: "",
+        notes: "",
+        status: "planned"
+      }
+    ],
+    actualActivities: [],
+    goals: [],
+    goalEvaluations: [],
+    weekState: "past",
+    goalReviewSummary: "",
+    hardDays: 0,
+    longRunDistance: 0,
+    longRunPercentage: 0
   };
 }

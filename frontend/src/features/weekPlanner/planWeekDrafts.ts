@@ -32,7 +32,7 @@ export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string,
     week.targetMileage !== null ||
     week.targetLongRunDistance !== null;
   const priorWeek = findPriorUsableWeek(week.weekStartDate, weekStack);
-  const startingPoint: PlanStartingPoint = hasExistingPlan ? "existing" : priorWeek ? "copy_prior" : "blank";
+  const startingPoint: PlanStartingPoint = hasExistingPlan ? "existing" : "blank";
   const hasStoredPurpose =
     (typeof week.purpose === "string" && week.purpose.length > 0) || week.notes.trim().length > 0;
   const purpose =
@@ -528,8 +528,8 @@ export function numericAlignment(id: string, label: string, value: number, goal:
 
 export function planWeekDraftToPayload(draft: PlanWeekDraft) {
   return {
-    purpose: draft.purposeIsSuggested ? null : draft.purpose,
-    customPurpose: draft.customPurpose,
+    purpose: null,
+    customPurpose: "",
     targetLongRunDistance: optionalNumber(draft.goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => {
       const sessionType = sessionTypeForWorkout(workout);
@@ -548,54 +548,6 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
       source: goal.source
     }))
   };
-}
-
-export function startingPointOptions(
-  draft: PlanWeekDraft
-): Array<{ value: PlanStartingPoint; label: string; disabled?: boolean }> {
-  const hasPriorWeek = Boolean(draft.priorWeekStartDate);
-  const noPriorLabel = " — no prior usable week";
-  return [
-    ...(draft.hasExistingPlan ? [{ value: "existing" as const, label: "Keep current plan" }] : []),
-    {
-      value: "copy_prior" as const,
-      label: `Copy prior week${hasPriorWeek ? "" : noPriorLabel}`,
-      disabled: !hasPriorWeek
-    },
-    {
-      value: "smart_adjustment" as const,
-      label: `Rebalance remaining days${hasPriorWeek ? "" : noPriorLabel}`,
-      disabled: !hasPriorWeek
-    },
-    { value: "blank" as const, label: "Start blank" }
-  ];
-}
-
-export function startingPointHelperText(draft: PlanWeekDraft) {
-  const hasPriorWeek = Boolean(draft.priorWeekStartDate);
-  if (draft.startingPoint === "existing") {
-    return "";
-  }
-  if (draft.startingPoint === "copy_prior") {
-    return !hasPriorWeek
-      ? "Copy prior week is unavailable because no prior usable week was found."
-      : "Starting from the most recent usable week's sessions.";
-  }
-  if (draft.startingPoint === "smart_adjustment") {
-    return !hasPriorWeek
-      ? "Rebalancing is unavailable because no prior usable week was found."
-      : "Starting from the prior week, scaled to this week's suggested load.";
-  }
-  return !hasPriorWeek
-    ? "No prior usable week was found, so this draft starts blank."
-    : "Starting with an empty schedule for this week.";
-}
-
-export function purposeText(draft: PlanWeekDraft) {
-  if (draft.purpose === "custom") {
-    return draft.customPurpose.trim() || "Custom";
-  }
-  return weekPurposes.find((option) => option.value === draft.purpose)?.label ?? "Maintain";
 }
 
 export function normalizeWeekPurposeId(value: string): WeekPurposeId {

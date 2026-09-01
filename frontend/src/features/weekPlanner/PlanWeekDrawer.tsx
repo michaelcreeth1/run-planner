@@ -1,20 +1,18 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Plus, Save, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Copy, Plus, Save, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
-  PlanStartingPoint,
   PlanWeekDraft,
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
   TrainingPlan,
   TrainingWeek,
   WeekGoalCategory,
-  WeekPurposeId,
   Workout
 } from "../../types/domain";
 import { addDays, todayDateString } from "../../lib/dates";
-import { formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
-import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes, weekPurposes } from "../../lib/options";
+import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
+import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import type { AlignmentItem } from "../../types/domain";
 import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
 import {
@@ -32,9 +30,6 @@ import {
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
   sortDraftWorkouts,
-  startingPointHelperText,
-  startingPointOptions,
-  suggestLoad,
   sumDraftRunDistance
 } from "./planWeekDrafts";
 
@@ -63,6 +58,8 @@ export function PlanWeekDrawer({
 }) {
   const [showAllRules, setShowAllRules] = useState(false);
   const [openRuleId, setOpenRuleId] = useState<string | null>(null);
+  const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
+  const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
   const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
   const ruleRows = draft.goals
     .filter((goal) => goal.isEnabled)
@@ -76,7 +73,10 @@ export function PlanWeekDrawer({
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
-  const directionNote = [startingPointHelperText(draft), draft.load.reason].filter(Boolean).join(" ");
+  const copyWeekOptions = Array.from({ length: 12 }, (_, index) => {
+    const weekStartDate = addDays(draft.weekStartDate, (index + 1) * -7);
+    return { weekStartDate, week: weekStack[weekStartDate] ?? null };
+  });
   const sharedEvaluations = useMemo(
     () => {
       const summary = plan?.weekSummaries.find((candidate) => candidate.weekStartDate === draft.weekStartDate) ?? null;
@@ -111,6 +111,31 @@ export function PlanWeekDrawer({
         ? "Edit week plan"
         : "Plan week";
 
+  useEffect(() => {
+    if (!isCopyWeekMenuOpen) {
+      return;
+    }
+
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!copyWeekMenuRef.current?.contains(event.target as Node)) {
+        setIsCopyWeekMenuOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsCopyWeekMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isCopyWeekMenuOpen]);
+
   if (draft.weekState === "past") {
     return (
       <PastWeekReviewDrawer
@@ -128,33 +153,26 @@ export function PlanWeekDrawer({
     setDraft((current) => (current ? updater(current) : current));
   }
 
-  function replaceFromStartingPoint(startingPoint: PlanStartingPoint) {
-    if (startingPoint === draft.startingPoint) {
+  function copyWeek(sourceWeekStartDate: string) {
+    if (!weekStack[sourceWeekStartDate]) {
       return;
     }
     if (
       startingPointSnapshot(draft) !== startingPointBaselineRef.current &&
-      !window.confirm("Change the starting point? Your unsaved schedule and target edits will be discarded.")
+      !window.confirm("Copy this week? Your unsaved schedule and target edits will be discarded.")
     ) {
       return;
     }
     updateDraft((current) => {
-      const next = rebuildPlanWeekDraftForStartingPoint(current, startingPoint, weekStack);
+      const next = rebuildPlanWeekDraftForStartingPoint(
+        { ...current, priorWeekStartDate: sourceWeekStartDate },
+        "copy_prior",
+        weekStack
+      );
       startingPointBaselineRef.current = startingPointSnapshot(next);
       return next;
     });
-  }
-
-  function updatePurpose(purposeValue: WeekPurposeId) {
-    updateDraft((current) => {
-      const nextLoad = suggestLoad(current.load.priorMileage, purposeValue, current.workouts);
-      return {
-        ...current,
-        purpose: purposeValue,
-        purposeIsSuggested: false,
-        load: nextLoad
-      };
-    });
+    setIsCopyWeekMenuOpen(false);
   }
 
   function updateGoal(goalDraftId: string, updates: Partial<PlanWeekGoalDraft>) {
@@ -307,56 +325,50 @@ export function PlanWeekDrawer({
         </header>
 
         <div className="plan-week-body">
-          <section className="plan-week-section plan-week-direction">
-            <div className="section-heading">
-              <h3>Week direction</h3>
-            </div>
-            <div className="week-direction-controls">
-              <label>
-                <span>Starting point</span>
-                <select
-                  value={draft.startingPoint}
-                  onChange={(event) => replaceFromStartingPoint(event.target.value as PlanStartingPoint)}
-                >
-                  {startingPointOptions(draft).map((option) => (
-                    <option disabled={option.disabled} key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>{draft.purposeIsSuggested ? "Suggested purpose" : "Purpose"}</span>
-                <select value={draft.purpose} onChange={(event) => updatePurpose(event.target.value as WeekPurposeId)}>
-                  {weekPurposes.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {draft.purpose === "custom" ? (
-              <label>
-                <span>Custom purpose</span>
-                <input
-                  value={draft.customPurpose}
-                  onChange={(event) =>
-                    updateDraft((current) => ({
-                      ...current,
-                      customPurpose: event.target.value
-                    }))
-                  }
-                />
-              </label>
-            ) : null}
-            {directionNote ? <p className="plan-week-note">{directionNote}</p> : null}
-          </section>
-
           <section className="plan-week-section schedule-section">
-            <div className="section-heading schedule-section-heading">
+            <div className="section-heading section-heading--split schedule-section-heading">
               <div>
                 <h3>Schedule</h3>
+              </div>
+              <div className="copy-week-control" ref={copyWeekMenuRef}>
+                <button
+                  aria-expanded={isCopyWeekMenuOpen}
+                  aria-haspopup="menu"
+                  className="copy-week-button"
+                  title="Copy sessions from one of the last 12 weeks"
+                  type="button"
+                  onClick={() => setIsCopyWeekMenuOpen((current) => !current)}
+                >
+                  <Copy size={15} />
+                  <span>Copy week</span>
+                  <ChevronDown aria-hidden="true" size={14} />
+                </button>
+                {isCopyWeekMenuOpen ? (
+                  <div aria-label="Choose a week to copy" className="copy-week-menu" role="menu">
+                    {copyWeekOptions.map(({ weekStartDate, week }) => {
+                      const rangeLabel = formatCompactWeekRange(weekStartDate, addDays(weekStartDate, 6));
+                      const mileage = week ? comparisonMileage(week) : null;
+                      return (
+                        <button
+                          aria-label={
+                            week
+                              ? `Copy ${rangeLabel}, ${formatNumber(mileage ?? 0)} miles`
+                              : `${rangeLabel}, loading mileage`
+                          }
+                          className="copy-week-option"
+                          disabled={!week}
+                          key={weekStartDate}
+                          role="menuitem"
+                          type="button"
+                          onClick={() => copyWeek(weekStartDate)}
+                        >
+                          <span>{rangeLabel}</span>
+                          <strong>{week ? `${formatNumber(mileage ?? 0)} mi` : "Loading..."}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="schedule-draft-column-labels" aria-hidden="true">

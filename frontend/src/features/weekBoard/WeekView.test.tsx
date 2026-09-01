@@ -202,6 +202,71 @@ describe("WeekView workout completion", () => {
     expect(screen.getByText("Not planned yet · target 28 mi · Base W1")).toBeVisible();
   });
 
+  it("positions the initial week immediately and smooth-scrolls later selections below the sticky UI", () => {
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    const currentWeek = makeWeek(makeWorkout());
+    const nextWeek: TrainingWeek = {
+      ...currentWeek,
+      id: "week-2",
+      weekStartDate: "2026-07-20",
+      weekEndDate: "2026-07-26",
+      weekState: "future"
+    };
+    const props = makeProps(currentWeek, vi.fn());
+    const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+    const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("app-header")) {
+        return 64;
+      }
+      if (this.classList.contains("week-context-strip")) {
+        return 58;
+      }
+      return 0;
+    });
+    const boundingRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const top = this.dataset.weekStart === currentWeek.weekStartDate
+        ? 420
+        : this.dataset.weekStart === nextWeek.weekStartDate
+          ? 700
+          : 0;
+      return { bottom: top, height: 0, left: 0, right: 0, top, width: 0, x: 0, y: top, toJSON: () => ({}) };
+    });
+    scrollTo.mockClear();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const renderView = (selectedWeek: TrainingWeek) => (
+      <QueryClientProvider client={queryClient}>
+        <ProfileProvider profileId="athlete-1">
+          <main>
+            <div className="app-header" />
+            <WeekView
+              {...props}
+              selectedWeekStart={selectedWeek.weekStartDate}
+              week={selectedWeek}
+              weekStack={{
+                [currentWeek.weekStartDate]: currentWeek,
+                [nextWeek.weekStartDate]: nextWeek
+              }}
+              weekStarts={[currentWeek.weekStartDate, nextWeek.weekStartDate]}
+            />
+          </main>
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(renderView(currentWeek));
+
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 284 });
+    scrollTo.mockClear();
+    rerender(renderView(nextWeek));
+    expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "smooth" }));
+
+    boundingRect.mockRestore();
+    offsetHeight.mockRestore();
+  });
+
   it("keeps historical day cards read-only", () => {
     server.use(
       http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),

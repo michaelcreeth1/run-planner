@@ -240,6 +240,7 @@ def sync_linked_plans_to_race_date(
             ),
             linked_weeks_by_start=old_linked_weeks,
             apply_changes=True,
+            preserve_past=True,
             recurring_goals=[serialize_recurring_goal(goal) for goal in plan.recurring_goals],
         )
 
@@ -286,6 +287,7 @@ def preview_plan(
         existing_weeks,
         linked_weeks_by_start=linked_weeks_by_start(db, existing_plan_id, athlete_account_id),
         apply_changes=False,
+        preserve_past=existing_plan_id is not None,
     )
 
 
@@ -341,6 +343,7 @@ def replace_plan(
 ) -> dict[str, Any]:
     plan = get_plan_model(db, plan_id, athlete_account_id)
     normalized = normalize_plan_spec(db, payload, athlete_account_id, existing_plan_id=plan_id)
+    reuse_existing_mesocycle_ids(plan, normalized)
     old_linked = linked_weeks_by_start(db, plan_id, athlete_account_id)
     weeks = weeks_for_preview(
         db,
@@ -372,6 +375,7 @@ def replace_plan(
         weeks,
         linked_weeks_by_start=old_linked,
         apply_changes=True,
+        preserve_past=True,
         recurring_goals=normalized["recurring_goals"],
     )
     db.commit()
@@ -609,17 +613,34 @@ def replace_plan_children(
     normalized: dict[str, Any],
     athlete_account_id: str,
 ) -> None:
-    plan.mesocycles.clear()
-    plan.recurring_goals.clear()
+    existing_mesocycles = {mesocycle.id: mesocycle for mesocycle in plan.mesocycles}
+    # Free the zero-based order slots before phases are inserted or reordered;
+    # the database enforces a unique (plan, order_index) pair immediately.
+    for temporary_index, mesocycle in enumerate(plan.mesocycles, start=1):
+        mesocycle.order_index = -temporary_index
     db.flush()
 
+    next_mesocycles: list[Mesocycle] = []
     for mesocycle_data in normalized["mesocycles"]:
-        plan.mesocycles.append(
-            Mesocycle(
+        mesocycle_id = mesocycle_data.get("id")
+        if mesocycle_id:
+            mesocycle = existing_mesocycles.get(mesocycle_id)
+            if mesocycle is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="A training phase does not belong to this plan.",
+                )
+            for field, value in mesocycle_data.items():
+                if field != "id":
+                    setattr(mesocycle, field, value)
+        else:
+            mesocycle = Mesocycle(
                 athlete_account_id=athlete_account_id,
                 **{key: value for key, value in mesocycle_data.items() if key != "id"},
             )
-        )
+        next_mesocycles.append(mesocycle)
+
+    plan.mesocycles[:] = next_mesocycles
     db.flush()
 
     mesocycle_by_index = {mesocycle.order_index: mesocycle for mesocycle in plan.mesocycles}
@@ -628,6 +649,8 @@ def replace_plan_children(
         for data in normalized["mesocycles"]
     ]
 
+    plan.recurring_goals.clear()
+    db.flush()
     for goal_data in normalized["recurring_goals"]:
         plan.recurring_goals.append(
             RecurringGoal(
@@ -636,6 +659,25 @@ def replace_plan_children(
             )
         )
     db.flush()
+
+
+def reuse_existing_mesocycle_ids(
+    plan: TrainingPlan, normalized: dict[str, Any]
+) -> None:
+    """Keep stable phase identities for full-replacement clients that omit IDs."""
+    mesocycles_by_order = {
+        mesocycle.order_index: mesocycle for mesocycle in plan.mesocycles
+    }
+    claimed_mesocycle_ids = {
+        data["id"] for data in normalized["mesocycles"] if data.get("id")
+    }
+    for data in normalized["mesocycles"]:
+        if data.get("id"):
+            continue
+        candidate = mesocycles_by_order.get(data["order_index"])
+        if candidate is not None and candidate.id not in claimed_mesocycle_ids:
+            data["id"] = candidate.id
+            claimed_mesocycle_ids.add(candidate.id)
 
 
 def weeks_for_preview(
@@ -686,6 +728,7 @@ def scaffold_weeks(
     *,
     linked_weeks_by_start: dict[date, TrainingWeek],
     apply_changes: bool,
+    preserve_past: bool = False,
     recurring_goals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scheduled_weeks = materialize_scaffold_weeks(mesocycles)
@@ -697,10 +740,24 @@ def scaffold_weeks(
             existing_weeks,
             linked_weeks_by_start,
         )
+    preserved_week_starts = (
+        {
+            scheduled.week_start_date
+            for scheduled in scheduled_weeks
+            if existing_weeks.get(scheduled.week_start_date) is not None
+            and planning.week_state_for_start(
+                db, scheduled.week_start_date, athlete_account_id
+            )
+            == "past"
+        }
+        if preserve_past
+        else set()
+    )
     projected_week_summaries = project_scaffold_week_summaries(
         scheduled_weeks,
         existing_weeks,
         athlete_account_id,
+        preserved_week_starts=preserved_week_starts,
     )
     scheduled_by_start = {week.week_start_date: week for week in scheduled_weeks}
     diffs: list[dict[str, Any]] = []
@@ -713,6 +770,17 @@ def scaffold_weeks(
         week_warnings = scaffold_week_warnings(existing, scheduled)
         manual_override = False
         action = "create" if existing is None else "annotate"
+
+        if scheduled.week_start_date in preserved_week_starts:
+            diffs.append(
+                {
+                    "week_start_date": scheduled.week_start_date,
+                    "action": "annotate",
+                    "changes": [],
+                    "warnings": [],
+                }
+            )
+            continue
 
         if existing is None:
             # Build the week in memory for both preview and apply so the two
@@ -817,6 +885,8 @@ def scaffold_weeks(
     for week_start_date, week in linked_weeks_by_start.items():
         if week_start_date in scheduled_by_start:
             continue
+        if preserve_past and planning.get_week_state(week) == "past":
+            continue
         unlink_changes = [
             change("mesocycleId", week.mesocycle_id, None),
             *plan_owned_reset_changes(week),
@@ -853,11 +923,31 @@ def ensure_scaffold_weeks_are_mutable(
 ) -> None:
     weeks_by_start = dict(existing_weeks)
     weeks_by_start.update(linked_weeks_by_start)
+    scheduled_by_start = {week.week_start_date: week for week in scheduled_weeks}
     affected_week_starts = {
-        *(week.week_start_date for week in scheduled_weeks),
+        *scheduled_by_start,
         *linked_weeks_by_start,
     }
+    has_mutable_week = False
     for week_start_date in sorted(affected_week_starts):
+        if (
+            planning.week_state_for_start(db, week_start_date, athlete_account_id)
+            == "past"
+        ):
+            scheduled = scheduled_by_start.get(week_start_date)
+            linked = linked_weeks_by_start.get(week_start_date)
+            if (
+                scheduled is None
+                or linked is None
+                or scheduled.mesocycle_id != linked.mesocycle_id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=planning.PAST_WEEK_READ_ONLY_DETAIL,
+                )
+            continue
+
+        has_mutable_week = True
         existing = weeks_by_start.get(week_start_date)
         if existing is not None:
             planning.ensure_week_is_mutable(existing)
@@ -867,6 +957,12 @@ def ensure_scaffold_weeks_are_mutable(
                 week_start_date,
                 athlete_account_id,
             )
+
+    if affected_week_starts and not has_mutable_week:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=planning.PAST_WEEK_READ_ONLY_DETAIL,
+        )
 
 
 def materialize_scaffold_weeks(mesocycles: list[dict[str, Any]]) -> list[ScaffoldWeek]:
@@ -1091,13 +1187,18 @@ def project_scaffold_week_summaries(
     athlete_account_id: str,
     *,
     project_plan_changes: bool = True,
+    preserved_week_starts: set[date] | None = None,
 ) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
+    preserved_week_starts = preserved_week_starts or set()
     for scheduled in scheduled_weeks:
         existing = existing_weeks.get(scheduled.week_start_date)
         week = existing or blank_scaffold_week(athlete_account_id, scheduled)
 
-        if project_plan_changes or existing is None:
+        if (
+            project_plan_changes
+            and scheduled.week_start_date not in preserved_week_starts
+        ) or existing is None:
             purpose, purpose_source, purpose_writable = projected_scaffolded_field(
                 week,
                 "purpose",

@@ -51,8 +51,8 @@ services:
       test:
         - CMD-SHELL
         - >-
-          wget -q -O /dev/null http://localhost:5173/ &&
-          wget -q -O /dev/null http://localhost:5173/readyz
+          wget -q -O /dev/null http://127.0.0.1:5173/ &&
+          wget -q -O /dev/null http://127.0.0.1:5173/readyz
       interval: 30s
       timeout: 5s
       retries: 3

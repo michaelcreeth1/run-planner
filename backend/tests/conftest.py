@@ -17,8 +17,10 @@ else:
     test_database_url = f"sqlite:///{test_database_path}"
 
 os.environ["DATABASE_URL"] = test_database_url
+os.environ["APP_ENV"] = "test"
 os.environ["APP_USERNAME"] = "michael"
 os.environ["APP_PASSWORD"] = "test-password"
+os.environ["SESSION_COOKIE_SECURE"] = "false"
 
 from app.db.migrations import run_migrations  # noqa: E402
 from app.db.session import engine  # noqa: E402

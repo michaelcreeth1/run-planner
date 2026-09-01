@@ -14,6 +14,7 @@ import {
   draftWorkoutsFromWeek,
   evaluatePlanAlignment,
   planWeekDraftToPayload,
+  rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
   suggestLoad
 } from "./planWeekDrafts";
@@ -26,7 +27,7 @@ describe("plan week draft helpers", () => {
     expect(suggestLoad(null, "custom", [makeDraftWorkout({ plannedDistance: "12" })]).suggestedMileage).toBe(12);
   });
 
-  it("copies a prior week's workouts onto matching target weekdays", () => {
+  it("starts a new week blank and copies prior workouts only when requested", () => {
     const priorWeek = makeWeek("2026-06-22", {
       workouts: [
         makeWorkout({
@@ -44,8 +45,15 @@ describe("plan week draft helpers", () => {
       [targetWeek.weekStartDate]: targetWeek
     });
 
-    expect(draft.startingPoint).toBe("copy_prior");
-    expect(draft.workouts[0]).toMatchObject({
+    expect(draft.startingPoint).toBe("blank");
+    expect(draft.workouts).toEqual([]);
+
+    const copiedDraft = rebuildPlanWeekDraftForStartingPoint(draft, "copy_prior", {
+      [priorWeek.weekStartDate]: priorWeek,
+      [targetWeek.weekStartDate]: targetWeek
+    });
+
+    expect(copiedDraft.workouts[0]).toMatchObject({
       plannedDate: "2026-07-01",
       title: "Midweek aerobic",
       plannedDistance: "5"
@@ -215,7 +223,7 @@ describe("plan week draft helpers", () => {
     expect(alignmentById.get("recovery")).toBe("aligned");
   });
 
-  it("builds a save payload without draft-only fields and keeps goal source", () => {
+  it("builds a save payload without week purpose or draft-only fields", () => {
     const draft = makeDraft({
       purpose: "maintain",
       workouts: [
@@ -241,7 +249,8 @@ describe("plan week draft helpers", () => {
     const payload = planWeekDraftToPayload(draft);
 
     expect(payload).toMatchObject({
-      purpose: "maintain",
+      purpose: null,
+      customPurpose: "",
       targetLongRunDistance: 8
     });
     expect(payload.workouts[0]).toMatchObject({

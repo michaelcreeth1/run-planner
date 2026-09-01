@@ -3,8 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { startOfWeek } from "./lib/dates";
+import { addDays, startOfWeek } from "./lib/dates";
 import { server } from "./test/server";
+import type { AnalyticsWeekSummary } from "./types/domain";
 
 const apiUrl = (path: string) => new URL(path, window.location.origin).toString();
 
@@ -81,6 +82,35 @@ function emptyWeek(weekStartDate: string) {
     hardDays: 0,
     longRunDistance: 0,
     longRunPercentage: 0
+  };
+}
+
+function analyticsWeek(
+  weekStartDate: string,
+  overrides: Partial<AnalyticsWeekSummary> = {}
+): AnalyticsWeekSummary {
+  return {
+    weekStartDate,
+    weekEndDate: addDays(weekStartDate, 6),
+    weekState: "future",
+    plannedMileage: 0,
+    targetMileage: null,
+    actualMileage: 0,
+    comparisonMileage: 0,
+    hardDays: 0,
+    actualHardDays: 0,
+    restDays: 0,
+    actualRestDays: 0,
+    hasBackToBackHardDays: false,
+    longRunDistance: 0,
+    longRunPercentage: 0,
+    loadRisk: "clear",
+    longRunRisk: "clear",
+    intensityRisk: "clear",
+    recoveryRisk: "clear",
+    hasPlan: false,
+    hasActuals: false,
+    ...overrides
   };
 }
 
@@ -207,6 +237,13 @@ describe("App authentication states", () => {
     expect(await screen.findByRole("navigation", { name: "Primary navigation" })).toBeVisible();
     const weekActions = await screen.findByLabelText("Week actions");
     await user.click(within(weekActions).getByRole("button", { name: "Plan week" }));
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await waitFor(() => {
+      const options = screen.getAllByRole("menuitem");
+      expect(options).toHaveLength(12);
+      options.forEach((option) => expect(option).toBeEnabled());
+    });
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Add session to Mon" }));
     const name = screen.getByLabelText("Mon session 1 name");
     await user.clear(name);
@@ -313,6 +350,79 @@ describe("App authentication states", () => {
       expect(document.querySelector(`[data-week-start="${currentWeekStart}"]`)).toHaveClass("week-row--expanded");
       expect(scrollTo).toHaveBeenCalled();
     });
+  });
+
+  it("keeps the visible week stack stable when opening an adjacent week", async () => {
+    const user = userEvent.setup();
+    const currentWeekStart = startOfWeek(new Date());
+    const oldestVisibleWeekStart = addDays(currentWeekStart, -21);
+    const nextWeekStart = addDays(currentWeekStart, 7);
+    useDirectAuthenticatedAppHandlers();
+    render(<App />);
+
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+    const nextWeekButton = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        `button[data-week-start="${nextWeekStart}"]`
+      );
+      expect(button).toBeInTheDocument();
+      return button as HTMLButtonElement;
+    });
+    expect(document.querySelector(`[data-week-start="${oldestVisibleWeekStart}"]`)).toBeInTheDocument();
+
+    await user.click(nextWeekButton);
+
+    await waitFor(() => expect(window.location.pathname).toBe(`/week/${nextWeekStart}`));
+    expect(document.querySelector(`[data-week-start="${oldestVisibleWeekStart}"]`)).toBeInTheDocument();
+  });
+
+  it("keeps the scroll target stable when opening a nearby week from Progress", async () => {
+    const user = userEvent.setup();
+    const currentWeekStart = startOfWeek(new Date());
+    const oldestVisibleWeekStart = addDays(currentWeekStart, -21);
+    const nextWeekStart = addDays(currentWeekStart, 7);
+    useDirectAuthenticatedAppHandlers();
+    server.use(
+      http.get(apiUrl("/api/analytics/planning"), () =>
+        HttpResponse.json({
+          anchorWeekStartDate: currentWeekStart,
+          generatedAt: `${currentWeekStart}T12:00:00Z`,
+          lookbackWeeks: 12,
+          futureWeeks: 4,
+          primaryRecommendation: {
+            id: "recommendation",
+            title: "Keep steady",
+            detail: "",
+            recommendation: "",
+            riskLevel: "clear",
+            weekStartDate: null,
+            metric: ""
+          },
+          insights: [],
+          loadBand: {
+            baselineMileage: 20,
+            floorMileage: 16,
+            ceilingMileage: 24,
+            watchCeilingMileage: 26,
+            reviseCeilingMileage: 28,
+            sourceWeeks: 4
+          },
+          weeks: [
+            analyticsWeek(currentWeekStart, { weekState: "current" }),
+            analyticsWeek(nextWeekStart, { plannedMileage: 24, weekState: "future" })
+          ],
+          goalReliability: []
+        })
+      )
+    );
+    render(<App />);
+
+    const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
+    await user.click(within(navigation).getByRole("button", { name: "Progress" }));
+    await user.click(await screen.findByRole("button", { name: /Next planned/ }));
+
+    await waitFor(() => expect(window.location.pathname).toBe(`/week/${nextWeekStart}`));
+    expect(document.querySelector(`[data-week-start="${oldestVisibleWeekStart}"]`)).toBeInTheDocument();
   });
 
   it("opens a selected plan from a direct URL", async () => {

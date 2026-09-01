@@ -494,6 +494,112 @@ def test_past_plan_replace_race_move_and_delete_preserve_saved_state(
         assert added_extension_weeks == []
 
 
+def test_active_plan_update_preserves_past_weeks_and_updates_future_weeks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = make_plan_payload(
+        name="Eight week build",
+        start_date="2099-06-01",
+        end_date="2099-07-26",
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        created_response = client.post("/api/plans", json=payload)
+        assert created_response.status_code == 201
+        created = created_response.json()
+
+        historical_week_start = "2099-06-15"
+        future_week_start = "2099-06-29"
+        historical_before = client.get(
+            f"/api/weeks/{historical_week_start}"
+        ).json()
+        future_before = client.get(f"/api/weeks/{future_week_start}").json()
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda _timezone_name, now=None: date(2099, 6, 24),
+        )
+
+        replacement = deepcopy(payload)
+        replacement["name"] = "Revised future build"
+        for draft, saved in zip(
+            replacement["mesocycles"], created["mesocycles"], strict=True
+        ):
+            draft["id"] = saved["id"]
+        for draft, saved in zip(
+            replacement["recurringGoals"], created["recurringGoals"], strict=True
+        ):
+            draft["id"] = saved["id"]
+        replacement["mesocycles"][1]["targetMileageStart"] = 35
+        replacement["mesocycles"][1]["targetMileageEnd"] = 50
+
+        historical_restructure = deepcopy(replacement)
+        historical_restructure["mesocycles"][0]["endDate"] = "2099-06-21"
+        historical_restructure["mesocycles"][1]["startDate"] = "2099-06-22"
+        rejected_restructure = client.put(
+            f"/api/plans/{created['id']}", json=historical_restructure
+        )
+        assert rejected_restructure.status_code == 409
+        assert (
+            rejected_restructure.json()["detail"]
+            == planning.PAST_WEEK_READ_ONLY_DETAIL
+        )
+
+        preview = client.post(
+            f"/api/plans/{created['id']}/preview", json=replacement
+        )
+        assert preview.status_code == 200
+        preview_by_start = {
+            week["weekStartDate"]: week for week in preview.json()["weekSummaries"]
+        }
+        assert (
+            preview_by_start[historical_week_start]["targetMileage"]
+            == historical_before["targetMileage"]
+        )
+        assert (
+            preview_by_start[future_week_start]["targetMileage"]
+            != future_before["targetMileage"]
+        )
+
+        updated_response = client.put(
+            f"/api/plans/{created['id']}", json=replacement
+        )
+        assert updated_response.status_code == 200
+        updated = updated_response.json()
+        assert updated["name"] == "Revised future build"
+        assert [phase["id"] for phase in updated["mesocycles"]] == [
+            phase["id"] for phase in created["mesocycles"]
+        ]
+
+        historical_after = client.get(
+            f"/api/weeks/{historical_week_start}"
+        ).json()
+        future_after = client.get(f"/api/weeks/{future_week_start}").json()
+        for field in (
+            "mesocycleId",
+            "purpose",
+            "purposeSource",
+            "targetMileage",
+            "targetMileageSource",
+            "targetLongRunDistance",
+            "targetLongRunSource",
+            "isDownWeek",
+        ):
+            assert historical_after[field] == historical_before[field]
+        assert [
+            (goal["id"], goal["label"], goal["source"])
+            for goal in historical_after["goals"]
+        ] == [
+            (goal["id"], goal["label"], goal["source"])
+            for goal in historical_before["goals"]
+        ]
+        assert future_after["targetMileage"] == preview_by_start[future_week_start][
+            "targetMileage"
+        ]
+
+
 def test_race_and_plan_patches_reject_required_nulls_and_preserve_patch_semantics() -> None:
     with TestClient(app) as client:
         login(client)
