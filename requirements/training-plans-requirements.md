@@ -90,7 +90,7 @@ Priorities: **(M)** must, **(S)** should, **(C)** could.
 ### 4.2 Plan Creation
 
 - **FR-5 (M)** The user can create a training plan through a guided wizard in the Plan tab.
-- **FR-6 (M)** The wizard supports two entry modes: **race-first** (pick or inline-create a goal race; plan end derives from race date) and **dates-first** (pick a start and end date; no race required).
+- **FR-6 (M)** The wizard supports two entry modes: **race-first** (pick an existing goal race; plan end derives from race date) and **dates-first** (pick a start and end date; no race required). Goal races are created through the separate goal-race workflow.
 - **FR-7 (M)** A plan has a name, description, start date (normalized to Monday), end date (normalized to Sunday; race plans end the Sunday of race week), optional goal race, status (`active`, `completed`, `archived`), and notes.
 - **FR-8 (S)** For race plans, the wizard proposes a mesocycle split working backward from race date: race week (1), taper (1–2 weeks by distance), specific (~4 weeks), build (~4–6 weeks), base absorbs the remainder. Plans under 8 weeks compress phases and show a warning.
 - **FR-9 (S)** The wizard prefills baseline weekly mileage from recent actual weeks and distributes per-mesocycle mileage targets from a baseline → peak → taper curve.

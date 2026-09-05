@@ -1,15 +1,16 @@
-import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Trash2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
 import { WeekCommandCenter } from "../../components/week/WeekCommandCenter";
 import { WeekContextStrip } from "../../components/week/WeekContextStrip";
+import { WeekReviewHandoff } from "../../components/week/WeekReviewHandoff";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
 import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
 import type { ActualActivity, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
-import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
+import { addDays, startOfWeek } from "../../lib/dates";
 import {
   formatCompactWeekRange,
   formatCompactWeekRangeFromStart,
@@ -38,10 +39,14 @@ export function WeekView({
   onJumpToThisWeek,
   onLoadNewerWeeks,
   onLoadOlderWeeks,
+  onDismissReviewHandoff,
   onOpenPlan,
+  onPlanNextWeek,
   onSelectTimeWeek,
   onSelectWeek,
+  onSkipReview,
   selectedWeekStart,
+  reviewHandoff,
   timelineIndex,
   today,
   week,
@@ -49,6 +54,7 @@ export function WeekView({
   weekStarts,
   onCreate,
   onEdit,
+  onSetCompletion,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -67,10 +73,14 @@ export function WeekView({
   onJumpToThisWeek: () => void;
   onLoadNewerWeeks: () => void;
   onLoadOlderWeeks: () => void;
+  onDismissReviewHandoff: () => void;
   onOpenPlan: () => void;
+  onPlanNextWeek: (weekStartDate: string) => void;
   onSelectTimeWeek: (weekStart: string) => void;
   onSelectWeek: (weekStart: string) => void;
+  onSkipReview: (weekId: string) => void;
   selectedWeekStart: string;
+  reviewHandoff: { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean } | null;
   timelineIndex: TrainingTimelineIndex;
   today: string;
   week: TrainingWeek | null;
@@ -78,6 +88,7 @@ export function WeekView({
   weekStarts: string[];
   onCreate: (plannedDate: string) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -90,12 +101,35 @@ export function WeekView({
 }) {
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
+  const timelineRef = useRef<HTMLElement | null>(null);
+  const previousSelectedWeekRef = useRef<string | null>(null);
   const contextStrip = buildWeekContextStrip({
     plan: activePlan,
     currentWeek: weekStack[currentWeekStart] ?? null,
     currentWeekStart,
     today
   });
+  const selectedWeekIsVisible = weekStarts.includes(selectedWeekStart);
+  const selectedWeekIsLoaded = Boolean(weekStack[selectedWeekStart]);
+
+  useLayoutEffect(() => {
+    const timeline = timelineRef.current;
+    if (!timeline || !selectedWeekIsVisible) {
+      return;
+    }
+
+    const selectedRow = Array.from(timeline.querySelectorAll<HTMLElement>("[data-week-start]")).find(
+      (row) => row.dataset.weekStart === selectedWeekStart
+    );
+    if (!selectedRow) {
+      return;
+    }
+
+    const isNewSelection = previousSelectedWeekRef.current !== null &&
+      previousSelectedWeekRef.current !== selectedWeekStart;
+    scrollExpandedWeekIntoView(selectedRow, isNewSelection ? "smooth" : "auto");
+    previousSelectedWeekRef.current = selectedWeekStart;
+  }, [contextStrip?.kind, selectedWeekIsLoaded, selectedWeekIsVisible, selectedWeekStart]);
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
@@ -147,30 +181,53 @@ export function WeekView({
 
   return (
     <>
-      <WeekContextStrip viewModel={contextStrip} onOpenPlan={onOpenPlan} onJumpToToday={onJumpToThisWeek} />
+      <WeekContextStrip
+        viewModel={contextStrip}
+        onJumpToToday={onJumpToThisWeek}
+        onOpenPlan={onOpenPlan}
+        onOpenWorkout={(workoutId) => {
+          const workout = weekStack[currentWeekStart]?.workouts.find((candidate) => candidate.id === workoutId);
+          if (workout) {
+            onEdit(workout);
+            return;
+          }
+          onJumpToThisWeek();
+        }}
+      />
+      {reviewHandoff && reviewHandoff.reviewedWeekStart === week?.weekStartDate ? (
+        <WeekReviewHandoff
+          nextWeekStart={reviewHandoff.nextWeekStart}
+          onDismiss={onDismissReviewHandoff}
+          onPlanNextWeek={onPlanNextWeek}
+          wasEmpty={reviewHandoff.wasEmpty}
+        />
+      ) : null}
       <section className="week-stack-layout" aria-busy={isLoading}>
-        <section className="week-timeline" aria-label="Training week timeline">
+        <section className="week-timeline" aria-label="Training week timeline" ref={timelineRef}>
         <div className="week-stack-sentinel" aria-hidden="true" ref={olderWeeksSentinelRef} />
         {weekStarts.map((start) => (
           <WeekRow
+            activePlan={activePlan}
             key={start}
             isExpanded={start === selectedWeekStart}
             isLoading={isLoading && start === selectedWeekStart}
-            contextState={contextStrip?.kind ?? "loading"}
             onCreate={onCreate}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onSetCompletion={onSetCompletion}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
             onEditGoal={onEditGoal}
             onOpenPlanWeek={onOpenPlanWeek}
+            onSkipReview={onSkipReview}
             onSync={onSync}
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
             previousWeek={weekStack[addDays(start, -7)]}
+            today={today}
             week={start === selectedWeekStart ? week : weekStack[start]}
             weekStart={start}
           />
@@ -189,70 +246,60 @@ export function WeekView({
 }
 
 function WeekRow({
-  contextState,
+  activePlan,
   isExpanded,
   isLoading,
   onCreate,
   onDelete,
   onDuplicate,
   onEdit,
+  onSetCompletion,
   onCreateGoal,
   onCopyPriorWeek,
   onDeriveWeekGoals,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
   previousWeek,
+  today,
   week,
   weekStart
 }: {
-  contextState: "active" | "onboarding" | "loading";
+  activePlan: TrainingPlan | null;
   isExpanded: boolean;
   isLoading: boolean;
   onCreate: (plannedDate: string) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
   previousWeek?: TrainingWeek;
+  today: string;
   week?: TrainingWeek | null;
   weekStart: string;
 }) {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const hasWeek = Boolean(week);
   const isPast = weekStart < selectedWeekStart;
   const tone: CollapsedWeekTone = week?.weekState === "current" ? "current" : isPast ? "past" : "future";
-
-  useEffect(() => {
-    if (!isExpanded || !frameRef.current) {
-      return;
-    }
-
-    const frame = frameRef.current;
-    const scrollFrame = window.requestAnimationFrame(() => {
-      scrollExpandedWeekIntoView(frame);
-    });
-
-    return () => window.cancelAnimationFrame(scrollFrame);
-  }, [contextState, hasWeek, isExpanded, weekStart]);
 
   return (
     <div
       className={`week-row ${isExpanded ? "week-row--expanded" : ""}`}
       data-week-start={weekStart}
       data-testid="week-row"
-      ref={frameRef}
     >
       <div className="week-row-content">
         {isExpanded ? (
@@ -263,18 +310,22 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onSetCompletion={onSetCompletion}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
             onEditGoal={onEditGoal}
             onOpenPlanWeek={onOpenPlanWeek}
+            onSkipReview={onSkipReview}
             onSync={onSync}
             isCopyingPriorWeek={isCopyingPriorWeek}
+            today={today}
             week={week ?? null}
             weekStart={weekStart}
           />
         ) : (
           <CollapsedWeekCard
+            activePlan={activePlan}
             onSelectWeek={onSelectWeek}
             previousWeek={previousWeek}
             tone={tone}
@@ -290,12 +341,14 @@ function WeekRow({
 type CollapsedWeekTone = "past" | "current" | "future";
 
 function CollapsedWeekCard({
+  activePlan,
   onSelectWeek,
   previousWeek,
   tone,
   week,
   weekStart
 }: {
+  activePlan: TrainingPlan | null;
   onSelectWeek: (weekStart: string) => void;
   previousWeek?: TrainingWeek;
   tone: CollapsedWeekTone;
@@ -303,9 +356,9 @@ function CollapsedWeekCard({
   weekStart: string;
 }) {
   const range = week ? formatCompactWeekRange(week.weekStartDate, week.weekEndDate) : formatCompactWeekRangeFromStart(weekStart);
-  const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone);
+  const mileageSummary = formatCollapsedMileageSummary(week, weekStart, tone, activePlan);
   const mileageTrend = getCollapsedMileageTrend(week, previousWeek);
-  const detail = formatCollapsedWeekDetail(week, tone);
+  const detail = formatCollapsedWeekDetail(week);
   const dayBadges = collapsedWeekDayBadges(week, weekStart);
   const dailySummary = dayBadges.map((badge) => `${formatWeekday(badge.date)} ${badge.label}`).join(", ");
   const trendSummary = mileageTrend ? `, ${formatMileageTrendAriaLabel(mileageTrend)}` : "";
@@ -343,6 +396,7 @@ function ExpandedWeekBoard({
   weekStart,
   onCreate,
   onEdit,
+  onSetCompletion,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -350,8 +404,10 @@ function ExpandedWeekBoard({
   onDeriveWeekGoals,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   isCopyingPriorWeek,
+  today,
 }: {
   days: string[];
   isLoading?: boolean;
@@ -359,6 +415,7 @@ function ExpandedWeekBoard({
   weekStart: string;
   onCreate: (plannedDate: string) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -366,12 +423,13 @@ function ExpandedWeekBoard({
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   isCopyingPriorWeek: boolean;
+  today: string;
 }) {
   const workouts = week?.workouts ?? [];
   const actualActivities = week?.actualActivities ?? [];
-  const today = todayDateString();
 
   if (isLoading) {
     return (
@@ -407,8 +465,10 @@ function ExpandedWeekBoard({
       onDeriveWeekGoals={onDeriveWeekGoals}
       onDuplicate={onDuplicate}
       onEdit={onEdit}
+      onSetCompletion={onSetCompletion}
       onEditGoal={onEditGoal}
       onOpenPlanWeek={onOpenPlanWeek}
+      onSkipReview={onSkipReview}
       onSync={onSync}
       today={today}
       week={week}
@@ -427,8 +487,10 @@ function WeekSlate({
   onDeriveWeekGoals,
   onDuplicate,
   onEdit,
+  onSetCompletion,
   onEditGoal,
   onOpenPlanWeek,
+  onSkipReview,
   onSync,
   today,
   week,
@@ -443,8 +505,10 @@ function WeekSlate({
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
+  onSkipReview: (weekId: string) => void;
   onSync: () => void;
   today: string;
   week: TrainingWeek | null | undefined;
@@ -467,6 +531,7 @@ function WeekSlate({
             onDeriveWeekGoals,
             onEditGoal,
             onOpenPlanWeek,
+            onSkipReview,
             onSync,
             week
           })
@@ -485,7 +550,9 @@ function WeekSlate({
           onDelete={onDelete}
           onDuplicate={onDuplicate}
           onEdit={onEdit}
+          onSetCompletion={onSetCompletion}
           today={today}
+          readOnly={week.weekState === "past"}
           workouts={workouts}
         />
       ) : null}
@@ -500,6 +567,8 @@ function WeekSchedule({
   onDelete,
   onDuplicate,
   onEdit,
+  onSetCompletion,
+  readOnly,
   today,
   workouts
 }: {
@@ -509,6 +578,8 @@ function WeekSchedule({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  readOnly: boolean;
   today: string;
   workouts: Workout[];
 }) {
@@ -544,9 +615,6 @@ function WeekSchedule({
                   <span>{isToday ? "Today" : formatWeekdayShort(dateValue)}</span>
                   <strong>{formatDayNumber(dateValue)}</strong>
                 </div>
-                <button type="button" title="Add workout" onClick={() => onCreate(dateValue)}>
-                  <Plus size={15} />
-                </button>
               </header>
               <div className="workout-stack">
                 {entries.map((entry) =>
@@ -561,13 +629,15 @@ function WeekSchedule({
                       onDelete={onDelete}
                       onDuplicate={onDuplicate}
                       onEdit={onEdit}
+                      onSetCompletion={onSetCompletion}
+                      readOnly={readOnly}
                     />
                   )
                 )}
                 {isEmpty && dateValue < today ? (
-                  <span className="empty-day-action empty-day-action--static">Rest</span>
+                  <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
-                {isEmpty && dateValue >= today ? (
+                {isEmpty && dateValue >= today && !readOnly ? (
                   <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
                     Add session
                   </button>
@@ -589,6 +659,7 @@ function handleWeekCommandAction(
     onDeriveWeekGoals,
     onEditGoal,
     onOpenPlanWeek,
+    onSkipReview,
     onSync,
     week
   }: {
@@ -597,10 +668,15 @@ function handleWeekCommandAction(
     onDeriveWeekGoals: (week: TrainingWeek) => void;
     onEditGoal: (goal: WeekGoal) => void;
     onOpenPlanWeek: (week: TrainingWeek) => void;
+    onSkipReview: (weekId: string) => void;
     onSync: () => void;
     week: TrainingWeek;
   }
 ) {
+  if (actionId === "skip_review") {
+    onSkipReview(week.id);
+    return;
+  }
   if (["plan_week", "edit_plan", "adjust_rest", "review_week", "edit_goals"].includes(actionId)) {
     onOpenPlanWeek(week);
     return;
@@ -750,18 +826,24 @@ function WorkoutItem({
   actual,
   today,
   onEdit,
+  onSetCompletion,
   onDelete,
-  onDuplicate
+  onDuplicate,
+  readOnly
 }: {
   workout: Workout;
   actual: ActualActivity | null;
   today: string;
   onEdit: (workout: Workout) => void;
+  onSetCompletion: (workout: Workout, completed: boolean) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  readOnly: boolean;
 }) {
   const state = workoutState(workout, actual, today);
   const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
+  const isManuallyCompleted = !actual && workout.status === "completed_as_planned";
+  const canSetCompletion = !readOnly && !actual && !isRest && (isManuallyCompleted || state !== "done");
   const plannedMeta = formatWorkoutMeta(workout);
   const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
 
@@ -783,44 +865,80 @@ function WorkoutItem({
   if (actual?.averageHeartrate) {
     detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
   }
+  if (!actual && state === "done") {
+    detailPieces.push(
+      workout.status === "completed_modified"
+        ? "completed with changes"
+        : workout.status === "partial"
+          ? "partially completed"
+          : "completed"
+    );
+  }
   const detail = detailPieces.join(" · ");
 
   const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
+  const primaryContent = (
+    <>
+      <span className="workout-title-row">
+        <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
+        <strong>{workout.title}</strong>
+      </span>
+      <span className={`workout-status-line workout-status-line--${state}`}>
+        {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+        <span>{statusLine}</span>
+      </span>
+      {detail ? <small>{detail}</small> : null}
+    </>
+  );
 
   return (
-    <div className={`workout-item workout-item--${state} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
-      <button
-        type="button"
-        className="workout-primary-action"
-        aria-label={`Edit ${workout.title}`}
-        onClick={() => onEdit(workout)}
-      >
-        <span className="workout-title-row">
-          <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
-          <strong>{workout.title}</strong>
-        </span>
-        <span className={`workout-status-line workout-status-line--${state}`}>
-          {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
-          <span>{statusLine}</span>
-        </span>
-        {detail ? <small>{detail}</small> : null}
-      </button>
-      <div className="workout-controls">
-        {actual ? (
-          <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
-            <ExternalLink size={15} />
-          </button>
-        ) : null}
-        <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
-          <Edit3 size={15} />
+    <div className={`workout-item workout-item--${state}${readOnly ? " workout-item--read-only" : ""} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
+      {readOnly ? (
+        <div className="workout-primary-action">{primaryContent}</div>
+      ) : (
+        <button
+          type="button"
+          className="workout-primary-action"
+          aria-label={`Edit ${workout.title}`}
+          onClick={() => onEdit(workout)}
+        >
+          {primaryContent}
         </button>
-        <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
-          <Copy size={15} />
+      )}
+      {canSetCompletion ? (
+        <button
+          type="button"
+          className={`workout-completion-toggle ${isManuallyCompleted ? "is-complete" : ""}`}
+          aria-label={`Mark ${workout.title} ${isManuallyCompleted ? "incomplete" : "complete"}`}
+          aria-pressed={isManuallyCompleted}
+          title={isManuallyCompleted ? "Mark workout incomplete" : "Mark workout complete"}
+          onClick={() => onSetCompletion(workout, !isManuallyCompleted)}
+        >
+          <Check size={14} strokeWidth={2.75} aria-hidden="true" />
         </button>
-        <button type="button" title="Delete workout" onClick={() => onDelete(workout)}>
-          <Trash2 size={15} />
-        </button>
-      </div>
+      ) : null}
+      {actual || !readOnly ? (
+        <div className="workout-controls">
+          {actual ? (
+            <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
+              <ExternalLink size={15} />
+            </button>
+          ) : null}
+          {!readOnly ? (
+            <>
+              <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
+                <Edit3 size={15} />
+              </button>
+              <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
+                <Copy size={15} />
+              </button>
+              <button type="button" title="Delete workout" onClick={() => onDelete(workout)}>
+                <Trash2 size={15} />
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -847,7 +965,7 @@ function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmp
   } else if (activities.length > 0) {
     classes.push("day-column--actual");
   } else if (isEmpty) {
-    classes.push("day-column--empty", "day-column--rest");
+    classes.push("day-column--empty");
   }
   return classes.join(" ");
 }
@@ -874,9 +992,9 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
     if (dayActuals.length > 0) {
       return {
         date,
-        kind: actualMiles > 0 ? "actual" : "rest",
-        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "rest",
-        title: `${weekday} ${dateLabel}: ${formatNumber(actualMiles)} completed miles`
+        kind: "actual",
+        label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "done",
+        title: `${weekday} ${dateLabel}: ${dayActuals.length} completed activit${dayActuals.length === 1 ? "y" : "ies"}`
       };
     }
 
@@ -889,16 +1007,30 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
       };
     }
 
+    if (dayWorkouts.some((workout) => workout.sport === "rest" || workout.intensityCategory === "rest")) {
+      return {
+        date,
+        kind: "rest",
+        label: "rest",
+        title: `${weekday} ${dateLabel}: rest planned`
+      };
+    }
+
     return {
       date,
-      kind: "rest",
-      label: "rest",
-      title: `${weekday} ${dateLabel}: rest`
+      kind: "empty",
+      label: "—",
+      title: `${weekday} ${dateLabel}: no session planned`
     };
   });
 }
 
-function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart: string, tone: CollapsedWeekTone) {
+function formatCollapsedMileageSummary(
+  week: TrainingWeek | undefined,
+  weekStart: string,
+  tone: CollapsedWeekTone,
+  activePlan: TrainingPlan | null
+) {
   if (!week) {
     return "loading";
   }
@@ -919,10 +1051,16 @@ function formatCollapsedMileageSummary(week: TrainingWeek | undefined, weekStart
     return `${formatNumber(planned)} mi planned`;
   }
 
-  return tone === "future" ? "not planned" : "no plan";
+  const target = week.targetMileage ?? activePlan?.weekSummaries.find((summary) => summary.weekStartDate === weekStart)?.targetMileage;
+  const planWeek = activePlan?.weekSummaries.find((summary) => summary.weekStartDate === weekStart);
+  const targetLabel = target !== null && target !== undefined ? ` · target ${formatNumber(target)} mi` : "";
+  const phaseLabel = planWeek?.mesocycleName && planWeek.weekIndexInMesocycle
+    ? ` · ${planWeek.mesocycleName} W${planWeek.weekIndexInMesocycle}`
+    : "";
+  return `Not planned yet${targetLabel}${phaseLabel}`;
 }
 
-function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: CollapsedWeekTone) {
+function formatCollapsedWeekDetail(week: TrainingWeek | undefined) {
   if (!week) {
     return "loading";
   }
@@ -930,8 +1068,8 @@ function formatCollapsedWeekDetail(week: TrainingWeek | undefined, tone: Collaps
   const hasPlannedWork = week.plannedMileage > 0 || week.workouts.length > 0;
   const hasActualWork = week.actualMileage > 0 || week.actualActivities.length > 0;
 
-  if (!hasPlannedWork && !hasActualWork && tone === "future") {
-    return "tap to plan";
+  if (!hasPlannedWork && !hasActualWork) {
+    return "not planned yet";
   }
 
   const planLabel = hasPlannedWork ? formatHardDays(week.hardDays) : "no plan";
@@ -946,7 +1084,7 @@ function stravaActivityUrl(stravaActivityId: string) {
   return `https://www.strava.com/activities/${encodeURIComponent(stravaActivityId)}`;
 }
 
-function scrollExpandedWeekIntoView(element: HTMLElement) {
+function scrollExpandedWeekIntoView(element: HTMLElement, behavior: ScrollBehavior) {
   const container = element.closest("main");
   if (!(container instanceof HTMLElement)) {
     return;
@@ -957,13 +1095,13 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
   const header = container.querySelector<HTMLElement>(":scope > .app-header");
   const context = container.querySelector<HTMLElement>(":scope > .week-context-strip");
   const isMobile = window.matchMedia("(max-width: 860px)").matches;
-  const stickyOffset = (header?.offsetHeight ?? 0) + (isMobile ? 62 : context?.offsetHeight ?? 0) + 14;
-  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+  const stickyOffset = (header?.offsetHeight ?? 0) + (context?.offsetHeight ?? 0) + 14;
+  const resolvedBehavior = prefersReducedMotion() ? "auto" : behavior;
 
   if (isMobile) {
     window.scrollTo({
       top: Math.max(0, window.scrollY + rect.top - stickyOffset),
-      behavior
+      behavior: resolvedBehavior
     });
     return;
   }
@@ -972,7 +1110,7 @@ function scrollExpandedWeekIntoView(element: HTMLElement) {
 
   container.scrollTo({
     top: Math.max(0, targetTop),
-    behavior
+    behavior: resolvedBehavior
   });
 }
 

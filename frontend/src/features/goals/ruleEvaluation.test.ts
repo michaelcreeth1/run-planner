@@ -34,6 +34,7 @@ function makeWorkout(overrides: Partial<Workout>): Workout {
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "",
@@ -62,6 +63,7 @@ function makeWeek(overrides: Partial<TrainingWeek>): TrainingWeek {
     targetLongRunSource: "plan",
     isDownWeek: false,
     notes: "",
+    reviewedAt: null,
     workouts: [],
     actualActivities: [],
     goals: [],
@@ -208,7 +210,8 @@ describe("buildPlanRules", () => {
           unit: "days"
         }),
         makeRecurringGoal({
-          category: "custom",
+          metricKey: "rest_day_count",
+          category: "recovery",
           label: "Preserve at least 2 rest days",
           evaluationMode: "at_least",
           minAcceptable: 2,
@@ -272,6 +275,21 @@ describe("rest day rule", () => {
     expect(evaluation.status).toBe("fail");
     expect(evaluation.reason).toContain("No rest day");
   });
+
+  it("ignores stale derived thresholds but preserves deliberate manual week overrides", () => {
+    const workouts = FULL_WEEK_DATES.slice(0, 6).map((date) => makeWorkout({ plannedDate: date }));
+    const staleDerivedWeek = plannedWeek(workouts, {
+      goals: [makeWeekGoal({ source: "default", minAcceptable: 2, targetValue: 2 })]
+    });
+    const manualOverrideWeek = plannedWeek(workouts, {
+      goals: [makeWeekGoal({ source: "manual", minAcceptable: 2, targetValue: 2 })]
+    });
+
+    expect(evaluateRule(restRule, { week: staleDerivedWeek }, TODAY).status).toBe("pass");
+    const manualEvaluation = evaluateRule(restRule, { week: manualOverrideWeek }, TODAY);
+    expect(manualEvaluation.status).toBe("fail");
+    expect(manualEvaluation.metrics).toContain("week override 2");
+  });
 });
 
 describe("hard day rule", () => {
@@ -308,7 +326,8 @@ describe("long run percent rule", () => {
   it("passes under the limit", () => {
     const week = plannedWeek([
       makeWorkout({ plannedDate: "2026-07-11", workoutType: "long_run", plannedDistance: 12 }),
-      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 28 })
+      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 20 }),
+      makeWorkout({ plannedDate: "2026-07-09", plannedDistance: 8 })
     ]);
     expect(evaluateRule(longRunPercentRule, { week }, TODAY).status).toBe("pass");
   });
@@ -316,7 +335,8 @@ describe("long run percent rule", () => {
   it("fails clearly over the limit and reports the math", () => {
     const week = plannedWeek([
       makeWorkout({ plannedDate: "2026-07-11", workoutType: "long_run", plannedDistance: 15 }),
-      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 28 })
+      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 20 }),
+      makeWorkout({ plannedDate: "2026-07-09", plannedDistance: 8 })
     ]);
     const evaluation = evaluateRule(longRunPercentRule, { week }, TODAY);
     expect(evaluation.status).toBe("fail");
@@ -327,16 +347,24 @@ describe("long run percent rule", () => {
   it("warns when only slightly over the limit", () => {
     const week = plannedWeek([
       makeWorkout({ plannedDate: "2026-07-11", workoutType: "long_run", plannedDistance: 32 }),
-      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 68 })
+      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 40 }),
+      makeWorkout({ plannedDate: "2026-07-09", plannedDistance: 28 })
     ]);
     expect(evaluateRule(longRunPercentRule, { week }, TODAY).status).toBe("warning");
   });
 
   it("is not applicable without a long run", () => {
-    const week = plannedWeek([makeWorkout({ plannedDate: "2026-07-07", plannedDistance: null })], {
-      plannedMileage: 20
-    });
+    const week = plannedWeek([
+      makeWorkout({ plannedDate: "2026-07-07", plannedDistance: 5 }),
+      makeWorkout({ plannedDate: "2026-07-09", plannedDistance: 6 }),
+      makeWorkout({ plannedDate: "2026-07-11", plannedDistance: 9 })
+    ]);
     expect(evaluateRule(longRunPercentRule, { week }, TODAY).status).toBe("not_applicable");
+  });
+
+  it("stays pending while a sparse week is still being planned", () => {
+    const week = plannedWeek([makeWorkout({ plannedDistance: 5 })]);
+    expect(evaluateRule(longRunPercentRule, { week }, TODAY).status).toBe("pending");
   });
 });
 
@@ -349,15 +377,28 @@ describe("long run scheduled rule", () => {
   });
 
   it("warns for future weeks and fails for current weeks without one", () => {
-    const futureWeek = plannedWeek([makeWorkout({ plannedDate: "2026-07-14", intensityCategory: "easy" })], {
+    const futureWeek = plannedWeek([
+      makeWorkout({ plannedDate: "2026-07-14", intensityCategory: "easy" }),
+      makeWorkout({ plannedDate: "2026-07-16", intensityCategory: "easy" }),
+      makeWorkout({ plannedDate: "2026-07-18", intensityCategory: "easy" })
+    ], {
       weekStartDate: "2026-07-13",
       weekEndDate: "2026-07-19",
       weekState: "future"
     });
     expect(evaluateRule(longRunScheduledRule, { week: futureWeek }, TODAY).status).toBe("warning");
 
-    const currentWeek = plannedWeek([makeWorkout({ plannedDistance: 4 })]);
+    const currentWeek = plannedWeek([
+      makeWorkout({ plannedDate: "2026-07-06", plannedDistance: 4 }),
+      makeWorkout({ plannedDate: "2026-07-08", plannedDistance: 5 }),
+      makeWorkout({ plannedDate: "2026-07-10", plannedDistance: 6 })
+    ]);
     expect(evaluateRule(longRunScheduledRule, { week: currentWeek }, TODAY).status).toBe("fail");
+  });
+
+  it("stays pending instead of failing after the first run is added", () => {
+    const week = plannedWeek([makeWorkout({ plannedDistance: 5 })]);
+    expect(evaluateRule(longRunScheduledRule, { week }, TODAY).status).toBe("pending");
   });
 
   it("does not apply during race weeks", () => {

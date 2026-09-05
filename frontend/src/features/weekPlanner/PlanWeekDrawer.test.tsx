@@ -1,0 +1,409 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { addDays } from "../../lib/dates";
+import type { PlanWeekDraft, TrainingWeek } from "../../types/domain";
+import { PlanWeekDrawer } from "./PlanWeekDrawer";
+
+function PlannerHarness({
+  initialDraft = mismatchedDraft(),
+  onSave,
+  weekStack = {}
+}: {
+  initialDraft?: PlanWeekDraft;
+  onSave: (draft: PlanWeekDraft) => void;
+  weekStack?: Record<string, TrainingWeek>;
+}) {
+  const [draft, setDraft] = useState<PlanWeekDraft | null>(() => initialDraft);
+
+  return draft ? (
+    <PlanWeekDrawer
+      draft={draft}
+      isSaving={false}
+      onClose={vi.fn()}
+      onCompleteReview={vi.fn()}
+      onSave={onSave}
+      setDraft={setDraft}
+      weekStack={weekStack}
+    />
+  ) : null;
+}
+
+describe("PlanWeekDrawer", () => {
+  it("matches its title to unplanned and already-planned current weeks", () => {
+    const draft = { ...mismatchedDraft(), weekState: "current" as const, hasExistingPlan: false };
+    const props = {
+      isSaving: false,
+      onClose: vi.fn(),
+      onCompleteReview: vi.fn(),
+      onSave: vi.fn(),
+      setDraft: vi.fn(),
+      weekStack: {}
+    };
+    const { rerender } = render(<PlanWeekDrawer {...props} draft={draft} />);
+
+    expect(screen.getByRole("heading", { name: "Plan week" })).toBeVisible();
+
+    rerender(<PlanWeekDrawer {...props} draft={{ ...draft, hasExistingPlan: true }} />);
+
+    expect(screen.getByRole("heading", { name: "Adjust rest of week" })).toBeVisible();
+  });
+
+  it("allows a plan to be saved when its schedule does not meet its goals", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<PlannerHarness onSave={onSave} />);
+
+    expect(screen.getByRole("heading", { name: "Week plan" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Plan check" })).toBeVisible();
+    expect(screen.getByText("1 adjustment")).toBeInTheDocument();
+    expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Goals" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Week-specific targets")).not.toBeInTheDocument();
+    expect(screen.queryByText(/goals are advisory and never prevent you from saving/i)).not.toBeInTheDocument();
+
+    const saveButton = screen.getByRole("button", { name: "Save plan" });
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weekId: "week-target" }));
+  });
+
+  it("completes a past-week review without exposing or saving a plan draft", async () => {
+    const user = userEvent.setup();
+    const onCompleteReview = vi.fn();
+    const onSave = vi.fn();
+    render(
+      <PlanWeekDrawer
+        draft={{ ...mismatchedDraft(), weekState: "past" }}
+        isSaving={false}
+        onClose={vi.fn()}
+        onCompleteReview={onCompleteReview}
+        onSave={onSave}
+        setDraft={vi.fn()}
+        weekStack={{}}
+      />
+    );
+
+    expect(screen.getByText(/review is read-only/i)).toBeInTheDocument();
+    expect(screen.queryByText("Starting point")).not.toBeInTheDocument();
+    expect(screen.queryByText("Purpose")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Complete review" }));
+
+    expect(onCompleteReview).toHaveBeenCalledWith("week-target");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("offers the last 12 weeks with date ranges and mileage totals", async () => {
+    const user = userEvent.setup();
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
+
+    expect(screen.queryByLabelText("Starting point")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Purpose")).not.toBeInTheDocument();
+    expect(screen.queryByText("Week direction")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+
+    expect(screen.getAllByRole("menuitem")).toHaveLength(12);
+    expect(screen.getByRole("menuitem", { name: "Copy Jul 6-12, 7 miles" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Copy Apr 20-26, 18 miles" })).toBeEnabled();
+  });
+
+  it("copies any selected week into matching weekdays", async () => {
+    const user = userEvent.setup();
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy Jun 22-28, 9 miles" }));
+
+    expect(screen.queryByLabelText("Mon session 1 name")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Wed session 1 name")).toHaveValue("Aerobic run 3");
+    expect(screen.getByLabelText("Wed session 1 mileage")).toHaveValue(9);
+  });
+
+  it("confirms before copying over unsaved draft edits", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const weeks = copyableWeeks();
+    render(
+      <PlannerHarness
+        onSave={vi.fn()}
+        weekStack={weeks}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
+    expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy Jul 6-12, 7 miles" }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Copy this week? Your unsaved schedule and target edits will be discarded."
+    );
+    expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("keeps session names in sync with the selected type until renamed", async () => {
+    const user = userEvent.setup();
+    const draft = mismatchedDraft();
+    draft.workouts.push({
+      ...draft.workouts[0],
+      draftId: "workout-2",
+      title: "Strength session",
+      sport: "run",
+      workoutType: "strength",
+      intensityCategory: "strength",
+      plannedDistance: "3"
+    });
+    render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
+
+    expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(5);
+    expect(screen.getByLabelText("Mon session 2 type")).toHaveValue("strength:strength");
+    expect(screen.queryByLabelText("Mon session 2 mileage")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rest" })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Mon session 1 type"), "run:threshold");
+    expect(screen.getByLabelText("Mon session 1 name")).toHaveValue("Threshold workout");
+
+    const nameInput = screen.getByLabelText("Mon session 2 name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Gym work");
+    await user.selectOptions(screen.getByLabelText("Mon session 2 type"), "run:easy");
+
+    expect(nameInput).toHaveValue("Gym work");
+    expect(screen.getByLabelText("Mon session 2 mileage")).toHaveValue(null);
+
+    await user.click(screen.getByRole("button", { name: "Remove Mon session 2" }));
+
+    expect(screen.queryByDisplayValue("Gym work")).not.toBeInTheDocument();
+  });
+
+  it("adds sessions from the day heading and removes them with the inline control", async () => {
+    const user = userEvent.setup();
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    expect(screen.queryByText("Add session")).not.toBeInTheDocument();
+    expect(screen.queryByText("Set rest day")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
+
+    expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("Easy run");
+    expect(screen.getByLabelText("Tue session 1 type")).toHaveValue("run:easy");
+    expect(screen.getByLabelText("Tue session 1 mileage")).toHaveValue(null);
+
+    await user.click(screen.getByRole("button", { name: "Remove Tue session 1" }));
+
+    expect(screen.queryByLabelText("Tue session 1 name")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add session to Tue" })).toBeInTheDocument();
+  });
+
+  it("offers contextual fixes on the failing rule and clears them once met", async () => {
+    const user = userEvent.setup();
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Match target" }));
+
+    expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(10);
+    expect(screen.getByText("Schedule looks good so far")).toBeInTheDocument();
+    expect(screen.queryByText("5 planned, target range 10-12")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use schedule" })).not.toBeInTheDocument();
+  });
+
+  it("can update a mismatched target from the current schedule", async () => {
+    const user = userEvent.setup();
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Use schedule" }));
+
+    expect(screen.getByText("Schedule looks good so far")).toBeInTheDocument();
+  });
+
+  it("shows one plan check when stored and inherited guardrails overlap", () => {
+    const draft = mismatchedDraft();
+    draft.goals = [];
+    draft.workouts = Array.from({ length: 3 }, (_, index) => ({
+      ...draft.workouts[0],
+      draftId: `hard-${index}`,
+      plannedDate: addDays(draft.weekStartDate, index),
+      title: "Threshold workout",
+      workoutType: "threshold" as const,
+      intensityCategory: "workout" as const
+    }));
+    draft.workouts.push({
+      ...draft.workouts[0],
+      draftId: "long-run",
+      plannedDate: addDays(draft.weekStartDate, 3),
+      title: "Long run",
+      workoutType: "long_run",
+      intensityCategory: "easy"
+    });
+    draft.goals.push({
+      ...mismatchedDraft().goals[0],
+      draftId: "guardrail-1",
+      category: "quality",
+      goalType: "guardrail",
+      label: "No more than 2 hard days",
+      targetValue: "2",
+      minAcceptable: "",
+      maxAcceptable: "2",
+      unit: "days",
+      evaluationMode: "at_most",
+      priority: "guardrail"
+    });
+    render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: "Plan check" })).toBeVisible();
+    expect(screen.getByText("1 adjustment")).toBeInTheDocument();
+    expect(screen.getAllByText("No more than 2 hard days")).toHaveLength(1);
+    expect(screen.queryByText("Week-specific targets")).not.toBeInTheDocument();
+  });
+
+  it("keeps the schedule-derived week summary live and out of the footer", () => {
+    render(<PlannerHarness onSave={vi.fn()} />);
+
+    const summary = screen.getByLabelText("Week plan summary");
+    expect(within(summary).getByText("Mileage")).toBeInTheDocument();
+    expect(within(summary).getAllByText("5 mi")).toHaveLength(2);
+    expect(within(summary).getByText("0 hard days")).toBeInTheDocument();
+    expect(within(summary).getByText("6 rest days")).toBeInTheDocument();
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+});
+
+function mismatchedDraft(): PlanWeekDraft {
+  return {
+    weekId: "week-target",
+    weekStartDate: "2026-07-13",
+    weekEndDate: "2026-07-19",
+    weekState: "future",
+    startingPoint: "blank",
+    purpose: "maintain",
+    customPurpose: "",
+    priorWeekStartDate: "2026-07-06",
+    noPriorUsableWeek: false,
+    load: {
+      priorMileage: 5,
+      suggestedMileage: 5,
+      reason: "Maintain the current load."
+    },
+    workouts: [
+      {
+        draftId: "workout-1",
+        plannedDate: "2026-07-13",
+        title: "Easy run",
+        sport: "run",
+        workoutType: "easy",
+        intensityCategory: "easy",
+        plannedDistance: "5",
+        plannedDuration: "",
+        plannedPace: "",
+        purpose: "Aerobic maintenance",
+        instructions: "",
+        notes: "",
+        status: "planned"
+      }
+    ],
+    goals: [
+      {
+        draftId: "goal-1",
+        weekId: "week-target",
+        category: "mileage",
+        goalType: "achievement",
+        label: "Run 10 miles",
+        description: "",
+        targetValue: "10",
+        minAcceptable: "10",
+        maxAcceptable: "12",
+        unit: "mi",
+        evaluationMode: "range",
+        priority: "primary",
+        status: "not_started",
+        isEnabled: true,
+        source: "manual",
+        sourceLabel: "Edited"
+      }
+    ],
+    hasExistingPlan: false
+  };
+}
+
+function copyableWeeks() {
+  return Object.fromEntries(
+    Array.from({ length: 12 }, (_, index) => {
+      const weekStartDate = addDays("2026-07-13", (index + 1) * -7);
+      const mileage = index + 7;
+      const week = priorTrainingWeek(weekStartDate, mileage, `Aerobic run ${index + 1}`);
+      return [weekStartDate, week];
+    })
+  );
+}
+
+function priorTrainingWeek(
+  weekStartDate = "2026-07-06",
+  mileage = 7,
+  title = "Prior aerobic run"
+): TrainingWeek {
+  return {
+    id: `week-${weekStartDate}`,
+    weekStartDate,
+    weekEndDate: addDays(weekStartDate, 6),
+    plannedMileage: mileage,
+    actualMileage: 0,
+    plannedTime: null,
+    actualTime: null,
+    mesocycleId: null,
+    purpose: "maintain",
+    purposeSource: "plan",
+    targetMileage: mileage,
+    targetMileageSource: "plan",
+    targetLongRunDistance: null,
+    targetLongRunSource: "manual",
+    isDownWeek: false,
+    notes: "",
+    reviewedAt: null,
+    workouts: [
+      {
+        id: `workout-${weekStartDate}`,
+        trainingWeekId: `week-${weekStartDate}`,
+        athleteAccountId: "athlete-1",
+        plannedDate: addDays(weekStartDate, 2),
+        title,
+        sport: "run",
+        workoutType: "easy",
+        intensityCategory: "easy",
+        plannedDistance: mileage,
+        plannedDuration: null,
+        plannedPace: null,
+        plannedElevation: null,
+        plannedTss: null,
+        purpose: "Aerobic maintenance",
+        instructions: "",
+        notes: "",
+        status: "planned"
+      }
+    ],
+    actualActivities: [],
+    goals: [],
+    goalEvaluations: [],
+    weekState: "past",
+    goalReviewSummary: "",
+    hardDays: 0,
+    longRunDistance: 0,
+    longRunPercentage: 0
+  };
+}

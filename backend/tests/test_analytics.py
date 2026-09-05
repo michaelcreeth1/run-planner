@@ -2,11 +2,10 @@ from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base, SessionLocal
+from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
 from app.models import AthleteAccount, StravaActivity, TrainingWeek
 from app.schemas.planning import PlannedWorkoutCreate
@@ -22,11 +21,7 @@ def login(client: TestClient, username: str = "michael", password: str = "test-p
 
 
 def make_session() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = build_engine("sqlite://")
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     return testing_session()
@@ -49,9 +44,16 @@ def test_analytics_endpoint_is_read_only() -> None:
         assert after == before
 
 
-def test_analytics_aggregates_load_flags_and_excludes_deleted_activities() -> None:
+def test_analytics_aggregates_load_flags_and_excludes_deleted_activities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = make_session()
     try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         anchor = date(2026, 6, 29)
         future = anchor + timedelta(days=7)
@@ -151,9 +153,46 @@ def test_analytics_anchor_uses_athlete_timezone(monkeypatch: pytest.MonkeyPatch)
         db.close()
 
 
-def test_analytics_flags_hard_day_spacing_and_no_rest() -> None:
+def test_analytics_surfaces_week_mileage_targets() -> None:
     db = make_session()
     try:
+        athlete = planning.ensure_default_athlete(db)
+        anchor = date(2026, 6, 29)
+        week = TrainingWeek(
+            athlete_account_id=athlete.id,
+            week_start_date=anchor,
+            week_end_date=anchor + timedelta(days=6),
+            target_mileage=28,
+            target_mileage_source="plan",
+        )
+        db.add(week)
+        db.commit()
+
+        body = analytics.planning_analytics(
+            db,
+            athlete.id,
+            lookback_weeks=1,
+            future_weeks=1,
+            anchor_week_start_date=anchor,
+        )
+
+        current = next(summary for summary in body["weeks"] if summary["week_start_date"] == anchor)
+        assert current["planned_mileage"] == 0
+        assert current["target_mileage"] == 28
+    finally:
+        db.close()
+
+
+def test_analytics_flags_hard_day_spacing_and_no_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = make_session()
+    try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         anchor = date(2026, 6, 29)
         for index in range(7):
@@ -186,9 +225,14 @@ def test_analytics_flags_hard_day_spacing_and_no_rest() -> None:
         db.close()
 
 
-def test_analytics_keeps_profiles_isolated() -> None:
+def test_analytics_keeps_profiles_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
     db = make_session()
     try:
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2026, 7, 1),
+        )
         athlete = planning.ensure_default_athlete(db)
         other = AthleteAccount(display_name="Other Runner", timezone="America/Denver")
         db.add(other)

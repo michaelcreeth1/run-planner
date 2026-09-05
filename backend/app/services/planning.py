@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.goal_metrics import GOAL_METRICS, infer_goal_metric, normalized_goal_thresholds
 from app.models.planning import (
     AthleteAccount,
     PlannedWorkout,
@@ -13,6 +14,7 @@ from app.models.planning import (
     RecurringGoal,
     TrainingWeek,
     WeekGoal,
+    WeeklyMetricSnapshot,
 )
 from app.models.strava import StravaActivity
 from app.schemas.planning import (
@@ -24,33 +26,13 @@ from app.schemas.planning import (
     WeekGoalCreate,
     WeekGoalUpdate,
 )
+from app.services import weekly_metrics
 
-RUN_SPORTS = {"run", "trailrun", "virtualrun"}
-QUALITY_WORKOUT_TYPES = {
-    "tempo",
-    "threshold",
-    "interval",
-    "hill",
-    "race",
-    "time_trial",
-    "progression",
-    "strides",
-}
-QUALITY_KEYWORDS = (
-    "tempo",
-    "threshold",
-    "interval",
-    "hill",
-    "race",
-    "workout",
-    "reps",
-    "repeat",
-    "fartlek",
-)
 VIRTUAL_WEEK_ID_PREFIX = "virtual-week:"
 VIRTUAL_GOAL_ID_PREFIX = "virtual-goal:"
 DEFAULT_ATHLETE_GOALS: list[dict] = [
     {
+        "metric_key": "rest_day_count",
         "category": "recovery",
         "goal_type": "achievement",
         "label": "Preserve at least 1 rest day",
@@ -62,6 +44,7 @@ DEFAULT_ATHLETE_GOALS: list[dict] = [
         "priority": "secondary",
     },
     {
+        "metric_key": "long_run_share",
         "category": "long_run",
         "goal_type": "guardrail",
         "label": "Long run no more than 30% of week",
@@ -73,6 +56,7 @@ DEFAULT_ATHLETE_GOALS: list[dict] = [
         "priority": "guardrail",
     },
     {
+        "metric_key": "hard_training_day_count",
         "category": "quality",
         "goal_type": "guardrail",
         "label": "No more than 2 hard days",
@@ -96,6 +80,7 @@ WEEK_PURPOSE_IDS = frozenset(
         "custom",
     }
 )
+PAST_WEEK_READ_ONLY_DETAIL = "Past weeks are read-only. Complete a review instead."
 
 
 def week_start_for(day: date) -> date:
@@ -136,9 +121,9 @@ def week_start_from_virtual_id(
         return None
 
     try:
-        encoded_athlete_id, week_start_raw = week_id.removeprefix(
-            VIRTUAL_WEEK_ID_PREFIX
-        ).rsplit(":", 1)
+        encoded_athlete_id, week_start_raw = week_id.removeprefix(VIRTUAL_WEEK_ID_PREFIX).rsplit(
+            ":", 1
+        )
         if athlete_account_id is not None and encoded_athlete_id != athlete_account_id:
             return None
         return week_start_for(date.fromisoformat(week_start_raw))
@@ -288,7 +273,8 @@ def training_timeline(db: Session, athlete_account_id: str | None = None) -> dic
         month_key = (activity_date.year, activity_date.month)
         summary = month_summaries[month_key]
         summary["has_activities"] = True
-        summary["actual_miles"] += activity.distance / 1609.344
+        if is_run_activity(activity):
+            summary["actual_miles"] += activity.distance / 1609.344
         data_week_starts.add(week_start)
 
     metadata_weeks = db.scalars(
@@ -401,8 +387,32 @@ def update_week_goal(
     athlete_account_id: str | None = None,
 ) -> WeekGoal:
     goal = get_week_goal(db, goal_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
+    )
     updates = payload.model_dump(exclude_unset=True)
-    for field, value in updates.items():
+    current = {
+        field: getattr(goal, field)
+        for field in (
+            "metric_key",
+            "category",
+            "goal_type",
+            "label",
+            "description",
+            "target_value",
+            "min_acceptable",
+            "max_acceptable",
+            "unit",
+            "evaluation_mode",
+            "priority",
+            "status",
+            "source",
+            "is_editable",
+            "is_enabled",
+        )
+    }
+    validated = WeekGoalCreate.model_validate({**current, **updates})
+    for field, value in validated.model_dump().items():
         setattr(goal, field, value)
     if updates:
         goal.source = "manual"
@@ -413,6 +423,9 @@ def update_week_goal(
 
 def delete_week_goal(db: Session, goal_id: str, athlete_account_id: str | None = None) -> None:
     goal = get_week_goal(db, goal_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
+    )
     db.delete(goal)
     db.commit()
 
@@ -460,10 +473,13 @@ def replace_workout_derived_goals(db: Session, week: TrainingWeek) -> None:
 
 
 def add_workout_derived_goals(db: Session, week: TrainingWeek) -> None:
-    existing_categories = {goal.category for goal in week.goals if goal.source in {"manual", "plan"}}
+    existing_metrics = {
+        goal.metric_key or goal.category for goal in week.goals if goal.source in {"manual", "plan"}
+    }
 
     for goal in default_goals_for_week(week):
-        if goal["category"] in existing_categories and goal["goal_type"] == "achievement":
+        identity = goal.get("metric_key") or goal["category"]
+        if identity in existing_metrics and goal["goal_type"] == "achievement":
             continue
         db.add(
             WeekGoal(
@@ -510,19 +526,15 @@ def seed_default_goals(db: Session, athlete_account_id: str) -> None:
 
 
 def serialize_recurring_goal(goal: RecurringGoal) -> dict:
+    read_fields = normalized_goal_read_fields(goal)
     return {
         "id": goal.id,
         "athlete_account_id": goal.athlete_account_id,
         "training_plan_id": goal.training_plan_id,
-        "category": goal.category,
+        **read_fields,
         "goal_type": goal.goal_type,
         "label": goal.label,
         "description": goal.description,
-        "target_value": goal.target_value,
-        "min_acceptable": goal.min_acceptable,
-        "max_acceptable": goal.max_acceptable,
-        "unit": goal.unit,
-        "evaluation_mode": goal.evaluation_mode,
         "priority": goal.priority,
         "notes": goal.notes,
         "created_at": goal.created_at.isoformat() if goal.created_at else "",
@@ -537,19 +549,26 @@ def sync_plan_sourced_goals(week: TrainingWeek, recurring_goals: list[dict]) -> 
     week already has a manual goal of the same category. Workout-derived goals
     in a colliding category are replaced.
     """
-    protected_categories = {goal.category for goal in week.goals if goal.source == "manual"}
-    incoming_categories = {spec["category"] for spec in recurring_goals}
+    protected_metrics = {
+        goal.metric_key or goal.category for goal in week.goals if goal.source == "manual"
+    }
+    incoming_metrics = {spec.get("metric_key") or spec["category"] for spec in recurring_goals}
     clear_plan_sourced_goals(week)
     for goal in list(week.goals):
-        if goal.source in {"workouts", "default"} and goal.category in incoming_categories:
+        if (
+            goal.source in {"workouts", "default"}
+            and (goal.metric_key or goal.category) in incoming_metrics
+        ):
             week.goals.remove(goal)
     for spec in recurring_goals:
-        if spec["category"] in protected_categories and spec["goal_type"] == "achievement":
+        identity = spec.get("metric_key") or spec["category"]
+        if identity in protected_metrics and spec["goal_type"] == "achievement":
             continue
         week.goals.append(
             WeekGoal(
                 athlete_account_id=week.athlete_account_id,
                 week_start_date=week.week_start_date,
+                metric_key=spec.get("metric_key"),
                 category=spec["category"],
                 goal_type=spec["goal_type"],
                 label=spec["label"],
@@ -600,11 +619,66 @@ def get_or_create_week_for_mutation(
     db: Session,
     week_id: str,
     athlete_account_id: str | None = None,
+    *,
+    allow_past: bool = False,
 ) -> TrainingWeek:
     virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
     if virtual_week_start is not None:
+        if not allow_past:
+            ensure_week_start_is_mutable(db, virtual_week_start, athlete_account_id)
         return get_or_create_week(db, virtual_week_start, athlete_account_id)
-    return get_week_by_id(db, week_id, athlete_account_id)
+    week = get_week_by_id(db, week_id, athlete_account_id)
+    if not allow_past:
+        ensure_week_is_mutable(week)
+    return week
+
+
+def get_or_create_mutable_week(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    normalized_start = week_start_for(week_start)
+    ensure_week_start_is_mutable(db, normalized_start, athlete_account_id)
+    return get_or_create_week(db, normalized_start, athlete_account_id)
+
+
+def ensure_week_start_is_mutable(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> None:
+    if week_state_for_start(db, week_start, athlete_account_id) == "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PAST_WEEK_READ_ONLY_DETAIL,
+        )
+
+
+def week_state_for_start(
+    db: Session,
+    week_start: date,
+    athlete_account_id: str | None = None,
+) -> str:
+    normalized_start = week_start_for(week_start)
+    athlete = (
+        ensure_default_athlete(db)
+        if athlete_account_id is None
+        else db.get(AthleteAccount, athlete_account_id)
+    )
+    return get_week_state_from_dates(
+        normalized_start,
+        week_end_for(normalized_start),
+        timezone_name=athlete.timezone if athlete else None,
+    )
+
+
+def ensure_week_is_mutable(week: TrainingWeek) -> None:
+    if get_week_state(week) == "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PAST_WEEK_READ_ONLY_DETAIL,
+        )
 
 
 def recalculate_week(
@@ -637,7 +711,7 @@ def create_workout(
 ) -> PlannedWorkout:
     athlete = ensure_default_athlete(db) if athlete_account_id is None else None
     active_athlete_id = athlete_account_id or athlete.id
-    week = get_or_create_week(db, week_start_for(payload.planned_date), active_athlete_id)
+    week = get_or_create_mutable_week(db, payload.planned_date, active_athlete_id)
     workout = PlannedWorkout(
         athlete_account_id=active_athlete_id,
         training_week_id=week.id,
@@ -672,9 +746,7 @@ def get_workout(
     if athlete_account_id is not None:
         conditions.append(PlannedWorkout.athlete_account_id == athlete_account_id)
     workout = db.scalars(
-        select(PlannedWorkout)
-        .where(*conditions)
-        .options(selectinload(PlannedWorkout.steps))
+        select(PlannedWorkout).where(*conditions).options(selectinload(PlannedWorkout.steps))
     ).first()
     if not workout:
         raise HTTPException(
@@ -692,17 +764,23 @@ def update_workout(
 ) -> PlannedWorkout:
     workout = get_workout(db, workout_id, athlete_account_id)
     original_week_id = workout.training_week_id
+    ensure_week_is_mutable(
+        get_week_by_id(db, original_week_id, workout.athlete_account_id)
+    )
     updates = payload.model_dump(exclude_unset=True)
+
+    new_week = None
+    if "planned_date" in updates:
+        new_week = get_or_create_mutable_week(
+            db,
+            updates["planned_date"],
+            workout.athlete_account_id,
+        )
 
     for field, value in updates.items():
         setattr(workout, field, value)
 
-    if payload.planned_date is not None:
-        new_week = get_or_create_week(
-            db,
-            week_start_for(payload.planned_date),
-            workout.athlete_account_id,
-        )
+    if new_week is not None:
         workout.training_week_id = new_week.id
 
     db.commit()
@@ -735,6 +813,9 @@ def duplicate_workout(
     athlete_account_id: str | None = None,
 ) -> PlannedWorkout:
     source = get_workout(db, workout_id, athlete_account_id)
+    ensure_week_is_mutable(
+        get_week_by_id(db, source.training_week_id, source.athlete_account_id)
+    )
     clone = clone_workout(
         source,
         source.training_week_id,
@@ -757,15 +838,30 @@ def copy_prior_week(
     week_id: str,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
-    target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
-    source_start = target.week_start_date - timedelta(days=7)
-    source = get_or_create_week(db, source_start, target.athlete_account_id)
+    virtual_target_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    target: TrainingWeek | None = None
+    if virtual_target_start is not None:
+        ensure_week_start_is_mutable(db, virtual_target_start, athlete_account_id)
+        active_athlete_id = (
+            athlete_account_id or ensure_default_athlete(db).id
+        )
+        target_start = virtual_target_start
+    else:
+        target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
+        active_athlete_id = target.athlete_account_id
+        target_start = target.week_start_date
 
-    if not source.workouts:
+    source_start = target_start - timedelta(days=7)
+    source = find_week(db, source_start, active_athlete_id)
+
+    if source is None or not source.workouts:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Prior week has no planned workouts to copy.",
         )
+
+    if target is None:
+        target = get_or_create_week(db, target_start, active_athlete_id)
 
     if not target.purpose:
         target.purpose = source.purpose
@@ -806,13 +902,20 @@ def save_week_plan(
     payload: PlanWeekSave,
     athlete_account_id: str | None = None,
 ) -> TrainingWeek:
+    virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    if virtual_week_start is not None:
+        ensure_week_start_is_mutable(db, virtual_week_start, athlete_account_id)
+        validate_plan_workout_dates(payload, virtual_week_start)
     week = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
-    normalized_purpose = normalize_week_purpose(payload.purpose)
-    week.purpose = normalized_purpose
-    week.purpose_source = "manual"
-    week.is_down_week = int(normalized_purpose == "down_week")
-    if normalized_purpose == "custom":
-        week.notes = payload.custom_purpose.strip()
+    if virtual_week_start is None:
+        validate_plan_workout_dates(payload, week.week_start_date)
+    if payload.purpose is not None:
+        normalized_purpose = normalize_week_purpose(payload.purpose)
+        week.purpose = normalized_purpose
+        week.purpose_source = "manual"
+        week.is_down_week = int(normalized_purpose == "down_week")
+        if normalized_purpose == "custom":
+            week.notes = payload.custom_purpose.strip()
     week.target_long_run_distance = payload.target_long_run_distance
     week.target_long_run_source = "manual"
 
@@ -844,6 +947,70 @@ def save_week_plan(
     return load_week(db, week.week_start_date, week.athlete_account_id)
 
 
+def complete_week_review(
+    db: Session,
+    week_id: str,
+    athlete_account_id: str | None = None,
+) -> TrainingWeek:
+    """Persist a past-week review without modifying its plan or outcomes."""
+    virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
+    if virtual_week_start is not None and week_state_for_start(
+        db,
+        virtual_week_start,
+        athlete_account_id,
+    ) != "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only completed weeks can be reviewed.",
+        )
+    week = get_or_create_week_for_mutation(
+        db,
+        week_id,
+        athlete_account_id,
+        allow_past=True,
+    )
+    if get_week_state(week) != "past":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only completed weeks can be reviewed.",
+        )
+
+    reviewed_at = datetime.now(timezone.utc)
+    week.reviewed_at = reviewed_at
+    actual_activities = activities_for_week(db, week)
+    metric_values = weekly_metrics.calculate_weekly_metrics(
+        list(week.workouts),
+        actual_activities,
+        today=today_for_timezone(week.athlete.timezone if week.athlete else None),
+    )
+    existing = {
+        (snapshot.metric_key, snapshot.basis): snapshot
+        for snapshot in db.scalars(
+            select(WeeklyMetricSnapshot).where(WeeklyMetricSnapshot.training_week_id == week.id)
+        )
+    }
+    for metric_key, measurement in metric_values.items():
+        snapshot = existing.get((metric_key, "actual"))
+        if snapshot is None:
+            snapshot = WeeklyMetricSnapshot(
+                athlete_account_id=week.athlete_account_id,
+                training_week_id=week.id,
+                week_start_date=week.week_start_date,
+                metric_key=metric_key,
+                basis="actual",
+                value=measurement.actual,
+                calculator_version=weekly_metrics.CALCULATOR_VERSION,
+                calculated_at=reviewed_at,
+            )
+            db.add(snapshot)
+        else:
+            snapshot.value = measurement.actual
+            snapshot.calculator_version = weekly_metrics.CALCULATOR_VERSION
+            snapshot.calculated_at = reviewed_at
+    db.commit()
+    return load_week(db, week.week_start_date, week.athlete_account_id)
+
+
 def clone_workout(
     source: PlannedWorkout,
     training_week_id: str,
@@ -860,6 +1027,7 @@ def clone_workout(
         intensity_category=source.intensity_category,
         planned_distance=source.planned_distance,
         planned_duration=source.planned_duration,
+        planned_pace=source.planned_pace,
         planned_elevation=source.planned_elevation,
         planned_tss=source.planned_tss,
         purpose=source.purpose,
@@ -891,6 +1059,7 @@ def clone_week_goal(source: WeekGoal, target: TrainingWeek) -> WeekGoal:
         training_week_id=target.id,
         athlete_account_id=target.athlete_account_id,
         week_start_date=target.week_start_date,
+        metric_key=source.metric_key,
         category=source.category,
         goal_type=source.goal_type,
         label=source.label,
@@ -902,7 +1071,11 @@ def clone_week_goal(source: WeekGoal, target: TrainingWeek) -> WeekGoal:
         evaluation_mode=source.evaluation_mode,
         priority=source.priority,
         status="not_started" if source.status != "waived" else "waived",
-        source="template" if source.source == "manual" else source.source,
+        source=(
+            source.source
+            if source.source in {"plan", "workouts", "default"}
+            else "manual"
+        ),
         is_editable=source.is_editable,
         is_enabled=source.is_enabled,
     )
@@ -912,6 +1085,7 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
     workout = get_workout(db, workout_id, athlete_account_id)
     week_id = workout.training_week_id
     active_athlete_id = workout.athlete_account_id
+    ensure_week_is_mutable(get_week_by_id(db, week_id, active_athlete_id))
     db.delete(workout)
     db.commit()
     recalculate_week(
@@ -919,6 +1093,24 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
         get_week_by_id(db, week_id, active_athlete_id),
         refresh_existing_workout_goals=True,
     )
+
+
+def validate_plan_workout_dates(payload: PlanWeekSave, week_start: date) -> None:
+    week_end = week_end_for(week_start)
+    invalid_dates = sorted(
+        workout.planned_date
+        for workout in payload.workouts
+        if not week_start <= workout.planned_date <= week_end
+    )
+    if invalid_dates:
+        formatted_dates = ", ".join(day.isoformat() for day in invalid_dates)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Workout plannedDate must fall between {week_start.isoformat()} and "
+                f"{week_end.isoformat()}; received {formatted_dates}."
+            ),
+        )
 
 
 def recalculate_impacted_weeks(
@@ -1008,8 +1200,22 @@ def serialize_week(
 
     week_state = get_week_state(week)
     goals = enabled_goals_for_week(week, default_goals)
+    current_day = today_for_timezone(week.athlete.timezone if week.athlete else None)
+    metric_values = weekly_metrics.calculate_weekly_metrics(
+        workouts,
+        actual_activities,
+        today=current_day,
+    )
     goal_evaluations = [
-        evaluate_goal(goal, week, workouts, actual_activities, week_state) for goal in goals
+        evaluate_goal(
+            goal,
+            week,
+            workouts,
+            actual_activities,
+            week_state,
+            metric_values=metric_values,
+        )
+        for goal in goals
     ]
     return {
         "id": week.id,
@@ -1028,6 +1234,7 @@ def serialize_week(
         "target_long_run_source": week.target_long_run_source,
         "is_down_week": bool(week.is_down_week),
         "notes": week.notes,
+        "reviewed_at": week.reviewed_at.isoformat() if week.reviewed_at else None,
         "workouts": workouts,
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
         "goals": [serialize_goal(goal) for goal in goals],
@@ -1062,6 +1269,7 @@ def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: st
         "target_long_run_source": "manual",
         "is_down_week": False,
         "notes": "",
+        "reviewed_at": None,
         "workouts": [],
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
         "goals": [],
@@ -1083,7 +1291,11 @@ def week_totals(workouts: list[PlannedWorkout], activities: list[StravaActivity]
         workout.planned_distance or 0 for workout in workouts if workout.sport == "run"
     )
     planned_time = sum(workout.planned_duration or 0 for workout in workouts)
-    actual_mileage = sum(activity.distance / 1609.344 for activity in activities)
+    actual_mileage = sum(
+        activity.distance / 1609.344
+        for activity in activities
+        if is_run_activity(activity)
+    )
     actual_time = sum(activity.moving_time or 0 for activity in activities)
     return {
         "planned_mileage": round(planned_mileage, 2),
@@ -1122,14 +1334,16 @@ def enabled_goals_for_week(
         goals = [virtual_goal(index, spec) for index, spec in enumerate(derived, start=1)]
         next_index = len(derived) + 1
 
-    covered = {(goal.category, goal.goal_type) for goal in goals}
+    covered = {(goal.metric_key or goal.category, goal.goal_type) for goal in goals}
     for default in default_goals or []:
-        if (default.category, default.goal_type) in covered:
+        identity = default.metric_key or default.category
+        if (identity, default.goal_type) in covered:
             continue
         goals.append(
             virtual_goal(
                 next_index,
                 {
+                    "metric_key": default.metric_key,
                     "category": default.category,
                     "goal_type": default.goal_type,
                     "label": default.label,
@@ -1152,20 +1366,16 @@ def enabled_goals_for_week(
 
 
 def serialize_goal(goal: WeekGoal) -> dict:
+    read_fields = normalized_goal_read_fields(goal)
     return {
         "id": goal.id,
         "training_week_id": goal.training_week_id,
         "athlete_account_id": goal.athlete_account_id,
         "week_start_date": goal.week_start_date,
-        "category": goal.category,
+        **read_fields,
         "goal_type": goal.goal_type,
         "label": goal.label,
         "description": goal.description,
-        "target_value": goal.target_value,
-        "min_acceptable": goal.min_acceptable,
-        "max_acceptable": goal.max_acceptable,
-        "unit": goal.unit,
-        "evaluation_mode": goal.evaluation_mode,
         "priority": goal.priority,
         "status": goal.status,
         "source": goal.source,
@@ -1173,6 +1383,46 @@ def serialize_goal(goal: WeekGoal) -> dict:
         "is_enabled": bool(goal.is_enabled),
         "created_at": goal.created_at.isoformat() if goal.created_at else "",
         "updated_at": goal.updated_at.isoformat() if goal.updated_at else "",
+    }
+
+
+def normalized_goal_read_fields(goal: WeekGoal | RecurringGoal) -> dict:
+    """Return a response-safe representation for current and legacy goal rows."""
+    metric_key = goal.metric_key or infer_goal_metric(goal.category, goal.unit)
+    if metric_key in GOAL_METRICS:
+        definition = GOAL_METRICS[metric_key]
+        try:
+            target, minimum, maximum = normalized_goal_thresholds(
+                metric_key,
+                goal.evaluation_mode,
+                target_value=goal.target_value,
+                min_acceptable=goal.min_acceptable,
+                max_acceptable=goal.max_acceptable,
+            )
+        except ValueError:
+            pass
+        else:
+            return {
+                "metric_key": metric_key,
+                "category": definition.category,
+                "target_value": target,
+                "min_acceptable": minimum,
+                "max_acceptable": maximum,
+                "unit": definition.unit,
+                "evaluation_mode": goal.evaluation_mode,
+            }
+
+    # Pre-catalog goals can contain combinations that the current editor no
+    # longer supports. Keep them readable and editable instead of failing the
+    # entire week response during FastAPI response validation.
+    return {
+        "metric_key": None,
+        "category": "custom",
+        "target_value": goal.target_value,
+        "min_acceptable": goal.min_acceptable,
+        "max_acceptable": goal.max_acceptable,
+        "unit": "custom",
+        "evaluation_mode": "manual",
     }
 
 
@@ -1186,8 +1436,7 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
     hard_dates = {
         workout.planned_date
         for workout in workouts
-        if workout.intensity_category in {"workout", "race"}
-        or workout.workout_type in QUALITY_WORKOUT_TYPES
+        if weekly_metrics.is_quality_workout(workout)
     }
     strength_sessions = len(
         [
@@ -1268,8 +1517,7 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
 
     if strength_sessions:
         strength_label = (
-            f"Complete {strength_sessions} strength "
-            f"session{'s' if strength_sessions != 1 else ''}"
+            f"Complete {strength_sessions} strength session{'s' if strength_sessions != 1 else ''}"
         )
         goals.append(
             new_default_goal(
@@ -1286,8 +1534,7 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
 
     if mobility_sessions:
         mobility_label = (
-            f"Complete {mobility_sessions} mobility "
-            f"session{'s' if mobility_sessions != 1 else ''}"
+            f"Complete {mobility_sessions} mobility session{'s' if mobility_sessions != 1 else ''}"
         )
         goals.append(
             new_default_goal(
@@ -1328,15 +1575,18 @@ def new_default_goal(
     evaluation_mode: str,
     priority: str,
 ) -> dict:
+    metric_key = infer_goal_metric(category, unit)
+    definition = GOAL_METRICS.get(metric_key) if metric_key else None
     return {
-        "category": category,
+        "metric_key": metric_key,
+        "category": definition.category if definition else category,
         "goal_type": goal_type,
         "label": label,
         "description": "",
         "target_value": target_value,
         "min_acceptable": min_acceptable,
         "max_acceptable": max_acceptable,
-        "unit": unit,
+        "unit": definition.unit if definition else unit,
         "evaluation_mode": evaluation_mode,
         "priority": priority,
         "status": "not_started",
@@ -1375,28 +1625,23 @@ def evaluate_goal(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     week_state: str,
+    *,
+    metric_values: dict | None = None,
 ) -> dict:
     if goal.status == "waived":
         return goal_evaluation(
             goal, "waived", "Waived", "This goal was intentionally waived.", severity="info"
         )
 
-    if goal.goal_type == "guardrail":
-        return evaluate_guardrail(goal, week, workouts, activities, week_state)
-
-    current_day = today_for_timezone(week.athlete.timezone if week.athlete else None)
-    if goal.category == "mileage":
-        return evaluate_mileage_goal(goal, week, workouts, activities, week_state, current_day)
-    if goal.category == "sessions":
-        return evaluate_sessions_goal(goal, workouts, activities, week_state, current_day)
-    if goal.category == "long_run":
-        return evaluate_long_run_goal(goal, workouts, activities, week_state, current_day)
-    if goal.category == "quality":
-        return evaluate_quality_goal(goal, workouts, activities, week_state, current_day)
-    if goal.category == "recovery":
-        return evaluate_recovery_goal(goal, workouts, activities, week_state)
-    if goal.category == "strength":
-        return evaluate_strength_goal(goal, workouts, activities, week_state, current_day)
+    metric_key = goal.metric_key or infer_goal_metric(goal.category, goal.unit)
+    if metric_key:
+        current_day = today_for_timezone(week.athlete.timezone if week.athlete else None)
+        measurements = metric_values or weekly_metrics.calculate_weekly_metrics(
+            workouts,
+            activities,
+            today=current_day,
+        )
+        return evaluate_metric_goal(goal, measurements[metric_key], week_state)
 
     return goal_evaluation(
         goal,
@@ -1405,6 +1650,93 @@ def evaluate_goal(
         goal.description or "Manual goal status.",
         severity=status_severity(goal.status),
     )
+
+
+def evaluate_metric_goal(
+    goal: WeekGoal,
+    metric: weekly_metrics.WeeklyMetricMeasurement,
+    week_state: str,
+) -> dict:
+    value = metric.value_for(week_state)
+    status_value = evaluate_metric_status(value, goal, week_state)
+    basis = (
+        "actual" if week_state == "past" else "planned" if week_state == "future" else "projected"
+    )
+    summary = metric_goal_summary(goal, metric, value, basis)
+    detail = (
+        f"{format_goal_number(metric.actual)} actual, {format_goal_number(metric.planned)} planned."
+    )
+    guardrail_value = None
+    if goal.goal_type == "guardrail":
+        guardrail_value = (
+            "ok"
+            if status_value in {"achieved", "on_track"}
+            else "warning"
+            if status_value in {"at_risk", "partially_achieved"}
+            else "danger"
+        )
+    return goal_evaluation(
+        goal,
+        status_value,
+        summary,
+        detail,
+        actual_value=metric.actual,
+        planned_value=metric.planned,
+        remaining_planned_value=metric.remaining,
+        severity=status_severity(status_value),
+        guardrail_status=guardrail_value,
+        contributing_workout_ids=list(metric.contributing_workout_ids),
+        contributing_activity_ids=list(metric.contributing_activity_ids),
+        metric_key=metric.metric_key,
+        measured_value=value,
+        basis=basis,
+    )
+
+
+def evaluate_metric_status(value: float, goal: WeekGoal, week_state: str) -> str:
+    mode = goal.evaluation_mode
+    passed = True
+    exceeded = False
+    if mode == "at_least":
+        passed = goal.min_acceptable is not None and value >= goal.min_acceptable
+    elif mode == "at_most":
+        passed = goal.max_acceptable is not None and value <= goal.max_acceptable
+        exceeded = not passed
+    elif mode == "range":
+        passed = (
+            goal.min_acceptable is not None
+            and goal.max_acceptable is not None
+            and goal.min_acceptable <= value <= goal.max_acceptable
+        )
+        exceeded = goal.max_acceptable is not None and value > goal.max_acceptable
+    elif mode == "exact-ish":
+        passed = goal.target_value is not None and value == goal.target_value
+        exceeded = goal.target_value is not None and value > goal.target_value
+
+    if passed:
+        return "achieved" if week_state == "past" else "on_track"
+    if week_state != "past":
+        return "at_risk"
+    if exceeded:
+        return "exceeded"
+    return "partially_achieved" if value > 0 else "missed"
+
+
+def metric_goal_summary(
+    goal: WeekGoal,
+    metric: weekly_metrics.WeeklyMetricMeasurement,
+    value: float,
+    basis: str,
+) -> str:
+    value_text = format_goal_number(value)
+    if metric.metric_key == "weekly_run_distance":
+        return f"{value_text} {basis} miles against {format_goal_range(goal)}"
+    if metric.metric_key == "longest_run_distance":
+        return f"Longest run {value_text} mi against {format_goal_range(goal)}"
+    if metric.metric_key == "long_run_share":
+        return f"Long run is {value_text}% of the week against {format_goal_target(goal)}"
+    definition = GOAL_METRICS[metric.metric_key]
+    return f"{definition.label}: {value_text} against {format_goal_target(goal)}"
 
 
 def evaluate_mileage_goal(
@@ -1416,8 +1748,20 @@ def evaluate_mileage_goal(
     today: date,
 ) -> dict:
     remaining = remaining_planned_mileage(workouts, activities, today)
+    run_activity_dates = {
+        activity.start_date_local.date() for activity in activities if is_run_activity(activity)
+    }
+    manual_completed_miles = sum(
+        workout.planned_distance or 0
+        for workout in workouts
+        if workout.sport == "run"
+        and is_manually_completed_workout(workout)
+        and workout.planned_date not in run_activity_dates
+    )
     actual = round(
-        sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity)), 1
+        sum(activity.distance / 1609.344 for activity in activities if is_run_activity(activity))
+        + manual_completed_miles,
+        1,
     )
     planned = round(
         sum(workout.planned_distance or 0 for workout in workouts if workout.sport == "run"), 1
@@ -1457,13 +1801,29 @@ def evaluate_sessions_goal(
     week_state: str,
     today: date,
 ) -> dict:
-    actual = count_training_activities(activities)
+    activity_dates = {
+        activity.start_date_local.date()
+        for activity in activities
+        if is_training_activity(activity)
+    }
+    manual_completions = len(
+        [
+            workout
+            for workout in workouts
+            if workout.sport != "rest"
+            and is_manually_completed_workout(workout)
+            and workout.planned_date not in activity_dates
+        ]
+    )
+    actual = count_training_activities(activities) + manual_completions
     planned = len([workout for workout in workouts if workout.sport != "rest"])
     remaining = len(
         [
             workout
             for workout in workouts
-            if workout.sport != "rest" and workout.planned_date >= today
+            if workout.sport != "rest"
+            and workout.planned_date >= today
+            and not is_manually_completed_workout(workout)
         ]
     )
     value = (
@@ -1499,14 +1859,28 @@ def evaluate_long_run_goal(
 ) -> dict:
     actual_runs = [activity for activity in activities if is_run_activity(activity)]
     planned_runs = [workout for workout in workouts if workout.sport == "run"]
-    actual = round(max((activity.distance / 1609.344 for activity in actual_runs), default=0), 1)
+    run_activity_dates = {activity.start_date_local.date() for activity in actual_runs}
+    manual_completed_runs = [
+        workout
+        for workout in planned_runs
+        if is_manually_completed_workout(workout)
+        and workout.planned_date not in run_activity_dates
+    ]
+    actual = round(
+        max(
+            [activity.distance / 1609.344 for activity in actual_runs]
+            + [workout.planned_distance or 0 for workout in manual_completed_runs],
+            default=0,
+        ),
+        1,
+    )
     planned = round(max((workout.planned_distance or 0 for workout in planned_runs), default=0), 1)
     remaining = round(
         max(
             (
                 workout.planned_distance or 0
                 for workout in planned_runs
-                if workout.planned_date >= today
+                if workout.planned_date >= today and not is_manually_completed_workout(workout)
             ),
             default=0,
         ),
@@ -1643,9 +2017,7 @@ def evaluate_strength_goal(
     strength_activities = [activity for activity in activities if is_strength_activity(activity)]
     actual = len(strength_activities)
     planned = len(strength_workouts)
-    remaining = len(
-        [workout for workout in strength_workouts if workout.planned_date >= today]
-    )
+    remaining = len([workout for workout in strength_workouts if workout.planned_date >= today])
     value = (
         actual
         if week_state == "past"
@@ -1795,10 +2167,21 @@ def goal_evaluation(
     guardrail_status: str | None = None,
     contributing_workout_ids: list[str] | None = None,
     contributing_activity_ids: list[str] | None = None,
+    metric_key: str | None = None,
+    measured_value: float | None = None,
+    basis: str | None = None,
 ) -> dict:
     return {
         "goal_id": goal.id,
         "week_start_date": goal.week_start_date,
+        "metric_key": metric_key,
+        "basis": basis,
+        "measured_value": measured_value,
+        "unit": GOAL_METRICS[metric_key].unit if metric_key in GOAL_METRICS else None,
+        "evaluation_mode": goal.evaluation_mode if metric_key else None,
+        "threshold_value": goal.target_value,
+        "threshold_min": goal.min_acceptable,
+        "threshold_max": goal.max_acceptable,
         "status": status_value,
         "guardrail_status": guardrail_status,
         "actual_value": round(actual_value, 1) if isinstance(actual_value, float) else actual_value,
@@ -1835,45 +2218,38 @@ def remaining_planned_mileage(
             if workout.sport == "run"
             and workout.planned_date >= current_day
             and workout.planned_date not in completed_run_dates
+            and not is_manually_completed_workout(workout)
         ),
         1,
     )
 
 
 def is_run_activity(activity: StravaActivity) -> bool:
-    return normalized_sport(activity.sport_type) in RUN_SPORTS
+    return weekly_metrics.is_run_activity(activity)
+
+
+def is_manually_completed_workout(workout: PlannedWorkout) -> bool:
+    return workout.status in {"completed_as_planned", "completed_modified", "partial"}
 
 
 def is_training_activity(activity: StravaActivity) -> bool:
-    return is_run_activity(activity) or is_strength_activity(activity)
+    return weekly_metrics.is_training_activity(activity)
 
 
 def is_strength_activity(activity: StravaActivity) -> bool:
-    sport = normalized_sport(activity.sport_type)
-    name = activity.name.lower()
-    return (
-        "strength" in sport
-        or "weight" in sport
-        or "workout" in sport
-        or "strength" in name
-        or "mobility" in name
-    )
+    return weekly_metrics.is_strength_activity(activity)
 
 
 def is_quality_activity(activity: StravaActivity) -> bool:
-    name = activity.name.lower()
-    return is_run_activity(activity) and any(keyword in name for keyword in QUALITY_KEYWORDS)
+    return weekly_metrics.is_quality_activity(activity)
 
 
 def is_quality_workout(workout: PlannedWorkout) -> bool:
-    return (
-        workout.intensity_category in {"workout", "race"}
-        or workout.workout_type in QUALITY_WORKOUT_TYPES
-    )
+    return weekly_metrics.is_quality_workout(workout)
 
 
 def normalized_sport(value: str) -> str:
-    return value.replace("_", "").replace(" ", "").lower()
+    return weekly_metrics.normalized_sport(value)
 
 
 def count_training_activities(activities: list[StravaActivity]) -> int:
@@ -1881,7 +2257,7 @@ def count_training_activities(activities: list[StravaActivity]) -> int:
 
 
 def has_back_to_back_dates(values: set[date]) -> bool:
-    return any(day + timedelta(days=1) in values for day in values)
+    return weekly_metrics.has_back_to_back_dates(values)
 
 
 def status_severity(status_value: str) -> str:

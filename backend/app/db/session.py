@@ -1,5 +1,7 @@
+from typing import Any
+
 from fastapi import HTTPException, status
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -22,7 +24,25 @@ def normalize_database_url(database_url: str) -> str:
 def build_engine(database_url: str) -> Engine:
     normalized_url = normalize_database_url(database_url)
     connect_args = {"check_same_thread": False} if normalized_url.startswith("sqlite") else {}
-    return create_engine(normalized_url, connect_args=connect_args, pool_pre_ping=True)
+    database_engine = create_engine(
+        normalized_url,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
+    if normalized_url.startswith("sqlite"):
+        event.listen(database_engine, "connect", _enable_sqlite_foreign_keys)
+    return database_engine
+
+
+def _enable_sqlite_foreign_keys(
+    dbapi_connection: Any,
+    _connection_record: Any,
+) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 engine: Engine = build_engine(settings.sqlalchemy_database_url)

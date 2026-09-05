@@ -127,15 +127,21 @@ export function buildWeekCommandCenterViewModel({
   const guardrailWarnings = buildGuardrailWarnings(guardrailGoals, evaluationsByGoal);
   const guardrailDetails = buildGuardrailDetails(guardrailGoals, evaluationsByGoal);
   const compactStats = buildCompactStats(week, goalCards, mode, today);
-  const isUnplanned = isUnplannedWeek(week, mode);
+  const isUnplanned = isUnplannedWeek(week);
 
   return {
     weekStartDate: week.weekStartDate,
     weekEndDate: week.weekEndDate,
     title: formatWeekRange(week.weekStartDate, week.weekEndDate),
     mode,
-    modeLabel: isUnplanned ? "Unplanned week" : modeLabel(mode),
-    purposeTag: buildPurposeTag(week, mode, isUnplanned),
+    modeLabel: week.reviewedAt
+      ? "Reviewed"
+      : isUnplanned && mode === "review"
+        ? "Empty week"
+        : isUnplanned
+          ? "Not planned yet"
+          : modeLabel(mode),
+    purposeTag: buildPurposeTag(week, isUnplanned),
     purpose: buildPurpose(week, goalCards),
     narrative: buildNarrative(week, goalCards, mode, today, isUnplanned),
     isUnplanned,
@@ -182,9 +188,8 @@ function buildGoalCards({
   });
 }
 
-function isUnplannedWeek(week: TrainingWeek, mode: WeekMode) {
+function isUnplannedWeek(week: TrainingWeek) {
   return (
-    mode === "planning" &&
     !hasWeekWork(week) &&
     !week.notes.trim() &&
     !hasStructuredPlanContext(week) &&
@@ -209,7 +214,10 @@ function buildGoalCard(
 
   const status = displayStatusFor(goal, evaluation, mode, week, today);
   const target = goal.targetValue ?? goal.minAcceptable ?? goal.maxAcceptable ?? undefined;
-  const actual = evaluation?.actualValue ?? actualValueForCategory(goal.category, week);
+  const derivedActual = actualValueForCategory(goal.category, week);
+  const actual = ["mileage", "sessions"].includes(goal.category)
+    ? Math.max(evaluation?.actualValue ?? 0, derivedActual)
+    : evaluation?.actualValue ?? derivedActual;
   const planned = evaluation?.plannedValue ?? plannedValueForCategory(goal.category, week);
   const projected =
     mode === "planning"
@@ -328,7 +336,7 @@ function buildDetailSummary(detailGoalCards: GoalCardViewModel[], guardrailDetai
     pieces.push(`${detailGoalCards.length} more goal${detailGoalCards.length === 1 ? "" : "s"}`);
   }
   if (guardrailDetails.length) {
-    pieces.push(warnings ? `${warnings} guardrail warning${warnings === 1 ? "" : "s"}` : "guardrails clear");
+    pieces.push(warnings ? `${warnings} limit warning${warnings === 1 ? "" : "s"}` : "limits clear");
   }
   return pieces.join(" · ") || "Goal details";
 }
@@ -345,10 +353,14 @@ function buildCompactStats(
   const recovery = goalCards.find((card) => card.id === "recovery");
 
   if (mode === "planning") {
+    const hasPlannedSessions = week.workouts.length > 0;
     return [
       {
         label: "Mileage",
-        value: mileage?.primaryValue ?? `${formatNumber(week.plannedMileage)} mi planned`,
+        value:
+          week.targetMileage !== null
+            ? `${formatNumber(week.plannedMileage)} / ${formatNumber(week.targetMileage)} mi planned`
+            : mileage?.primaryValue ?? `${formatNumber(week.plannedMileage)} mi planned`,
         severity: mileage?.severity
       },
       {
@@ -365,7 +377,7 @@ function buildCompactStats(
       },
       {
         label: "Recovery",
-        value: recovery?.primaryValue ?? formatRestDays(plannedRestDays(week), "planned"),
+        value: recovery?.primaryValue ?? (hasPlannedSessions ? formatRestDays(plannedRestDays(week), "planned") : "Not planned yet"),
         detail: recovery ? `${recovery.statusLabel}: ${recovery.explanation}` : undefined,
         severity: recovery?.severity
       }
@@ -373,7 +385,7 @@ function buildCompactStats(
   }
 
 	  if (mode === "execution") {
-	    const actual = mileage?.actualValue ?? week.actualMileage;
+	    const actual = mileage?.actualValue ?? completedMileage(week);
 	    const projected = mileage?.projectedValue ?? actual;
 	    return [
 	      {
@@ -396,7 +408,7 @@ function buildCompactStats(
       },
       {
         label: "Recovery",
-        value: recovery?.statusLabel ?? formatRestDays(plannedRestDays(week), "planned"),
+        value: recovery?.statusLabel ?? (week.workouts.length ? formatRestDays(plannedRestDays(week), "planned") : "Not planned yet"),
         detail: recovery?.explanation,
         severity: recovery?.severity
       }
@@ -406,7 +418,7 @@ function buildCompactStats(
   return [
     {
       label: "Mileage",
-      value: mileage?.primaryValue ?? `${formatNumber(week.actualMileage)} mi`,
+      value: mileage?.primaryValue ?? `${formatNumber(completedMileage(week))} mi`,
       detail: mileage ? `${mileage.statusLabel}: ${mileage.explanation}` : undefined,
       severity: mileage?.severity,
       outcome: reviewOutcomeForGoal(mileage)
@@ -427,7 +439,7 @@ function buildCompactStats(
     },
     {
       label: "Recovery",
-      value: recovery?.primaryValue ?? formatRestDays(actualRestDays(week), "completed"),
+      value: recovery?.primaryValue ?? (week.actualActivities.length ? formatRestDays(actualRestDays(week), "completed") : "Not planned"),
       detail: recovery ? `${recovery.statusLabel}: ${recovery.explanation}` : undefined,
       severity: recovery?.severity,
       outcome: reviewOutcomeForGoal(recovery)
@@ -436,12 +448,15 @@ function buildCompactStats(
 }
 
 function reviewOutcomeForGoal(goal: GoalCardViewModel | undefined): CompactWeekStatViewModel["outcome"] {
-  return goal && ["achieved", "on_track"].includes(goal.status) ? "hit" : "missed";
+  if (!goal) {
+    return undefined;
+  }
+  return ["achieved", "on_track"].includes(goal.status) ? "hit" : "missed";
 }
 
-function buildPurposeTag(week: TrainingWeek, mode: WeekMode, isUnplanned: boolean) {
+function buildPurposeTag(week: TrainingWeek, isUnplanned: boolean) {
   if (isUnplanned) {
-    return "Unplanned week";
+    return "Purpose not set";
   }
   if (typeof week.purpose === "string" && week.purpose.length > 0) {
     return purposeLabel(week);
@@ -449,23 +464,7 @@ function buildPurposeTag(week: TrainingWeek, mode: WeekMode, isUnplanned: boolea
   if (week.notes.trim()) {
     return "Custom";
   }
-  if (week.workouts.some((workout) => workout.intensityCategory === "race" || workout.workoutType === "race")) {
-    return "Race week";
-  }
-  if (plannedRestDays(week) >= 3 || (week.plannedMileage > 0 && plannedSessionCount(week) <= 3)) {
-    return "Recovery";
-  }
-  if (plannedHardDayCount(week) >= 2) {
-    return "Workout focus";
-  }
-  const longRun = deriveLongRun(week, mode, week.weekStartDate).distance;
-  if (week.plannedMileage > 0 && longRun / week.plannedMileage >= 0.3) {
-    return "Long-run focus";
-  }
-  if (week.plannedMileage > 0 || plannedSessionCount(week) > 0) {
-    return "Aerobic build";
-  }
-  return modeLabel(mode);
+  return "Purpose not set";
 }
 
 function buildNarrative(
@@ -522,7 +521,7 @@ function buildNarrative(
   const outcome = missed.length
     ? `${missed.map((card) => `${card.label} ${card.statusLabel.toLowerCase()}`).join(". ")}.`
     : "Primary goals were handled.";
-  return `${formatNumber(week.actualMileage)} mi completed. ${achieved} / ${goalCards.length} goals achieved. ${outcome}`;
+  return `${formatNumber(completedMileage(week))} mi completed. ${achieved} / ${goalCards.length} goals achieved. ${outcome}`;
 }
 
 function buildPurpose(week: TrainingWeek, goalCards: GoalCardViewModel[]) {
@@ -559,8 +558,9 @@ function buildPrimarySummary(
   if (mode === "execution") {
     const mileage = goalCards.find((card) => card.id === "mileage");
     const target = projectedTargetMiles(week, mileage);
-    const remaining = Math.max(target - week.actualMileage, 0);
-    return `${formatNumber(week.actualMileage)} / ${formatNumber(target)} mi completed · ${completedSessionCount(week)} completed · ${plannedSessionCount(week)} planned · ${formatNumber(remaining)} mi remaining`;
+    const completed = completedMileage(week);
+    const remaining = Math.max(target - completed, 0);
+    return `${formatNumber(completed)} / ${formatNumber(target)} mi completed · ${completedSessionCount(week)} completed · ${plannedSessionCount(week)} planned · ${formatNumber(remaining)} mi remaining`;
   }
 
   const achieved = goalCards.filter((card) => card.status === "achieved").length;
@@ -585,31 +585,36 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 }
 
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
+  if (mode === "execution") {
+    return week.workouts.length > 0
+      ? [{ id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }]
+      : [{ id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }];
+  }
+
   if (mode === "planning") {
-    const hasSavedPlan =
+    const hasScheduledPlan =
       week.workouts.length > 0 ||
       week.goals.length > 0 ||
-      week.notes.trim().length > 0 ||
-      hasStructuredPlanContext(week);
+      week.notes.trim().length > 0;
     return [
       {
-        id: hasSavedPlan ? "edit_plan" : "plan_week",
-        label: hasSavedPlan ? "Edit plan" : "Plan week",
+        id: hasScheduledPlan ? "edit_plan" : "plan_week",
+        label: hasScheduledPlan ? "Edit plan" : "Plan week",
         variant: "primary",
         icon: "calendar"
       }
     ];
   }
 
-  if (mode === "execution") {
-    return [
-      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }
-    ];
+  if (isUnplannedWeek(week)) {
+    return week.reviewedAt
+      ? []
+      : [{ id: "skip_review", label: "Close empty week", variant: "primary", icon: "check" }];
   }
 
-  return [
-    { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
-  ];
+  return week.reviewedAt
+    ? []
+    : [{ id: "review_week", label: "Review week", variant: "primary", icon: "check" }];
 }
 
 function hasStructuredPlanContext(week: TrainingWeek) {
@@ -630,13 +635,19 @@ function primaryValueForGoal(
 ) {
   const target = goal.targetValue ?? goal.minAcceptable ?? goal.maxAcceptable;
   const planned = evaluation?.plannedValue ?? plannedValueForCategory(goal.category, week);
-  const actual = evaluation?.actualValue ?? actualValueForCategory(goal.category, week);
+  const derivedActual = actualValueForCategory(goal.category, week);
+  const actual = ["mileage", "sessions"].includes(goal.category)
+    ? Math.max(evaluation?.actualValue ?? 0, derivedActual)
+    : evaluation?.actualValue ?? derivedActual;
 
   if (goal.category === "mileage") {
     if (mode === "planning") {
-      return `${formatNumber(planned || week.plannedMileage)} mi planned`;
+      const plannedMileage = planned || week.plannedMileage;
+      return week.targetMileage !== null
+        ? `${formatNumber(plannedMileage)} / ${formatNumber(week.targetMileage)} mi planned`
+        : `${formatNumber(plannedMileage)} mi planned`;
     }
-    return `${formatNumber(mode === "review" ? week.actualMileage : actual)} / ${formatNumber(target || week.plannedMileage)} mi`;
+    return `${formatNumber(mode === "review" ? completedMileage(week) : actual)} / ${formatNumber(target || week.plannedMileage)} mi`;
   }
 
   if (goal.category === "quality") {
@@ -686,7 +697,7 @@ function explanationForGoal(
     if (mode === "execution" && evaluation?.remainingPlannedValue) {
       return `${formatNumber(evaluation.remainingPlannedValue)} mi still planned.`;
     }
-    if (isWithinRange(mode === "review" ? week.actualMileage : week.plannedMileage, goal)) {
+    if (isWithinRange(mode === "review" ? completedMileage(week) : week.plannedMileage, goal)) {
       return "Within target range.";
     }
   }
@@ -836,12 +847,12 @@ function statusLabel(status: GoalDisplayStatus, mode: WeekMode) {
 
 function modeLabel(mode: WeekMode) {
   if (mode === "planning") {
-    return "Planning week";
+    return "Upcoming";
   }
   if (mode === "execution") {
-    return "Execution week";
+    return "This week";
   }
-  return "Week review";
+  return "Needs review";
 }
 
 function intentValueForCard(card: GoalCardViewModel) {
@@ -894,8 +905,12 @@ function userFacingExplanation(value: string | undefined | null, goal: WeekGoal)
 
 function deriveLongRun(week: TrainingWeek, mode: WeekMode, today: string) {
   const actual = longestActualRun(week);
-  const plannedUpcoming = longestPlannedRun(week, (workout) => workout.plannedDate >= today);
-  const plannedAny = longestPlannedRun(week);
+  const completedPlanned = longestPlannedRun(week, isCompletedWorkout);
+  const plannedUpcoming = longestPlannedRun(
+    week,
+    (workout) => !isCompletedWorkout(workout) && workout.plannedDate >= today
+  );
+  const plannedAny = longestPlannedRun(week, (workout) => !isCompletedWorkout(workout));
 
   if (mode === "review") {
     return actual.distance > 0 ? actual : { ...actual, summary: "No long run", detail: "No completed long run found." };
@@ -903,6 +918,9 @@ function deriveLongRun(week: TrainingWeek, mode: WeekMode, today: string) {
   if (mode === "execution") {
     if (actual.distance > 0) {
       return actual;
+    }
+    if (completedPlanned.distance > 0) {
+      return { ...completedPlanned, detail: `Completed: ${completedPlanned.detail}` };
     }
     return plannedUpcoming.distance > 0 ? plannedUpcoming : plannedAny;
   }
@@ -925,7 +943,12 @@ function longestActualRun(week: TrainingWeek) {
 
 function longestPlannedRun(week: TrainingWeek, predicate: (workout: Workout) => boolean = () => true) {
   const workout = week.workouts
-    .filter((item) => item.sport === "run" && predicate(item))
+    .filter(
+      (item) =>
+        item.sport === "run" &&
+        (item.workoutType === "long_run" || item.workoutType === "medium_long") &&
+        predicate(item)
+    )
     .sort((a, b) => (b.plannedDistance ?? 0) - (a.plannedDistance ?? 0))[0];
   if (!workout) {
     return { distance: 0, summary: "Not planned", detail: "No planned long run found." };
@@ -956,7 +979,7 @@ function plannedValueForCategory(category: WeekGoal["category"], week: TrainingW
 
 function actualValueForCategory(category: WeekGoal["category"], week: TrainingWeek) {
   if (category === "mileage") {
-    return week.actualMileage;
+    return completedMileage(week);
   }
   if (category === "quality") {
     return actualHardDayCount(week);
@@ -975,7 +998,32 @@ function plannedSessionCount(week: TrainingWeek) {
 }
 
 function completedSessionCount(week: TrainingWeek) {
-  return week.actualActivities.length;
+  const activityDates = new Set(week.actualActivities.map((activity) => activity.activityDate));
+  const manualCompletions = week.workouts.filter(
+    (workout) => isCompletedWorkout(workout) && !activityDates.has(workout.plannedDate)
+  ).length;
+  return week.actualActivities.length + manualCompletions;
+}
+
+function completedMileage(week: TrainingWeek) {
+  const runActivityDates = new Set(
+    week.actualActivities
+      .filter((activity) => isRunSport(activity.sportType))
+      .map((activity) => activity.activityDate)
+  );
+  const manualMiles = week.workouts
+    .filter(
+      (workout) =>
+        workout.sport === "run" &&
+        isCompletedWorkout(workout) &&
+        !runActivityDates.has(workout.plannedDate)
+    )
+    .reduce((total, workout) => total + (workout.plannedDistance ?? 0), 0);
+  return week.actualMileage + manualMiles;
+}
+
+function isCompletedWorkout(workout: Workout) {
+  return workout.status.startsWith("completed") || workout.status === "partial";
 }
 
 function plannedHardDayCount(week: TrainingWeek) {

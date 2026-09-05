@@ -1,6 +1,6 @@
 import { daysBetween } from "../../lib/dates";
-import { formatNumber, formatShortDate, formatWorkoutMeta } from "../../lib/formatters";
-import type { TrainingPlan, TrainingWeek } from "../../types/domain";
+import { formatNumber, formatShortDate, formatWeekday, formatWorkoutMeta } from "../../lib/formatters";
+import type { ActualActivity, TrainingPlan, TrainingWeek, Workout } from "../../types/domain";
 
 export type WeekContextSegment = {
   id: "race" | "phase" | "mileage";
@@ -10,9 +10,16 @@ export type WeekContextSegment = {
 };
 
 export type WeekContextTodaySession =
-  | { kind: "workout"; title: string; meta: string; status: "done" | "upcoming" }
-  | { kind: "rest" }
-  | { kind: "open" };
+  | {
+      kind: "workout";
+      label: "Today" | "Next up";
+      title: string;
+      meta: string;
+      status: "done" | "upcoming";
+      workoutId?: string;
+    }
+  | { kind: "rest"; label: "Today" }
+  | { kind: "open"; label: "Today" };
 
 export type WeekContextStripViewModel =
   | { kind: "onboarding"; headline: string; detail: string; actionLabel: string }
@@ -164,24 +171,80 @@ function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContex
   if (todaysWorkouts.length === 0) {
     const activity = todaysActuals[0];
     if (activity) {
-      return { kind: "workout", title: activity.name, meta: `${formatNumber(activity.distanceMiles)} mi`, status: "done" };
+      return {
+        kind: "workout",
+        label: "Today",
+        title: activity.name,
+        meta: `${formatNumber(activity.distanceMiles)} mi`,
+        status: "done"
+      };
     }
-    return { kind: "open" };
+    const nextWorkout = currentWeek.workouts
+      .filter(
+        (workout) =>
+          workout.plannedDate > today &&
+          workout.sport !== "rest" &&
+          workout.intensityCategory !== "rest" &&
+          !workout.status.startsWith("completed") &&
+          !["missed", "skipped_intentionally", "replaced"].includes(workout.status)
+      )
+      .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate))[0];
+    if (nextWorkout) {
+      return {
+        kind: "workout",
+        label: "Next up",
+        title: nextWorkout.title,
+        meta: `${formatWeekday(nextWorkout.plannedDate)} · ${formatWorkoutMeta(nextWorkout)}`,
+        status: "upcoming",
+        workoutId: nextWorkout.id
+      };
+    }
+    return { kind: "open", label: "Today" };
   }
 
   const primary = todaysWorkouts.find((workout) => workout.sport !== "rest") ?? todaysWorkouts[0];
   if (primary.sport === "rest" || primary.intensityCategory === "rest") {
-    return { kind: "rest" };
+    return { kind: "rest", label: "Today" };
   }
 
   const done =
-    todaysActuals.length > 0 || primary.status.startsWith("completed") || primary.status === "partial";
+    matchActualActivities(todaysWorkouts, todaysActuals).has(primary.id) ||
+    primary.status.startsWith("completed") ||
+    primary.status === "partial";
   return {
     kind: "workout",
+    label: "Today",
     title: primary.title,
     meta: formatWorkoutMeta(primary),
-    status: done ? "done" : "upcoming"
+    status: done ? "done" : "upcoming",
+    workoutId: primary.id
   };
+}
+
+function matchActualActivities(
+  workouts: Workout[],
+  activities: ActualActivity[]
+): Map<string, ActualActivity> {
+  const matches = new Map<string, ActualActivity>();
+  for (const activity of activities) {
+    if (!activity.sportType.toLowerCase().includes("run")) {
+      continue;
+    }
+    const best = workouts
+      .filter((workout) => workout.sport === "run" && !matches.has(workout.id))
+      .map((workout) => ({
+        workout,
+        gap:
+          workout.plannedDistance === null
+            ? Number.MAX_SAFE_INTEGER
+            : Math.abs(workout.plannedDistance - activity.distanceMiles)
+      }))
+      .sort((left, right) => left.gap - right.gap)[0];
+    if (best) {
+      matches.set(best.workout.id, activity);
+    }
+  }
+  return matches;
 }
 
 function capitalize(value: string) {

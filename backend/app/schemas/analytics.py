@@ -53,6 +53,7 @@ class AnalyticsWeekSummaryRead(ApiModel):
     week_end_date: date
     week_state: Literal["past", "current", "future"]
     planned_mileage: float
+    target_mileage: float | None = None
     actual_mileage: float
     comparison_mileage: float
     hard_days: int

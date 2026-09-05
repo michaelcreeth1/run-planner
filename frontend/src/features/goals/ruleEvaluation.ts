@@ -8,6 +8,7 @@ import type {
   TrainingWeek,
   WeekGoal,
   WeekGoalCategory,
+  WeekGoalMetric,
   WeekGoalType,
   Workout
 } from "../../types/domain";
@@ -27,6 +28,7 @@ export type PlanRule = {
   label: string;
   goalType: WeekGoalType;
   category: WeekGoalCategory | null;
+  metricKey: WeekGoalMetric | null;
   threshold: number | null;
 };
 
@@ -75,6 +77,10 @@ const LIMIT_WARNING_TOLERANCE = 1.1;
 // a long run when it takes up a meaningful share of the week.
 const ACTUAL_LONG_RUN_MIN_SHARE = 0.25;
 
+// Ratio-based guidance is misleading while a week is still only a sketch.
+// Wait until there are enough planned runs for a percentage to be useful.
+const MIN_RUNS_FOR_LONG_RUN_SHARE = 3;
+
 // Matches the quality-session heuristic used across the app for Strava names.
 const QUALITY_NAME_PATTERN = /tempo|threshold|interval|hill|race|workout|reps|repeat|fartlek/i;
 
@@ -90,14 +96,15 @@ export function buildPlanRules({
   plan: TrainingPlan | null;
 }): PlanRule[] {
   const activeGoals = [...defaultGoals, ...(plan?.recurringGoals ?? [])];
-  const restGoal = matchGoal(activeGoals, "recovery", "at_least", /rest\s*day/i);
-  const hardGoal = matchGoal(activeGoals, "quality", "at_most", /hard\s*day/i);
+  const restGoal = matchGoal(activeGoals, "rest_day_count", "recovery", "at_least");
+  const hardGoal = matchGoal(activeGoals, "hard_training_day_count", "quality", "at_most");
   const longRunPercentGoal =
     activeGoals.find(
       (goal) =>
-        goal.unit === "percent" &&
+        (goal.metricKey === "long_run_share" ||
+          (!goal.metricKey && goal.category === "long_run" && goal.unit === "percent")) &&
         goal.evaluationMode === "at_most" &&
-        (goal.category === "long_run" || /long\s*run/i.test(goal.label))
+        goal.unit === "percent"
     ) ?? null;
 
   const restMinimum = goalMinimum(restGoal) ?? 1;
@@ -111,6 +118,7 @@ export function buildPlanRules({
       label: restGoal?.label ?? `At least ${restMinimum} rest day${restMinimum === 1 ? "" : "s"}`,
       goalType: restGoal?.goalType ?? "guardrail",
       category: "recovery",
+      metricKey: "rest_day_count",
       threshold: restMinimum
     },
     {
@@ -119,6 +127,7 @@ export function buildPlanRules({
       label: hardGoal?.label ?? `No more than ${hardLimit} hard days`,
       goalType: hardGoal?.goalType ?? "guardrail",
       category: "quality",
+      metricKey: "hard_training_day_count",
       threshold: hardLimit
     },
     {
@@ -127,6 +136,7 @@ export function buildPlanRules({
       label: longRunPercentGoal?.label ?? `Long run no more than ${formatNumber(longRunLimit)}% of week`,
       goalType: longRunPercentGoal?.goalType ?? "guardrail",
       category: "long_run",
+      metricKey: "long_run_share",
       threshold: longRunLimit
     },
     {
@@ -135,6 +145,7 @@ export function buildPlanRules({
       label: "Long run scheduled",
       goalType: "achievement",
       category: "long_run",
+      metricKey: "longest_run_distance",
       threshold: null
     }
   ];
@@ -146,6 +157,7 @@ export function buildPlanRules({
       label: "Down-week rhythm",
       goalType: "guardrail",
       category: null,
+      metricKey: null,
       threshold: null
     });
   }
@@ -188,7 +200,7 @@ export function evaluateRule(rule: PlanRule, input: RuleWeekInput, today: string
       reason:
         week.weekEndDate < today
           ? "Nothing was planned or logged for this week."
-          : "Week not planned yet — plan it to check this rule."
+          : "Week not planned yet — plan it to check this goal."
     };
   }
 
@@ -315,7 +327,16 @@ function evaluateHardDays(rule: PlanRule, week: TrainingWeek, basis: EvaluationB
 }
 
 function evaluateLongRunPercent(rule: PlanRule, week: TrainingWeek, basis: EvaluationBasis): PartialEvaluation {
-  const longRun = basis === "actual" ? longestActualRun(week) : plannedOrLongestRun(week);
+  const plannedRuns = week.workouts.filter(
+    (workout) => workout.sport === "run" && (workout.plannedDistance ?? 0) > 0
+  );
+  const longRun = basis === "actual" ? longestActualRun(week) : plannedLongRunCandidate(week);
+  if (basis === "planned" && plannedRuns.length < MIN_RUNS_FOR_LONG_RUN_SHARE) {
+    return {
+      status: "pending",
+      reason: `Add at least ${MIN_RUNS_FOR_LONG_RUN_SHARE} runs before checking the long-run share.`
+    };
+  }
   if (!longRun) {
     return {
       status: "not_applicable",
@@ -388,6 +409,13 @@ function evaluateLongRunScheduled(week: TrainingWeek, today: string, basis: Eval
       relatedWorkoutIds: [longRun.id]
     };
   }
+  const plannedRuns = week.workouts.filter((workout) => workout.sport === "run");
+  if (plannedRuns.length < MIN_RUNS_FOR_LONG_RUN_SHARE) {
+    return {
+      status: "pending",
+      reason: "The week is still taking shape — add the remaining runs before checking for a long run."
+    };
+  }
   if (week.weekStartDate > today) {
     return { status: "warning", reason: "No long run scheduled yet — there is still time to add one." };
   }
@@ -448,13 +476,15 @@ function rhythmMetrics(summary: PlanWeekSummary | null | undefined, cadence: num
 
 function matchGoal(
   goals: RecurringGoal[],
+  metricKey: WeekGoalMetric,
   category: WeekGoalCategory,
-  mode: RecurringGoal["evaluationMode"],
-  labelPattern: RegExp
+  mode: RecurringGoal["evaluationMode"]
 ) {
   return (
-    goals.find((goal) => goal.category === category && goal.evaluationMode === mode) ??
-    goals.find((goal) => labelPattern.test(goal.label)) ??
+    goals.find((goal) => goal.metricKey === metricKey && goal.evaluationMode === mode) ??
+    goals.find(
+      (goal) => !goal.metricKey && goal.category === category && goal.evaluationMode === mode
+    ) ??
     null
   );
 }
@@ -472,7 +502,11 @@ function findOverrideGoal(rule: PlanRule, week: TrainingWeek): WeekGoal | null {
     return null;
   }
   return (
-    week.goals.find((goal) => goal.category === rule.category && (goal.status === "waived" || !goal.isEnabled)) ?? null
+    week.goals.find(
+      (goal) =>
+        (goal.metricKey === rule.metricKey || (!goal.metricKey && goal.category === rule.category)) &&
+        (goal.status === "waived" || !goal.isEnabled)
+    ) ?? null
   );
 }
 
@@ -482,7 +516,8 @@ function effectiveThreshold(rule: PlanRule, week: TrainingWeek): { threshold: nu
   const weekGoal = week.goals.find(
     (goal) =>
       goal.isEnabled &&
-      goal.category === rule.category &&
+      goal.source === "manual" &&
+      (goal.metricKey === rule.metricKey || (!goal.metricKey && goal.category === rule.category)) &&
       goal.evaluationMode === (rule.kind === "rest_days" ? "at_least" : "at_most") &&
       (rule.kind !== "long_run_percent" || goal.unit === "percent")
   );
@@ -533,15 +568,8 @@ function plannedLongRunWorkout(week: TrainingWeek) {
 
 type LongRunCandidate = { distance: number; title: string; workoutId: string | null };
 
-// The percent guardrail caps the biggest single day, so fall back to the
-// longest planned run when no workout is labelled as the long run.
-function plannedOrLongestRun(week: TrainingWeek): LongRunCandidate | null {
-  const workout =
-    plannedLongRunWorkout(week) ??
-    week.workouts
-      .filter((candidate) => candidate.sport === "run" && (candidate.plannedDistance ?? 0) > 0)
-      .sort((left, right) => (right.plannedDistance ?? 0) - (left.plannedDistance ?? 0))[0] ??
-    null;
+function plannedLongRunCandidate(week: TrainingWeek): LongRunCandidate | null {
+  const workout = plannedLongRunWorkout(week);
   if (!workout || (workout.plannedDistance ?? 0) <= 0) {
     return null;
   }

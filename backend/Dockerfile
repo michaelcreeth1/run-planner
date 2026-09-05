@@ -5,11 +5,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY pyproject.toml /app/
-RUN pip install --no-cache-dir ".[dev]"
+COPY pyproject.toml requirements.lock /app/
+RUN pip install --no-cache-dir --constraint requirements.lock .
 
 COPY app /app/app
 COPY migrations /app/migrations
-COPY tests /app/tests
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

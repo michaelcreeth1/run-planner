@@ -2,11 +2,10 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base, SessionLocal
+from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
 from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek
 from app.schemas.planning import (
@@ -30,14 +29,17 @@ def login(client: TestClient, username: str = "michael", password: str = "test-p
 
 
 def make_session() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = build_engine("sqlite://")
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     return testing_session()
+
+
+def assert_past_week_read_only(response) -> None:
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Past weeks are read-only. Complete a review instead."
+    }
 
 
 def test_current_week_and_workout_crud() -> None:
@@ -61,12 +63,14 @@ def test_current_week_and_workout_crud() -> None:
                 "intensityCategory": "easy",
                 "plannedDistance": 6,
                 "plannedDuration": 2700,
+                "plannedPace": 450,
                 "purpose": "Aerobic maintenance",
             },
         )
         assert create_response.status_code == 201
         workout = create_response.json()
         assert workout["title"] == "Easy 6"
+        assert workout["plannedPace"] == 450
 
         refreshed_week = client.get(f"/api/weeks/{planned_date}").json()
         assert refreshed_week["plannedMileage"] == starting_mileage + 6
@@ -130,6 +134,38 @@ def test_authenticated_users_are_isolated() -> None:
         assert update_response.status_code == 404
 
 
+def test_workout_can_be_completed_without_a_strava_activity() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        create_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": week["weekStartDate"],
+                "title": "Untracked strength session",
+                "sport": "strength",
+                "workoutType": "strength",
+                "intensityCategory": "strength",
+                "plannedDuration": 1800,
+            },
+        )
+        workout = create_response.json()
+
+        complete_response = client.patch(
+            f"/api/planned-workouts/{workout['id']}",
+            json={"status": "completed_as_planned"},
+        )
+
+        assert complete_response.status_code == 200
+        assert complete_response.json()["status"] == "completed_as_planned"
+        refreshed_week = client.get(f"/api/weeks/{week['weekStartDate']}").json()
+        assert refreshed_week["actualActivities"] == []
+        completed_workout = next(
+            item for item in refreshed_week["workouts"] if item["id"] == workout["id"]
+        )
+        assert completed_workout["status"] == "completed_as_planned"
+
+
 def test_get_week_does_not_create_empty_week() -> None:
     with TestClient(app) as client:
         login(client)
@@ -182,6 +218,284 @@ def test_save_week_plan_with_virtual_week_id_creates_real_week() -> None:
             assert persisted_week is not None
 
 
+def test_save_week_plan_rejects_out_of_week_workouts_before_creating_virtual_week() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/2099-07-06").json()
+        assert week["id"].startswith("virtual-week:")
+
+        response = client.put(
+            f"/api/weeks/{week['id']}/plan",
+            json={
+                "purpose": "aerobic_build",
+                "workouts": [
+                    {
+                        "plannedDate": "2099-07-14",
+                        "title": "Wrong week",
+                        "plannedDistance": 5,
+                    }
+                ],
+                "goals": [],
+            },
+        )
+
+        assert response.status_code == 422
+        assert "2099-07-06 and 2099-07-12" in response.json()["detail"]
+        with SessionLocal() as db:
+            persisted_week = db.scalars(
+                select(TrainingWeek).where(
+                    TrainingWeek.week_start_date == date(2099, 7, 6)
+                )
+            ).first()
+            assert persisted_week is None
+
+
+def test_patch_endpoints_reject_null_required_fields_and_allow_nullable_clears() -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2099-08-04",
+                "title": "Easy 5",
+                "plannedDistance": 5,
+            },
+        )
+        assert workout_response.status_code == 201
+        workout = workout_response.json()
+        week = client.get("/api/weeks/2099-08-03").json()
+        goal_response = client.post(
+            f"/api/weeks/{week['id']}/goals",
+            json={
+                "label": "Practice fueling",
+                "targetValue": 3,
+            },
+        )
+        assert goal_response.status_code == 201
+        goal = goal_response.json()
+
+        assert client.patch(
+            f"/api/planned-workouts/{workout['id']}", json={"title": None}
+        ).status_code == 422
+        assert client.patch(
+            f"/api/weeks/{week['id']}", json={"purpose": None}
+        ).status_code == 422
+        assert client.patch(
+            f"/api/week-goals/{goal['id']}", json={"label": None}
+        ).status_code == 422
+
+        cleared_workout = client.patch(
+            f"/api/planned-workouts/{workout['id']}",
+            json={"plannedDistance": None},
+        )
+        assert cleared_workout.status_code == 200
+        assert cleared_workout.json()["plannedDistance"] is None
+        assert cleared_workout.json()["title"] == "Easy 5"
+
+        set_target = client.patch(
+            f"/api/weeks/{week['id']}", json={"targetMileage": 20}
+        )
+        assert set_target.status_code == 200
+        cleared_target = client.patch(
+            f"/api/weeks/{week['id']}", json={"targetMileage": None}
+        )
+        assert cleared_target.status_code == 200
+        assert cleared_target.json()["targetMileage"] is None
+
+        cleared_goal = client.patch(
+            f"/api/week-goals/{goal['id']}", json={"targetValue": None}
+        )
+        assert cleared_goal.status_code == 200
+        assert cleared_goal.json()["targetValue"] is None
+
+
+def test_past_week_read_only_guard_covers_all_planning_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2099-03-04",
+                "title": "Historical easy run",
+                "plannedDistance": 5,
+            },
+        )
+        assert workout_response.status_code == 201
+        workout = workout_response.json()
+        week = client.get("/api/weeks/2099-03-02").json()
+        goal_response = client.post(
+            f"/api/weeks/{week['id']}/goals",
+            json={"label": "Historical goal"},
+        )
+        assert goal_response.status_code == 201
+        goal = goal_response.json()
+        copy_target = client.get("/api/weeks/2099-03-09").json()
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2100, 1, 1),
+        )
+
+        future_workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2101-03-02",
+                "title": "Future run",
+                "plannedDistance": 4,
+            },
+        )
+        assert future_workout_response.status_code == 201
+        future_workout = future_workout_response.json()
+
+        blocked_responses = [
+            client.patch(f"/api/weeks/{week['id']}", json={"notes": "changed"}),
+            client.post(
+                f"/api/weeks/{week['id']}/goals",
+                json={"label": "Another goal"},
+            ),
+            client.post(f"/api/weeks/{week['id']}/goals/derive"),
+            client.patch(
+                f"/api/week-goals/{goal['id']}", json={"label": "Changed"}
+            ),
+            client.delete(f"/api/week-goals/{goal['id']}"),
+            client.post(
+                "/api/planned-workouts",
+                json={"plannedDate": "2099-03-05", "title": "Late addition"},
+            ),
+            client.patch(
+                f"/api/planned-workouts/{workout['id']}", json={"title": "Changed"}
+            ),
+            client.post(
+                f"/api/planned-workouts/{workout['id']}/move",
+                json={"plannedDate": "2101-03-03"},
+            ),
+            client.post(f"/api/planned-workouts/{workout['id']}/duplicate"),
+            client.delete(f"/api/planned-workouts/{workout['id']}"),
+            client.post(f"/api/weeks/{copy_target['id']}/copy-prior"),
+            client.put(
+                f"/api/weeks/{week['id']}/plan",
+                json={"workouts": [], "goals": []},
+            ),
+            client.post(
+                f"/api/planned-workouts/{future_workout['id']}/move",
+                json={"plannedDate": "2099-03-05"},
+            ),
+        ]
+        for response in blocked_responses:
+            assert_past_week_read_only(response)
+
+        unchanged_future_workout = client.get(
+            f"/api/planned-workouts/{future_workout['id']}"
+        ).json()
+        assert unchanged_future_workout["plannedDate"] == "2101-03-02"
+
+        review_response = client.post(f"/api/weeks/{week['id']}/review")
+        assert review_response.status_code == 200
+        assert review_response.json()["reviewedAt"]
+        recalculate_response = client.post(f"/api/weeks/{week['id']}/recalculate")
+        assert recalculate_response.status_code == 200
+
+
+def test_complete_past_week_review_preserves_historical_plan_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2099-01-05",
+                "title": "Completed long run",
+                "plannedDistance": 12,
+                "plannedElevation": 750,
+                "plannedTss": 98,
+                "status": "completed_as_planned",
+            },
+        )
+        assert workout_response.status_code == 201
+        workout = workout_response.json()
+
+        week = client.get("/api/weeks/2099-01-05").json()
+        goal_response = client.post(
+            f"/api/weeks/{week['id']}/goals",
+            json={"label": "Finish the long run", "status": "achieved"},
+        )
+        assert goal_response.status_code == 201
+        goal = goal_response.json()
+
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2100, 1, 1),
+        )
+
+        blocked_plan_save = client.put(
+            f"/api/weeks/{week['id']}/plan",
+            json={"purpose": "maintain", "workouts": [], "goals": []},
+        )
+        assert blocked_plan_save.status_code == 409
+
+        with SessionLocal() as db:
+            db.add(
+                PlannedWorkoutStep(
+                    planned_workout_id=workout["id"],
+                    step_order=1,
+                    label="Cool down",
+                    duration=600,
+                    notes="Easy jog",
+                )
+            )
+            db.commit()
+
+        review_response = client.post(f"/api/weeks/{week['id']}/review")
+
+    assert review_response.status_code == 200
+    reviewed_week = review_response.json()
+    assert reviewed_week["reviewedAt"]
+    assert reviewed_week["workouts"] == [
+        {
+            **workout,
+            "steps": [
+                {
+                    "id": reviewed_week["workouts"][0]["steps"][0]["id"],
+                    "stepOrder": 1,
+                    "label": "Cool down",
+                    "duration": 600,
+                    "distance": None,
+                    "targetPaceMin": None,
+                    "targetPaceMax": None,
+                    "targetHrMin": None,
+                    "targetHrMax": None,
+                    "targetRpe": None,
+                    "repetitionGroup": None,
+                    "notes": "Easy jog",
+                }
+            ],
+        }
+    ]
+    preserved_goal = next(item for item in reviewed_week["goals"] if item["id"] == goal["id"])
+    assert preserved_goal["status"] == "achieved"
+
+
+def test_rejected_future_review_does_not_materialize_a_virtual_week() -> None:
+    target_start = date(2099, 1, 5)
+    with TestClient(app) as client:
+        login(client)
+        target_week = client.get(f"/api/weeks/{target_start.isoformat()}").json()
+
+        response = client.post(f"/api/weeks/{target_week['id']}/review")
+
+        assert response.status_code == 409
+        with SessionLocal() as db:
+            persisted_target = db.scalars(
+                select(TrainingWeek).where(TrainingWeek.week_start_date == target_start)
+            ).first()
+            assert persisted_target is None
+
+
 def test_training_timeline_has_no_bounds_without_real_data() -> None:
     db = make_session()
     try:
@@ -201,7 +515,7 @@ def test_training_timeline_has_no_bounds_without_real_data() -> None:
 def test_copy_prior_week_copies_whole_plan_forward() -> None:
     db = make_session()
     try:
-        source_week = planning.get_or_create_week(db, date(2024, 3, 4))
+        source_week = planning.get_or_create_week(db, date(2099, 3, 2))
         source_week.notes = "Cutback week"
         source_week.target_long_run_distance = 8
         db.commit()
@@ -209,7 +523,7 @@ def test_copy_prior_week_copies_whole_plan_forward() -> None:
         workout = planning.create_workout(
             db,
             PlannedWorkoutCreate(
-                planned_date=date(2024, 3, 6),
+                planned_date=date(2099, 3, 4),
                 title="Threshold 5",
                 workout_type="threshold",
                 intensity_category="workout",
@@ -227,18 +541,18 @@ def test_copy_prior_week_copies_whole_plan_forward() -> None:
                 notes="Keep it relaxed",
             )
         )
-        target_week = planning.get_or_create_week(db, date(2024, 3, 11))
+        target_week = planning.get_or_create_week(db, date(2099, 3, 9))
         db.commit()
 
         copied_week = planning.copy_prior_week(db, target_week.id)
 
-        assert copied_week.week_start_date == date(2024, 3, 11)
+        assert copied_week.week_start_date == date(2099, 3, 9)
         assert copied_week.notes == "Cutback week"
         assert copied_week.target_long_run_distance == 8
         assert copied_week.planned_mileage == 5
         assert len(copied_week.workouts) == 1
         copied_workout = copied_week.workouts[0]
-        assert copied_workout.planned_date == date(2024, 3, 13)
+        assert copied_workout.planned_date == date(2099, 3, 11)
         assert copied_workout.title == "Threshold 5"
         assert copied_workout.status == "planned"
         assert copied_workout.steps[0].label == "Warm up"
@@ -247,13 +561,66 @@ def test_copy_prior_week_copies_whole_plan_forward() -> None:
         db.close()
 
 
+def test_copy_prior_week_returns_and_persists_valid_manual_goal_source() -> None:
+    with TestClient(app) as client:
+        login(client)
+        workout_response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2099-03-04",
+                "title": "Easy 5",
+                "plannedDistance": 5,
+            },
+        )
+        assert workout_response.status_code == 201
+        source_week = client.get("/api/weeks/2099-03-02").json()
+        goal_response = client.post(
+            f"/api/weeks/{source_week['id']}/goals",
+            json={"label": "Practice fueling", "source": "manual"},
+        )
+        assert goal_response.status_code == 201
+        target_week = client.get("/api/weeks/2099-03-09").json()
+
+        response = client.post(f"/api/weeks/{target_week['id']}/copy-prior")
+
+        assert response.status_code == 200
+        copied_week = response.json()
+        copied_goal = next(
+            goal for goal in copied_week["goals"] if goal["label"] == "Practice fueling"
+        )
+        assert copied_goal["source"] == "manual"
+        with SessionLocal() as db:
+            persisted_week = db.scalars(
+                select(TrainingWeek).where(
+                    TrainingWeek.week_start_date == date(2099, 3, 9)
+                )
+            ).one()
+            assert [goal.source for goal in persisted_week.goals] == ["manual"]
+
+
+def test_failed_copy_prior_does_not_materialize_a_virtual_target_week() -> None:
+    target_start = date(2099, 4, 6)
+    with TestClient(app) as client:
+        login(client)
+        target_week = client.get(f"/api/weeks/{target_start.isoformat()}").json()
+
+        response = client.post(f"/api/weeks/{target_week['id']}/copy-prior")
+
+        assert response.status_code == 400
+        with SessionLocal() as db:
+            persisted_target = db.scalars(
+                select(TrainingWeek).where(TrainingWeek.week_start_date == target_start)
+            ).first()
+            assert persisted_target is None
+
+
 def test_training_timeline_counts_planned_workouts() -> None:
     db = make_session()
     try:
         planning.create_workout(
             db,
             PlannedWorkoutCreate(
-                planned_date=date(2024, 2, 14),
+                planned_date=date(2099, 2, 11),
                 title="Easy 6",
                 planned_distance=6,
             ),
@@ -261,11 +628,11 @@ def test_training_timeline_counts_planned_workouts() -> None:
 
         timeline = planning.training_timeline(db)
 
-        assert timeline["oldest_week_start_date"] == date(2024, 2, 12)
-        assert timeline["newest_week_start_date"] == date(2024, 2, 12)
+        assert timeline["oldest_week_start_date"] == date(2099, 2, 9)
+        assert timeline["newest_week_start_date"] == date(2099, 2, 9)
         assert timeline["months"] == [
             {
-                "year": 2024,
+                "year": 2099,
                 "month": 2,
                 "has_plan": True,
                 "has_activities": False,
@@ -284,7 +651,7 @@ def test_planned_mileage_excludes_non_run_workout_distance() -> None:
         planning.create_workout(
             db,
             PlannedWorkoutCreate(
-                planned_date=date(2024, 2, 14),
+                planned_date=date(2099, 2, 11),
                 title="Easy 5",
                 sport="run",
                 planned_distance=5,
@@ -294,7 +661,7 @@ def test_planned_mileage_excludes_non_run_workout_distance() -> None:
         planning.create_workout(
             db,
             PlannedWorkoutCreate(
-                planned_date=date(2024, 2, 15),
+                planned_date=date(2099, 2, 12),
                 title="Bike 20",
                 sport="cross_training",
                 workout_type="other",
@@ -304,7 +671,7 @@ def test_planned_mileage_excludes_non_run_workout_distance() -> None:
             athlete.id,
         )
 
-        week = planning.get_or_create_week(db, date(2024, 2, 12), athlete.id)
+        week = planning.get_or_create_week(db, date(2099, 2, 9), athlete.id)
         serialized = planning.serialize_week(week, db)
         timeline = planning.training_timeline(db, athlete.id)
 
@@ -316,12 +683,13 @@ def test_planned_mileage_excludes_non_run_workout_distance() -> None:
         db.close()
 
 
-def test_training_timeline_counts_strava_activities() -> None:
+def test_run_mileage_excludes_non_run_strava_activities() -> None:
     db = make_session()
     try:
         athlete = planning.ensure_default_athlete(db)
-        db.add(
-            StravaActivity(
+        db.add_all(
+            [
+                StravaActivity(
                 strava_activity_id="activity-1",
                 athlete_account_id=athlete.id,
                 name="Morning Run",
@@ -330,11 +698,23 @@ def test_training_timeline_counts_strava_activities() -> None:
                 start_date_local=datetime(2024, 1, 3, 8, 0, 0),
                 distance=1609.344 * 4.2,
                 raw_payload_json={},
-            )
+                ),
+                StravaActivity(
+                    strava_activity_id="activity-2",
+                    athlete_account_id=athlete.id,
+                    name="Lunch Ride",
+                    sport_type="Ride",
+                    start_date=datetime(2024, 1, 4, 15, 0, 0),
+                    start_date_local=datetime(2024, 1, 4, 8, 0, 0),
+                    distance=1609.344 * 20,
+                    raw_payload_json={},
+                ),
+            ]
         )
         db.commit()
 
         timeline = planning.training_timeline(db)
+        week = planning.serialize_virtual_week(db, date(2024, 1, 1), athlete.id)
 
         assert timeline["oldest_week_start_date"] == date(2024, 1, 1)
         assert timeline["newest_week_start_date"] == date(2024, 1, 1)
@@ -348,6 +728,8 @@ def test_training_timeline_counts_strava_activities() -> None:
                 "actual_miles": 4.2,
             }
         ]
+        assert week["actual_mileage"] == 4.2
+        assert week["actual_time"] is None
     finally:
         db.close()
 
@@ -434,11 +816,13 @@ def test_week_goals_are_derived_from_plan_and_evaluated() -> None:
         db.close()
 
 
-def test_past_week_goal_evaluation_uses_actual_activities() -> None:
+def test_past_week_goal_evaluation_uses_actual_activities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = make_session()
     try:
         athlete = planning.ensure_default_athlete(db)
-        week = planning.get_or_create_week(db, date(2024, 4, 1))
+        week = planning.get_or_create_week(db, date(2099, 4, 6))
         planning.create_week_goal(
             db,
             week.id,
@@ -459,13 +843,18 @@ def test_past_week_goal_evaluation_uses_actual_activities() -> None:
                 athlete_account_id=athlete.id,
                 name="Morning Run",
                 sport_type="Run",
-                start_date=datetime(2024, 4, 2, 15, 0, 0),
-                start_date_local=datetime(2024, 4, 2, 8, 0, 0),
+                start_date=datetime(2099, 4, 7, 15, 0, 0),
+                start_date_local=datetime(2099, 4, 7, 8, 0, 0),
                 distance=1609.344 * 19.2,
                 raw_payload_json={},
             )
         )
         db.commit()
+        monkeypatch.setattr(
+            planning,
+            "today_for_timezone",
+            lambda timezone_name, now=None: date(2100, 1, 1),
+        )
         week = planning.get_week_by_id(db, week.id)
 
         serialized = planning.serialize_week(week, db)
@@ -697,7 +1086,7 @@ def test_workout_update_preserves_manual_mileage_goal() -> None:
 def test_copy_prior_week_copies_goals_forward() -> None:
     db = make_session()
     try:
-        source_week = planning.get_or_create_week(db, date(2024, 6, 3))
+        source_week = planning.get_or_create_week(db, date(2099, 6, 1))
         planning.create_week_goal(
             db,
             source_week.id,
@@ -713,19 +1102,19 @@ def test_copy_prior_week_copies_goals_forward() -> None:
         planning.create_workout(
             db,
             PlannedWorkoutCreate(
-                planned_date=date(2024, 6, 5),
+                planned_date=date(2099, 6, 3),
                 title="Easy 5",
                 planned_distance=5,
             ),
         )
-        target_week = planning.get_or_create_week(db, date(2024, 6, 10))
+        target_week = planning.get_or_create_week(db, date(2099, 6, 8))
 
         copied_week = planning.copy_prior_week(db, target_week.id)
 
         assert len(copied_week.goals) == 1
         assert copied_week.goals[0].label == "Practice fueling"
         assert copied_week.goals[0].status == "not_started"
-        assert copied_week.goals[0].source == "template"
+        assert copied_week.goals[0].source == "manual"
     finally:
         db.close()
 
@@ -812,5 +1201,34 @@ def test_save_week_plan_persists_custom_purpose_text() -> None:
 
         assert saved_week.purpose == "custom"
         assert saved_week.notes == "Altitude camp shakeout"
+    finally:
+        db.close()
+
+
+def test_save_week_plan_without_purpose_preserves_existing_intent() -> None:
+    db = make_session()
+    try:
+        week = planning.get_or_create_week(db, date(2099, 8, 10))
+        week.purpose = "recovery"
+        week.purpose_source = "manual"
+        db.add(week)
+        db.commit()
+
+        saved_week = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(
+                workouts=[
+                    PlanWeekWorkout(
+                        planned_date=date(2099, 8, 11),
+                        title="Easy 4",
+                        planned_distance=4,
+                    )
+                ]
+            ),
+        )
+
+        assert saved_week.purpose == "recovery"
+        assert saved_week.purpose_source == "manual"
     finally:
         db.close()

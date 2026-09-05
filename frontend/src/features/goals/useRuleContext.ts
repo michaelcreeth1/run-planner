@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { fetchJson } from "../../lib/api";
-import type { RecurringGoal, TrainingPlan, TrainingPlanSummary } from "../../types/domain";
+import { selectPrimaryPlan, useDefaultGoalsQuery, usePlanQuery, usePlansQuery } from "../../lib/queries";
+import { useProfileId } from "../../lib/profileContext";
+import type { RecurringGoal, TrainingPlan } from "../../types/domain";
 
 export type RuleContext = {
   plan: TrainingPlan | null;
@@ -12,71 +12,18 @@ export type RuleContextState = RuleContext & {
   error: string | null;
 };
 
-// Shared by the Goals page matrix and the Week page checks card; cached so
-// expanding week after week does not refetch the plan and default goals.
-let ruleContextCache: Promise<RuleContext> | null = null;
+export function useRuleContext(): RuleContextState {
+  const profileId = useProfileId();
+  const plansQuery = usePlansQuery(profileId);
+  const primaryPlan = selectPrimaryPlan(plansQuery.data ?? []);
+  const planQuery = usePlanQuery(profileId, primaryPlan?.id ?? null);
+  const defaultGoalsQuery = useDefaultGoalsQuery(profileId);
+  const error = plansQuery.error ?? planQuery.error ?? defaultGoalsQuery.error;
 
-export function loadRuleContext(): Promise<RuleContext> {
-  if (!ruleContextCache) {
-    ruleContextCache = fetchRuleContext().catch((error) => {
-      ruleContextCache = null;
-      throw error;
-    });
-  }
-  return ruleContextCache;
-}
-
-export function invalidateRuleContext() {
-  ruleContextCache = null;
-}
-
-async function fetchRuleContext(): Promise<RuleContext> {
-  const [plans, defaultGoals] = await Promise.all([
-    fetchJson<TrainingPlanSummary[]>("/api/plans"),
-    fetchJson<RecurringGoal[]>("/api/default-goals")
-  ]);
-  const soonestUpcoming = plans
-    .filter((plan) => plan.isUpcoming)
-    .sort((left, right) => left.startDate.localeCompare(right.startDate))[0];
-  const activePlanSummary =
-    plans.find((plan) => plan.isCurrent) ??
-    soonestUpcoming ??
-    plans.find((plan) => plan.status === "active") ??
-    null;
-  const plan = activePlanSummary ? await fetchJson<TrainingPlan>(`/api/plans/${activePlanSummary.id}`) : null;
-  return { plan, defaultGoals };
-}
-
-export function useRuleContext(refreshKey = 0): RuleContextState {
-  const [state, setState] = useState<RuleContextState>({
-    plan: null,
-    defaultGoals: [],
-    isLoading: true,
-    error: null
-  });
-
-  useEffect(() => {
-    let isMounted = true;
-    loadRuleContext()
-      .then((context) => {
-        if (isMounted) {
-          setState({ ...context, isLoading: false, error: null });
-        }
-      })
-      .catch((error) => {
-        if (isMounted) {
-          setState({
-            plan: null,
-            defaultGoals: [],
-            isLoading: false,
-            error: error instanceof Error ? error.message : "Could not load goal rules."
-          });
-        }
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [refreshKey]);
-
-  return state;
+  return {
+    plan: planQuery.data ?? null,
+    defaultGoals: defaultGoalsQuery.data ?? [],
+    isLoading: plansQuery.isLoading || defaultGoalsQuery.isLoading || (Boolean(primaryPlan) && planQuery.isLoading),
+    error: error instanceof Error ? error.message : error ? "Could not load goals." : null
+  };
 }

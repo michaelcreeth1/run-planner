@@ -1,4 +1,6 @@
 import type { WeekGoalForm, WorkoutForm } from "../types/domain";
+import { sessionTypeForWorkout } from "./options";
+import { parseDurationSeconds, parsePaceSeconds } from "./workoutMetrics";
 
 export function defaultForm(plannedDate: string): WorkoutForm {
   return {
@@ -9,6 +11,7 @@ export function defaultForm(plannedDate: string): WorkoutForm {
     intensityCategory: "easy",
     plannedDistance: "",
     plannedDuration: "",
+    plannedPace: "",
     purpose: "",
     instructions: "",
     notes: "",
@@ -17,14 +20,16 @@ export function defaultForm(plannedDate: string): WorkoutForm {
 }
 
 export function formToPayload(form: WorkoutForm) {
+  const sessionType = sessionTypeForWorkout(form);
   return {
     plannedDate: form.plannedDate,
-    title: form.title,
-    sport: form.sport,
-    workoutType: form.workoutType,
-    intensityCategory: form.intensityCategory,
+    title: form.title.trim() || sessionType.label,
+    sport: sessionType.sport,
+    workoutType: sessionType.workoutType,
+    intensityCategory: sessionType.intensityCategory,
     plannedDistance: form.plannedDistance === "" ? null : Number(form.plannedDistance),
-    plannedDuration: form.plannedDuration === "" ? null : Number(form.plannedDuration) * 60,
+    plannedDuration: form.plannedDuration === "" ? null : parseDurationSeconds(form.plannedDuration),
+    plannedPace: parsePaceSeconds(form.plannedPace),
     purpose: form.purpose,
     instructions: form.instructions,
     notes: form.notes,
@@ -35,6 +40,7 @@ export function formToPayload(form: WorkoutForm) {
 export function defaultGoalForm(weekId: string): WeekGoalForm {
   return {
     weekId,
+    metricKey: null,
     category: "custom",
     goalType: "achievement",
     label: "",
@@ -52,6 +58,7 @@ export function defaultGoalForm(weekId: string): WeekGoalForm {
 
 export function goalFormToPayload(form: WeekGoalForm) {
   return {
+    metricKey: form.metricKey ?? null,
     category: form.category,
     goalType: form.goalType,
     label: form.label,

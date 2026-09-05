@@ -2,43 +2,66 @@ services:
   api:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
       - .env
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 30s
     networks:
+      - app
       - shared-db
 
   worker:
     build:
       context: ./backend
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.main"]
     env_file:
       - .env
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     networks:
       - shared-db
 
   frontend:
     build:
       context: ./frontend
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
-      VITE_PROXY_API_TARGET: ${VITE_PROXY_API_TARGET:-http://api:8000}
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    restart: unless-stopped
     ports:
       - "5173:5173"
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:5173/ &&
+          wget -q -O /dev/null http://127.0.0.1:5173/readyz
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - app
 
 networks:
+  app:
   shared-db:
     name: shared-db
     external: true

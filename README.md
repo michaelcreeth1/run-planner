@@ -59,6 +59,39 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+## Verification
+
+After installing the backend development dependencies and frontend packages, run the full
+local verification suite from the repository root:
+
+```sh
+make check
+```
+
+This runs backend and frontend linting, isolated SQLite API tests, pure frontend tests,
+rendered React/jsdom tests with mocked HTTP, TypeScript checking, and the production frontend
+build. To run both suites with their enforced coverage floors and generate local HTML reports,
+use:
+
+```sh
+make coverage
+```
+
+Backend tests use a temporary SQLite database and clear application data before every test.
+To run the entire backend suite against the production database dialect, point
+`TEST_DATABASE_URL` at a disposable PostgreSQL database:
+
+```sh
+TEST_DATABASE_URL=postgresql+psycopg://runner:password@localhost:5432/run_planner_test \
+  make test-postgres
+```
+
+The PostgreSQL suite truncates all application tables between tests. It only accepts a database
+name ending in `_test`, and `make test-postgres` supplies the explicit destructive-test opt-in;
+never point it at a development or production database. Pull requests and pushes to `master` run
+the SQLite and PostgreSQL suites, frontend component tests, coverage gates, and production build
+in GitHub Actions.
+
 ## Docker Compose
 
 ```sh
@@ -66,7 +99,9 @@ docker compose up --build
 ```
 
 The API is available at `http://localhost:8000`; the frontend is available at `http://localhost:5173`.
-The compose stack expects `DATABASE_URL` to point at the shared Postgres instance.
+The compose stack expects `DATABASE_URL` to point at the shared Postgres instance. API,
+worker, and frontend containers use `unless-stopped` restart policies and must all pass their
+health checks for a normal deployment to succeed.
 
 ## Deployment
 
@@ -78,9 +113,34 @@ local `.env` as the deploy configuration, then runs the host-side Compose deploy
 scripts/deploy-remote.sh
 ```
 
+Before syncing anything, the script runs `make check` locally. A lint, test,
+type-check, or production-build failure stops the deployment and leaves the
+remote bundle untouched. `--dry-run` only previews the archive and does not run
+the verification gate. Local databases, coverage reports, development-only env
+files, and editor/agent configuration are excluded from the remote archive.
+
+The remote sync builds a complete staged bundle beside the current release and
+swaps it into place only after bundle validation. Existing targets must carry
+the Run Planner deployment sentinel (legacy bundles are recognized by their app
+structure), which prevents a mistyped path from replacing an unrelated tree.
+The prior release is retained until the remote deployment succeeds, including
+all health checks in normal mode; a failed deployment restores and redeploys
+that release automatically. This restores application source and containers; it
+does not reverse database migrations that may already have run, so migrations
+must remain backward-compatible with the prior release. Existing app-local
+`data`, `backend/data`, and `backups` directories are copied into the
+staged release without nesting them. The shared production Postgres project
+remains external to this bundle. The synced `.env` is installed with mode
+`0600`.
+
 Remote deploy refuses local-only database URLs such as `localhost` or `127.0.0.1`;
 the local `.env` must use the same Docker-network or remote-reachable database host
-that the deployed containers will use.
+that the deployed containers will use. It also requires `APP_ENV=production` by
+default. For an intentional remote development deployment, opt in explicitly:
+
+```sh
+scripts/deploy-remote.sh --allow-development
+```
 
 Preview the sync without changing the server:
 
@@ -95,6 +155,16 @@ scripts/deploy-remote.sh -- --skip-build
 scripts/deploy-remote.sh -- --no-wait
 ```
 
+If the exact checkout has already passed verification, the gate can be bypassed
+explicitly:
+
+```sh
+scripts/deploy-remote.sh --skip-checks
+```
+
+Use the bypass sparingly; it removes the release safety check but does not skip
+environment validation or the remote health check.
+
 The host-side script is still available for repeatable Docker-based deploys
 from the synced server bundle:
 
@@ -104,8 +174,10 @@ scripts/deploy.sh
 ```
 
 The script validates the env file, requires production-safe cookie settings when
-`APP_ENV=production`, runs `docker compose up -d --build`, and waits for the API
-health check before returning.
+`APP_ENV=production`, runs `docker compose up -d --build`, and waits for API,
+worker, and frontend health checks before returning. The worker health check
+requires both an independently refreshed process heartbeat and a ready database
+connection, so a valid long-running sync does not appear stalled.
 
 `APP_USERNAME` and `APP_PASSWORD` bootstrap the first admin account when the database has
 no users. After that, users and athlete profiles are managed in the app, and each request

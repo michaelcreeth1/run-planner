@@ -13,7 +13,7 @@ Options:
   --compose-file PATH
                     Path to the compose file. Default: docker-compose.yml
   --skip-build       Reuse existing images instead of rebuilding
-  --no-wait          Do not wait for the API container health check
+  --no-wait          Do not wait for required service health checks
   -h, --help         Show this help text
 EOF
 }
@@ -45,36 +45,62 @@ require_non_placeholder() {
   fi
 }
 
-wait_for_api() {
+wait_for_services() {
   local compose_cmd=("$@")
   local timeout_seconds=180
   local start_time
   local container_id
+  local pending
+  local service
   local status
 
   start_time="$(date +%s)"
-  echo "Waiting for API container health check..."
+  echo "Waiting for required service health checks..."
 
   while true; do
-    container_id="$("${compose_cmd[@]}" ps -q api)"
+    pending=0
+    for service in "${REQUIRED_SERVICES[@]}"; do
+      container_id="$("${compose_cmd[@]}" ps --all -q "$service")"
 
-    if [[ -n "$container_id" ]]; then
+      if [[ -z "$container_id" ]]; then
+        pending=1
+        continue
+      fi
+
       status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
-
       case "$status" in
-        healthy|running)
-          echo "API container is $status."
-          return 0
+        healthy)
           ;;
         unhealthy|exited|dead)
-          echo "API container entered status: $status" >&2
+          echo "Required service $service entered status: $status" >&2
           return 1
           ;;
+        running)
+          echo "Required service $service has no configured health check." >&2
+          return 1
+          ;;
+        *)
+          pending=1
+          ;;
       esac
+    done
+
+    if (( pending == 0 )); then
+      echo "Required services are healthy: ${REQUIRED_SERVICES[*]}"
+      return 0
     fi
 
     if (( "$(date +%s)" - start_time >= timeout_seconds )); then
-      echo "Timed out waiting for the API container to become healthy." >&2
+      echo "Timed out waiting for required services to become healthy." >&2
+      for service in "${REQUIRED_SERVICES[@]}"; do
+        container_id="$("${compose_cmd[@]}" ps --all -q "$service")"
+        if [[ -z "$container_id" ]]; then
+          echo "  $service: missing" >&2
+          continue
+        fi
+        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
+        echo "  $service: $status" >&2
+      done
       return 1
     fi
 
@@ -86,7 +112,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
-WAIT_FOR_API=1
+REQUIRED_SERVICES=(api worker frontend)
+WAIT_FOR_SERVICES=1
 BUILD_FLAG=1
 
 while [[ $# -gt 0 ]]; do
@@ -104,7 +131,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no-wait)
-      WAIT_FOR_API=0
+      WAIT_FOR_SERVICES=0
       shift
       ;;
     -h|--help)
@@ -179,8 +206,8 @@ fi
 
 "${compose_cmd[@]}" "${up_args[@]}"
 
-if (( WAIT_FOR_API == 1 )); then
-  if ! wait_for_api "${compose_cmd[@]}"; then
+if (( WAIT_FOR_SERVICES == 1 )); then
+  if ! wait_for_services "${compose_cmd[@]}"; then
     echo "Deployment failed. Recent logs:" >&2
     "${compose_cmd[@]}" logs --tail 80 api worker frontend >&2 || true
     exit 1

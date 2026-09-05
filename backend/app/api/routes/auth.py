@@ -20,6 +20,7 @@ from app.schemas.session import (
     LoginRequest,
     ProfileCreate,
     ProfileSwitchRequest,
+    ProfileUpdate,
     SessionStatus,
     SessionUser,
     UserCreate,
@@ -162,6 +163,38 @@ def create_profile(
         timezone=payload.timezone,
     )
     return profile_to_read(profile)
+
+
+@router.patch("/profiles/{profile_id}", response_model=AthleteProfile)
+def update_profile(
+    profile_id: str,
+    payload: ProfileUpdate,
+    context: Annotated[AuthContext, Depends(require_current_context)],
+    db: DbSession,
+) -> AthleteProfile:
+    profile = accounts.update_profile(
+        db,
+        context.user.id,
+        profile_id,
+        display_name=payload.display_name,
+        timezone=payload.timezone,
+    )
+    return profile_to_read(profile)
+
+
+@router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_profile(
+    profile_id: str,
+    context: Annotated[AuthContext, Depends(require_current_context)],
+    db: DbSession,
+) -> Response:
+    if profile_id == context.athlete.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Switch to another profile before deleting this one.",
+        )
+    accounts.delete_profile(db, context.user.id, profile_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/strava/status", response_model=StravaConnectionStatus)

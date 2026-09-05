@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.planning import AthleteAccount, PlannedWorkout, TrainingWeek, WeekGoal
 from app.models.strava import StravaActivity
-from app.services import planning
+from app.services import planning, weekly_metrics
 
 LOAD_WATCH_JUMP = 0.15
 LOAD_REVISE_JUMP = 0.25
@@ -43,6 +43,7 @@ def planning_analytics(
             workouts_by_week.get(week_start, []),
             activities_by_week.get(week_start, []),
             today,
+            weeks_by_start.get(week_start),
         )
         for week_start in week_starts
     ]
@@ -129,38 +130,22 @@ def summarize_week(
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     today: date,
+    metadata_week: TrainingWeek | None = None,
 ) -> dict:
     week_end = planning.week_end_for(week_start)
     week_state = (
         "future" if today < week_start else "past" if today > week_end else "current"
     )
-    run_workouts = [workout for workout in workouts if workout.sport == "run"]
-    planned_mileage = round(sum(workout.planned_distance or 0 for workout in run_workouts), 1)
-    run_activities = [activity for activity in activities if planning.is_run_activity(activity)]
-    actual_mileage = round(sum(activity.distance / 1609.344 for activity in run_activities), 1)
-    hard_dates = {
-        workout.planned_date for workout in workouts if planning.is_quality_workout(workout)
-    }
-    actual_hard_dates = {
-        activity.start_date_local.date()
-        for activity in activities
-        if planning.is_quality_activity(activity)
-    }
-    planned_training_dates = {
-        workout.planned_date for workout in workouts if workout.sport != "rest"
-    }
-    actual_training_dates = {
-        activity.start_date_local.date()
-        for activity in activities
-        if planning.is_training_activity(activity)
-    }
-    long_run = round(
-        max((workout.planned_distance or 0 for workout in run_workouts), default=0),
-        1,
-    )
-    long_run_percentage = (
-        round((long_run / planned_mileage) * 100, 1) if planned_mileage else 0
-    )
+    metrics = weekly_metrics.calculate_weekly_metrics(workouts, activities, today=today)
+    mileage = metrics["weekly_run_distance"]
+    hard_days = metrics["hard_training_day_count"]
+    rest_days = metrics["rest_day_count"]
+    long_run = metrics["longest_run_distance"]
+    long_run_share = metrics["long_run_share"]
+    hard_pairs = metrics["back_to_back_hard_pairs"]
+    planned_mileage = mileage.planned
+    actual_mileage = mileage.actual
+    long_run_percentage = long_run_share.planned
     comparison_mileage = (
         actual_mileage if week_state == "past" else planned_mileage or actual_mileage
     )
@@ -170,22 +155,23 @@ def summarize_week(
         "week_end_date": week_end,
         "week_state": week_state,
         "planned_mileage": planned_mileage,
+        "target_mileage": metadata_week.target_mileage if metadata_week else None,
         "actual_mileage": actual_mileage,
         "comparison_mileage": comparison_mileage,
-        "hard_days": len(hard_dates),
-        "actual_hard_days": len(actual_hard_dates),
-        "rest_days": 7 - len(planned_training_dates),
-        "actual_rest_days": 7 - len(actual_training_dates),
-        "has_back_to_back_hard_days": planning.has_back_to_back_dates(hard_dates),
-        "long_run_distance": long_run,
+        "hard_days": int(hard_days.planned),
+        "actual_hard_days": int(hard_days.actual),
+        "rest_days": int(rest_days.planned),
+        "actual_rest_days": int(rest_days.actual),
+        "has_back_to_back_hard_days": hard_pairs.planned > 0,
+        "long_run_distance": long_run.planned,
         "long_run_percentage": long_run_percentage,
         "load_risk": "clear",
         "long_run_risk": risk_for_long_run(long_run_percentage),
         "intensity_risk": risk_for_intensity(
-            len(hard_dates),
-            planning.has_back_to_back_dates(hard_dates),
+            int(hard_days.planned),
+            hard_pairs.planned > 0,
         ),
-        "recovery_risk": risk_for_recovery(7 - len(planned_training_dates)),
+        "recovery_risk": risk_for_recovery(int(rest_days.planned)),
         "has_plan": bool(workouts),
         "has_actuals": bool(activities),
     }

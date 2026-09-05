@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_current_profile
 from app.db.session import get_db
+from app.goal_metrics import goal_metric_catalog
 from app.models.planning import AthleteAccount
 from app.schemas.planning import (
     PlannedWorkoutCreate,
@@ -28,6 +29,12 @@ from app.services import planning
 router = APIRouter(tags=["planning"])
 DbSession = Annotated[Session, Depends(get_db)]
 CurrentProfile = Annotated[AthleteAccount, Depends(require_current_profile)]
+
+
+@router.get("/goal-metrics")
+def list_goal_metrics(profile: CurrentProfile) -> list[dict]:
+    del profile
+    return goal_metric_catalog()
 
 
 @router.get("/weeks", response_model=WeekListRead)
@@ -89,7 +96,12 @@ def update_week(
 
 @router.post("/weeks/{week_id}/recalculate", response_model=TrainingWeekRead)
 def recalculate_week(week_id: str, db: DbSession, profile: CurrentProfile) -> dict:
-    week = planning.get_or_create_week_for_mutation(db, week_id, profile.id)
+    week = planning.get_or_create_week_for_mutation(
+        db,
+        week_id,
+        profile.id,
+        allow_past=True,
+    )
     planning.recalculate_week(db, week)
     return planning.serialize_week(week, db)
 
@@ -108,6 +120,12 @@ def save_week_plan(
     profile: CurrentProfile,
 ) -> dict:
     week = planning.save_week_plan(db, week_id, payload, profile.id)
+    return planning.serialize_week(week, db)
+
+
+@router.post("/weeks/{week_id}/review", response_model=TrainingWeekRead)
+def complete_week_review(week_id: str, db: DbSession, profile: CurrentProfile) -> dict:
+    week = planning.complete_week_review(db, week_id, profile.id)
     return planning.serialize_week(week, db)
 
 

@@ -86,7 +86,50 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toMatchObject({ kind: "workout", title: "Tempo 3x10min", status: "upcoming" });
+    expect(result.today).toMatchObject({
+      kind: "workout",
+      label: "Today",
+      title: "Tempo 3x10min",
+      status: "upcoming",
+      workoutId: "workout-1"
+    });
+  });
+
+  it("does not complete today's primary workout from an unrelated activity", () => {
+    const week = makeWeek({
+      workouts: [makeWorkout({ plannedDate: "2026-07-09", title: "Easy run", plannedDistance: 5 })],
+      actualActivities: [makeActivity({ sportType: "Ride", distanceMiles: 12 })]
+    });
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: week,
+      currentWeekStart: "2026-07-13",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({ kind: "workout", title: "Easy run", status: "upcoming" });
+  });
+
+  it("matches an activity to the closest planned run before marking the primary done", () => {
+    const week = makeWeek({
+      workouts: [
+        makeWorkout({ id: "short-run", title: "Easy 4", plannedDistance: 4 }),
+        makeWorkout({ id: "long-run", title: "Long 10", plannedDistance: 10 })
+      ],
+      actualActivities: [makeActivity({ distanceMiles: 10 })]
+    });
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: week,
+      currentWeekStart: "2026-07-13",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({ kind: "workout", title: "Easy 4", status: "upcoming" });
   });
 
   it("treats a rest-only day as a rest session", () => {
@@ -102,7 +145,28 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toEqual({ kind: "rest" });
+    expect(result.today).toEqual({ kind: "rest", label: "Today" });
+  });
+
+  it("surfaces the next workout when today has no session", () => {
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: makeWeek({
+        workouts: [makeWorkout({ id: "next-workout", plannedDate: "2026-07-11", title: "Long run" })]
+      }),
+      currentWeekStart: "2026-07-06",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({
+      kind: "workout",
+      label: "Next up",
+      title: "Long run",
+      workoutId: "next-workout"
+    });
+    expect(result.today?.kind === "workout" ? result.today.meta : "").toContain("Sat");
   });
 
   it("marks today open when nothing is planned or logged", () => {
@@ -115,7 +179,7 @@ describe("buildWeekContextStrip", () => {
     if (result?.kind !== "active") {
       throw new Error("expected active strip");
     }
-    expect(result.today).toEqual({ kind: "open" });
+    expect(result.today).toEqual({ kind: "open", label: "Today" });
   });
 });
 
@@ -202,6 +266,7 @@ function makeWeek(overrides: Partial<TrainingWeek> = {}): TrainingWeek {
     targetLongRunSource: "manual",
     isDownWeek: false,
     notes: "",
+    reviewedAt: null,
     workouts: [],
     actualActivities: [],
     goals: [],
@@ -227,12 +292,31 @@ function makeWorkout(overrides: Partial<TrainingWeek["workouts"][number]> = {}):
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "",
     instructions: "",
     notes: "",
     status: "planned",
+    ...overrides
+  };
+}
+
+function makeActivity(
+  overrides: Partial<TrainingWeek["actualActivities"][number]> = {}
+): TrainingWeek["actualActivities"][number] {
+  return {
+    id: "activity-1",
+    stravaActivityId: "strava-1",
+    name: "Morning Run",
+    sportType: "Run",
+    startDateLocal: "2026-07-09T06:00:00",
+    activityDate: "2026-07-09",
+    distance: 8046.72,
+    distanceMiles: 5,
+    movingTime: 2400,
+    averageHeartrate: null,
     ...overrides
   };
 }

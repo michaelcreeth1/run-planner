@@ -9,6 +9,7 @@ export function AnalyticsView({
   futureWeeks,
   isLoading,
   lookbackWeeks,
+  onSelectWeek,
   setFutureWeeks,
   setLookbackWeeks
 }: {
@@ -16,6 +17,7 @@ export function AnalyticsView({
   futureWeeks: number;
   isLoading: boolean;
   lookbackWeeks: number;
+  onSelectWeek: (weekStartDate: string) => void;
   setFutureWeeks: Dispatch<SetStateAction<number>>;
   setLookbackWeeks: Dispatch<SetStateAction<number>>;
 }) {
@@ -75,6 +77,7 @@ export function AnalyticsView({
         <MileageLineChart
           anchorWeekStartDate={analytics.anchorWeekStartDate}
           baselineMileage={analytics.loadBand.baselineMileage}
+          onSelectWeek={onSelectWeek}
           weeks={visibleWeeks}
         />
       </section>
@@ -118,10 +121,12 @@ function SegmentedNumberControl({
 function MileageLineChart({
   anchorWeekStartDate,
   baselineMileage,
+  onSelectWeek,
   weeks
 }: {
   anchorWeekStartDate: string;
   baselineMileage: number | null;
+  onSelectWeek: (weekStartDate: string) => void;
   weeks: AnalyticsWeekSummary[];
 }) {
   const width = 960;
@@ -132,41 +137,76 @@ function MileageLineChart({
   const maxMileage = Math.max(
     10,
     baselineMileage ?? 0,
-    ...weeks.map((week) => Math.max(week.actualMileage, week.plannedMileage))
+    ...weeks.map((week) => Math.max(week.actualMileage, week.plannedMileage, week.targetMileage ?? 0))
   );
   const yMax = Math.ceil(maxMileage / 10) * 10;
   const actualPoints = weeks
     .filter((week) => week.weekStartDate <= anchorWeekStartDate && week.actualMileage > 0)
-    .map((week) => chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding));
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.actualMileage
+    }));
   const plannedPoints = weeks
     .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0)
-    .map((week) => chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding));
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.plannedMileage
+    }));
+  const targetPoints = weeks
+    .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.targetMileage !== null)
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.targetMileage ?? 0, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.targetMileage ?? 0
+    }));
+  const interactivePoints = [
+    ...actualPoints.map((point) => ({ ...point, kind: "actual" as const })),
+    ...plannedPoints.map((point) => ({ ...point, kind: "planned" as const })),
+    ...targetPoints.map((point) => ({ ...point, kind: "target" as const }))
+  ];
   const anchorIndex = Math.max(0, weeks.findIndex((week) => week.weekStartDate === anchorWeekStartDate));
   const anchorX = padding.left + (weeks.length <= 1 ? 0 : (anchorIndex / (weeks.length - 1)) * chartWidth);
   const yTicks = [0, yMax / 2, yMax];
   const xTicks = weeks.filter((_, index) => index === 0 || index === weeks.length - 1 || weeks[index].weekStartDate === anchorWeekStartDate);
   const latestActual = [...weeks].reverse().find((week) => week.actualMileage > 0);
   const nextPlanned = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0);
+  const nextTarget = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && week.targetMileage !== null);
 
   return (
     <div className="mileage-line-chart">
       <div className="mileage-line-chart-summary">
-        <div>
+        <button
+          type="button"
+          disabled={!latestActual}
+          onClick={() => latestActual && onSelectWeek(latestActual.weekStartDate)}
+        >
           <span>Latest actual</span>
           <strong>{latestActual ? `${formatNumber(latestActual.actualMileage)} mi` : "-"}</strong>
-        </div>
-        <div>
-          <span>Next planned</span>
+        </button>
+        <button
+          type="button"
+          disabled={!nextPlanned}
+          onClick={() => nextPlanned && onSelectWeek(nextPlanned.weekStartDate)}
+        >
+          <span>{nextPlanned?.weekStartDate === anchorWeekStartDate ? "This week planned" : "Next planned"}</span>
           <strong>{nextPlanned ? `${formatNumber(nextPlanned.plannedMileage)} mi` : "-"}</strong>
-        </div>
+        </button>
+        <button
+          type="button"
+          disabled={!nextTarget}
+          onClick={() => nextTarget && onSelectWeek(nextTarget.weekStartDate)}
+        >
+          <span>{nextTarget?.weekStartDate === anchorWeekStartDate ? "This week target" : "Next target"}</span>
+          <strong>{nextTarget ? `${formatNumber(nextTarget.targetMileage ?? 0)} mi` : "-"}</strong>
+        </button>
         <div>
           <span>4-week baseline</span>
           <strong>{baselineMileage !== null ? `${formatNumber(baselineMileage)} mi` : "-"}</strong>
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Line chart of weekly actual and planned mileage">
-        <rect className="mileage-chart-plot" x={padding.left} y={padding.top} width={chartWidth} height={chartHeight} rx="8" />
+      <div className="mileage-chart-graphic">
+        <svg aria-hidden="true" focusable="false" viewBox={`0 0 ${width} ${height}`}>
+          <rect className="mileage-chart-plot" x={padding.left} y={padding.top} width={chartWidth} height={chartHeight} rx="8" />
         {yTicks.map((tick) => {
           const y = mileageY(tick, yMax, chartHeight, padding);
           return (
@@ -188,8 +228,16 @@ function MileageLineChart({
         <line className="mileage-chart-anchor" x1={anchorX} x2={anchorX} y1={padding.top} y2={height - padding.bottom} />
         <polyline className="mileage-line mileage-line--actual" points={pointsAttribute(actualPoints)} />
         <polyline className="mileage-line mileage-line--planned" points={pointsAttribute(plannedPoints)} />
-        {actualPoints.map((point) => <circle className="mileage-point mileage-point--actual" cx={point.x} cy={point.y} key={`actual-${point.weekStartDate}`} r="4" />)}
-        {plannedPoints.map((point) => <circle className="mileage-point mileage-point--planned" cx={point.x} cy={point.y} key={`planned-${point.weekStartDate}`} r="4" />)}
+        <polyline className="mileage-line mileage-line--target" points={pointsAttribute(targetPoints)} />
+        {actualPoints.map((point) => (
+          <ChartPoint key={`actual-${point.weekStartDate}`} kind="actual" point={point} />
+        ))}
+        {plannedPoints.map((point) => (
+          <ChartPoint key={`planned-${point.weekStartDate}`} kind="planned" point={point} />
+        ))}
+        {targetPoints.map((point) => (
+          <ChartPoint key={`target-${point.weekStartDate}`} kind="target" point={point} />
+        ))}
         {xTicks.map((week) => {
           const point = chartPoint(week.weekStartDate, 0, weeks, yMax, chartWidth, chartHeight, padding);
           return (
@@ -198,14 +246,40 @@ function MileageLineChart({
             </text>
           );
         })}
-      </svg>
+        </svg>
+        {interactivePoints.map((point) => (
+          <button
+            aria-label={`Open ${point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
+            className={`mileage-point-control mileage-point-control--${point.kind}`}
+            key={`${point.kind}-${point.weekStartDate}`}
+            onClick={() => onSelectWeek(point.weekStartDate)}
+            style={{ left: `${(point.x / width) * 100}%`, top: `${(point.y / height) * 100}%` }}
+            type="button"
+          />
+        ))}
+      </div>
 
       <div className="mileage-chart-legend" aria-label="Mileage chart legend">
         <span><i className="actual" /> Actual</span>
         <span><i className="planned" /> Planned</span>
+        <span><i className="target" /> Plan target</span>
         <span><i className="baseline" /> Baseline</span>
       </div>
     </div>
+  );
+}
+
+function ChartPoint({
+  kind,
+  point
+}: {
+  kind: "actual" | "planned" | "target";
+  point: { weekStartDate: string; x: number; y: number };
+}) {
+  return (
+    <g>
+      <circle className={`mileage-point mileage-point--${kind}`} cx={point.x} cy={point.y} r="4" />
+    </g>
   );
 }
 

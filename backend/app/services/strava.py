@@ -6,7 +6,8 @@ from urllib.parse import urlencode
 import httpx
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -22,6 +23,7 @@ REQUIRED_SCOPES = ["read", "activity:read", "activity:read_all"]
 MAX_BACKFILL_DAYS = 365
 MANUAL_SYNC_COOLDOWN_SECONDS = 5 * 60
 RUNNING_SYNC_STALE_SECONDS = 60 * 60
+WEBHOOK_PROCESSING_LEASE_SECONDS = 15 * 60
 MANUAL_SYNC_JOB_TYPES = {"initial_backfill", "incremental_poll"}
 
 
@@ -86,6 +88,19 @@ def exchange_code(
         )
 
     payload = response.json()
+    strava_athlete_id = payload_athlete_id(payload)
+    if strava_athlete_id:
+        existing_owner = db.scalars(
+            select(AthleteAccount).where(
+                AthleteAccount.strava_athlete_id == strava_athlete_id,
+                AthleteAccount.id != athlete.id,
+            )
+        ).first()
+        if existing_owner:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This Strava account is already connected to another profile.",
+            )
     update_athlete_from_payload(athlete, payload)
     existing = get_token(db, athlete.id)
     if existing:
@@ -99,9 +114,21 @@ def exchange_code(
         scope=payload.get("scope") or scope,
     )
     db.add(token)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Strava account is already connected to another profile.",
+        ) from exc
     db.refresh(token)
     return token
+
+
+def payload_athlete_id(payload: dict[str, Any]) -> str | None:
+    athlete_id = (payload.get("athlete") or {}).get("id")
+    return str(athlete_id) if athlete_id is not None else None
 
 
 def update_athlete_from_payload(athlete: AthleteAccount, payload: dict[str, Any]) -> None:
@@ -149,11 +176,16 @@ def refresh_token(db: Session, token: StravaOAuthToken) -> StravaOAuthToken:
             },
         )
     if response.status_code >= 400:
-        token.revoked_at = datetime.now(timezone.utc)
-        db.commit()
+        if permanent_refresh_failure(response):
+            token.revoked_at = datetime.now(timezone.utc)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Strava authorization expired. Reconnect Strava.",
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Strava token refresh failed.",
+            detail="Strava token refresh is temporarily unavailable.",
         )
 
     payload = response.json()
@@ -164,6 +196,15 @@ def refresh_token(db: Session, token: StravaOAuthToken) -> StravaOAuthToken:
     db.commit()
     db.refresh(token)
     return token
+
+
+def permanent_refresh_failure(response: httpx.Response) -> bool:
+    if response.status_code not in {400, 401}:
+        return False
+    response_text = response.text.lower()
+    return "invalid_grant" in response_text or (
+        "refresh" in response_text and "invalid" in response_text
+    )
 
 
 def revoke_unreadable_token(db: Session, token: StravaOAuthToken) -> None:
@@ -348,7 +389,7 @@ def ensure_utc(value: datetime) -> datetime:
 def valid_webhook_subscription(subscription_id: int | str | None) -> bool:
     expected = settings.strava_webhook_subscription_id.strip()
     if not expected:
-        return True
+        return False
     return str(subscription_id or "") == expected
 
 
@@ -384,11 +425,23 @@ def enqueue_webhook_event(db: Session, payload: dict[str, Any]) -> StravaWebhook
 
 
 def process_pending_webhook_events(db: Session, limit: int = 25) -> list[StravaWebhookEvent]:
+    stale_before = datetime.now(timezone.utc) - timedelta(
+        seconds=WEBHOOK_PROCESSING_LEASE_SECONDS
+    )
     events = list(
         db.scalars(
             select(StravaWebhookEvent)
             .where(
-                StravaWebhookEvent.status.in_(["queued", "failed"]),
+                or_(
+                    StravaWebhookEvent.status.in_(["queued", "failed"]),
+                    and_(
+                        StravaWebhookEvent.status == "processing",
+                        or_(
+                            StravaWebhookEvent.processed_at.is_(None),
+                            StravaWebhookEvent.processed_at <= stale_before,
+                        ),
+                    ),
+                ),
                 StravaWebhookEvent.attempts < settings.strava_webhook_max_attempts,
             )
             .order_by(StravaWebhookEvent.received_at.asc())
@@ -407,10 +460,35 @@ def process_webhook_event(db: Session, event_id: str) -> StravaWebhookEvent | No
     if event.status in {"succeeded", "ignored"}:
         return event
 
-    event.status = "processing"
-    event.attempts += 1
-    event.error_message = None
+    claim_time = datetime.now(timezone.utc)
+    stale_before = claim_time - timedelta(seconds=WEBHOOK_PROCESSING_LEASE_SECONDS)
+    claimed = db.execute(
+        update(StravaWebhookEvent)
+        .where(
+            StravaWebhookEvent.id == event_id,
+            StravaWebhookEvent.attempts < settings.strava_webhook_max_attempts,
+            or_(
+                StravaWebhookEvent.status.in_(["queued", "failed"]),
+                and_(
+                    StravaWebhookEvent.status == "processing",
+                    or_(
+                        StravaWebhookEvent.processed_at.is_(None),
+                        StravaWebhookEvent.processed_at <= stale_before,
+                    ),
+                ),
+            ),
+        )
+        .values(
+            status="processing",
+            attempts=StravaWebhookEvent.attempts + 1,
+            error_message=None,
+            processed_at=claim_time,
+        )
+    )
     db.commit()
+    if claimed.rowcount != 1:
+        db.refresh(event)
+        return event
     db.refresh(event)
 
     job: SyncJob | None = None

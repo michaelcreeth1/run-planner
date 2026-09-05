@@ -421,6 +421,7 @@ workout_type
 intensity_category
 planned_distance
 planned_duration
+planned_pace (seconds per mile)
 planned_elevation
 planned_tss nullable
 purpose

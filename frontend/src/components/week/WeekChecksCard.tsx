@@ -5,8 +5,9 @@ import { buildPlanRules, evaluateRulesForWeek, ruleStatusLabels } from "../../fe
 import { useRuleContext } from "../../features/goals/useRuleContext";
 import { todayDateString } from "../../lib/dates";
 import type { TrainingWeek, Workout } from "../../types/domain";
+import { selectVisibleWeekChecks } from "./weekChecks";
 
-const attentionStatuses = new Set<RuleStatus>(["warning", "fail", "pending"]);
+const attentionStatuses = new Set<RuleStatus>(["warning", "fail"]);
 
 export function WeekChecksCard({
   week,
@@ -34,7 +35,8 @@ export function WeekChecksCard({
   }, [defaultGoals, error, isLoading, plan, week]);
 
   const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
-  const attentionEvaluations = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status));
+  const pendingCount = evaluations.filter((evaluation) => evaluation.status === "pending").length;
+  const visibleEvaluations = selectVisibleWeekChecks(evaluations);
   const [isOpen, setIsOpen] = useState(issueCount > 0);
 
   // Start each selected week in its useful default state: open for exceptions, closed for a clean slate.
@@ -47,8 +49,13 @@ export function WeekChecksCard({
     return null;
   }
 
-  const summary =
-    issueCount === 0 ? "All checks pass" : issueCount === 1 ? "1 check needs attention" : `${issueCount} checks need attention`;
+  const summary = issueCount
+    ? issueCount === 1
+      ? "1 check needs attention"
+      : `${issueCount} checks need attention`
+    : pendingCount
+      ? `${pendingCount} check${pendingCount === 1 ? "" : "s"} pending`
+      : "All checks pass";
 
   return (
     <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
@@ -62,53 +69,62 @@ export function WeekChecksCard({
           <ChevronDown aria-hidden="true" size={16} />
         </span>
       </summary>
-      {attentionEvaluations.length ? (
-        <ul className="week-checks-list">
-          {attentionEvaluations.map((evaluation) => (
-            <WeekCheckRow
-              key={evaluation.ruleId}
-              evaluation={evaluation}
-              onOpen={() => {
-                const workout = firstRelatedWorkout(evaluation, week);
-                if (workout) {
-                  onEditWorkout(workout);
-                } else {
-                  onOpenPlanWeek(week);
-                }
-              }}
-            />
-          ))}
-        </ul>
-      ) : null}
+      <ul className="week-checks-list">
+        {visibleEvaluations.map((evaluation) => (
+          <WeekCheckRow
+            key={evaluation.ruleId}
+            evaluation={evaluation}
+            onOpen={() => {
+              const workout = firstRelatedWorkout(evaluation, week);
+              if (workout) {
+                onEditWorkout(workout);
+              } else {
+                onOpenPlanWeek(week);
+              }
+            }}
+          />
+        ))}
+      </ul>
     </details>
   );
 }
 
-function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {
+export function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluation; onOpen: () => void }) {
   const needsAttention = attentionStatuses.has(evaluation.status);
   const detail = evaluation.metrics ? `${evaluation.reason} ${evaluation.metrics}` : evaluation.reason;
-
-  return (
-    <li className={`week-check-row week-check-row--${evaluation.status}`}>
+  const contents = (
+    <>
       <span className="week-check-dot" aria-hidden="true" />
-      <div className="week-check-copy">
+      <span className="week-check-copy">
         <strong>{evaluation.ruleLabel}</strong>
         <span title={detail}>{evaluation.reason}</span>
-      </div>
+      </span>
       <span className={`week-check-status week-check-status--${evaluation.status}`}>
         {ruleStatusLabels[evaluation.status]}
       </span>
       {needsAttention ? (
+        <span className="week-check-action" aria-hidden="true">
+          Fix <ChevronRight size={15} />
+        </span>
+      ) : null}
+    </>
+  );
+
+  return (
+    <li className={`week-check-row week-check-row--${evaluation.status}`}>
+      {needsAttention ? (
         <button
           type="button"
-          className="week-check-action"
+          className="week-check-row-action"
           title={`Fix "${evaluation.ruleLabel}"`}
-          aria-label={`Open the plan to fix "${evaluation.ruleLabel}"`}
+          aria-label={`Fix "${evaluation.ruleLabel}" in this week`}
           onClick={onOpen}
         >
-          <ChevronRight size={15} />
+          {contents}
         </button>
-      ) : null}
+      ) : (
+        <span className="week-check-row-content">{contents}</span>
+      )}
     </li>
   );
 }

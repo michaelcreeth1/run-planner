@@ -15,7 +15,7 @@ GET  /api/webhooks/strava
 POST /api/webhooks/strava
 ```
 
-Sync mode is webhook-first with polling as reconciliation. The worker imports on startup and then polls every 30 minutes by default with a 14-day lookback so delayed uploads and activity edits are picked up. In deployments with Strava webhooks enabled, set the polling interval higher, such as 6 to 24 hours, and rely on pushed activity events for normal freshness.
+The worker imports on startup and then polls every 30 minutes by default with a 14-day lookback so delayed uploads and activity edits are picked up. Publicly reachable deployments can use webhooks for normal freshness and stretch the polling interval to 6 to 24 hours for reconciliation. Private-only deployments, including `run.creeth.net`, cannot receive Strava webhooks and must retain the 30-minute poll.
 
 Polling is controlled by:
 
@@ -38,10 +38,12 @@ Strava validates the callback with `hub.challenge`; the app returns that value o
 
 For multi-user routing, Strava sends one app-level subscription event that includes `owner_id`. The handler maps `owner_id` to `athlete_accounts.strava_athlete_id`, then uses that profile's stored OAuth token to fetch the current activity.
 
-Register the webhook subscription with Strava using the public callback URL:
+Only register a webhook subscription when the callback has public DNS and is
+reachable from Strava. A suitable public deployment would use a callback such
+as:
 
 ```text
-https://run.creeth.net/api/webhooks/strava
+https://run.example.com/api/webhooks/strava
 ```
 
 Initial scopes:

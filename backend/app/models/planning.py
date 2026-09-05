@@ -1,7 +1,17 @@
 from datetime import date, datetime
 from uuid import uuid4
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -75,6 +85,7 @@ class TrainingWeek(Base):
     target_long_run_source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
     is_down_week: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -106,6 +117,7 @@ class WeekGoal(Base):
         nullable=False,
     )
     week_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    metric_key: Mapped[str | None] = mapped_column(String)
     category: Mapped[str] = mapped_column(String, nullable=False)
     goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")
     label: Mapped[str] = mapped_column(String, nullable=False)
@@ -130,6 +142,34 @@ class WeekGoal(Base):
     training_week: Mapped[TrainingWeek] = relationship(back_populates="goals")
 
 
+class WeeklyMetricSnapshot(Base):
+    __tablename__ = "weekly_metric_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "training_week_id",
+            "metric_key",
+            "basis",
+            name="uq_weekly_metric_snapshot",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    training_week_id: Mapped[str] = mapped_column(
+        ForeignKey("training_weeks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    week_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    metric_key: Mapped[str] = mapped_column(String, nullable=False)
+    basis: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    calculator_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class PlannedWorkout(Base):
     __tablename__ = "planned_workouts"
 
@@ -146,6 +186,7 @@ class PlannedWorkout(Base):
     intensity_category: Mapped[str] = mapped_column(String, nullable=False, default="easy")
     planned_distance: Mapped[float | None] = mapped_column(Float)
     planned_duration: Mapped[int | None] = mapped_column(Integer)
+    planned_pace: Mapped[int | None] = mapped_column(Integer)
     planned_elevation: Mapped[float | None] = mapped_column(Float)
     planned_tss: Mapped[float | None] = mapped_column(Float)
     purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -333,6 +374,7 @@ class RecurringGoal(Base):
     training_plan_id: Mapped[str | None] = mapped_column(
         ForeignKey("training_plans.id", ondelete="CASCADE")
     )
+    metric_key: Mapped[str | None] = mapped_column(String)
     category: Mapped[str] = mapped_column(String, nullable=False)
     goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")
     label: Mapped[str] = mapped_column(String, nullable=False)

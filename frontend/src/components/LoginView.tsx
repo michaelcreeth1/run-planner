@@ -2,6 +2,7 @@ import { RefreshCw, ShieldAlert, UserCircle, WifiOff } from "lucide-react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import type { LoginForm } from "../types/domain";
 import { StatusBanner } from "./shared/StatusBanner";
+import type { ApiErrorPresentation } from "../lib/api";
 
 export function LoginView({
   apiError,
@@ -10,14 +11,16 @@ export function LoginView({
   isLoggingIn,
   loginError,
   setForm,
+  onRetrySession,
   onSubmit
 }: {
-  apiError: string | null;
+  apiError: ApiErrorPresentation | null;
   form: LoginForm;
-  isConfigured: boolean;
+  isConfigured: boolean | null;
   isLoggingIn: boolean;
   loginError: string | null;
   setForm: Dispatch<SetStateAction<LoginForm>>;
+  onRetrySession: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
@@ -27,7 +30,7 @@ export function LoginView({
           <p className="eyebrow">Running Planner</p>
           <h1>Sign in</h1>
         </div>
-        {!isConfigured ? (
+        {isConfigured === false ? (
           <StatusBanner
             tone="warning"
             icon={<ShieldAlert size={18} />}
@@ -36,7 +39,14 @@ export function LoginView({
           />
         ) : null}
         {apiError ? (
-          <StatusBanner tone="warning" icon={<WifiOff size={18} />} title="Backend unreachable" detail={apiError} />
+          <StatusBanner
+            tone="warning"
+            icon={<WifiOff size={18} />}
+            title={apiError.title}
+            detail={apiError.detail}
+            actionLabel="Retry"
+            onAction={onRetrySession}
+          />
         ) : null}
         {loginError ? (
           <StatusBanner tone="danger" icon={<ShieldAlert size={18} />} title="Login failed" detail={loginError} />
@@ -58,7 +68,7 @@ export function LoginView({
             onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
           />
         </label>
-        <button className="primary" type="submit" disabled={!isConfigured || isLoggingIn}>
+        <button className="primary" type="submit" disabled={isConfigured === false || isLoggingIn}>
           {isLoggingIn ? <RefreshCw size={17} /> : <UserCircle size={17} />}
           <span>{isLoggingIn ? "Signing in" : "Sign in"}</span>
         </button>

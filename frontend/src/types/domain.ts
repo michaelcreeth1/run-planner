@@ -32,6 +32,7 @@ export type Workout = {
   intensityCategory: "rest" | "easy" | "moderate" | "workout" | "race" | "strength";
   plannedDistance: number | null;
   plannedDuration: number | null;
+  plannedPace: number | null;
   plannedElevation: number | null;
   plannedTss: number | null;
   purpose: string;
@@ -50,6 +51,15 @@ export type Workout = {
 
 export type WeekGoalCategory = "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";
 export type WeekGoalType = "achievement" | "guardrail";
+export type WeekGoalMetric =
+  | "weekly_run_distance"
+  | "training_session_count"
+  | "longest_run_distance"
+  | "hard_training_day_count"
+  | "rest_day_count"
+  | "strength_session_count"
+  | "long_run_share"
+  | "back_to_back_hard_pairs";
 export type WeekGoalUnit = "mi" | "sessions" | "days" | "percent" | "boolean" | "custom";
 export type WeekGoalEvaluationMode = "at_least" | "at_most" | "range" | "exact-ish" | "boolean" | "manual";
 export type WeekGoalPriority = "primary" | "secondary" | "guardrail";
@@ -76,6 +86,7 @@ export type WeekGoal = {
   trainingWeekId: string;
   athleteAccountId: string;
   weekStartDate: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -97,6 +108,14 @@ export type WeekGoal = {
 export type WeekGoalEvaluation = {
   goalId: string;
   weekStartDate: string;
+  metricKey?: WeekGoalMetric | null;
+  basis?: "planned" | "actual" | "projected" | null;
+  measuredValue?: number | null;
+  unit?: WeekGoalUnit | null;
+  evaluationMode?: WeekGoalEvaluationMode | null;
+  thresholdValue?: number | null;
+  thresholdMin?: number | null;
+  thresholdMax?: number | null;
   status: WeekGoalStatus;
   guardrailStatus: "ok" | "warning" | "danger" | "waived" | "not_applicable" | null;
   actualValue: number | null;
@@ -127,6 +146,7 @@ export type TrainingWeek = {
   targetLongRunSource: FieldSource;
   isDownWeek: boolean;
   notes: string;
+  reviewedAt: string | null;
   workouts: Workout[];
   actualActivities: ActualActivity[];
   goals: WeekGoal[];
@@ -199,6 +219,7 @@ export type AnalyticsWeekSummary = {
   weekEndDate: string;
   weekState: WeekState;
   plannedMileage: number;
+  targetMileage: number | null;
   actualMileage: number;
   comparisonMileage: number;
   hardDays: number;
@@ -300,6 +321,7 @@ export type WorkoutForm = {
   intensityCategory: Workout["intensityCategory"];
   plannedDistance: string;
   plannedDuration: string;
+  plannedPace: string;
   purpose: string;
   instructions: string;
   notes: string;
@@ -309,6 +331,7 @@ export type WorkoutForm = {
 export type WeekGoalForm = {
   id?: string;
   weekId: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -357,6 +380,7 @@ export type PlanWeekDraft = {
   weekState: WeekState;
   startingPoint: PlanStartingPoint;
   purpose: WeekPurposeId;
+  purposeIsSuggested?: boolean;
   customPurpose: string;
   priorWeekStartDate: string | null;
   noPriorUsableWeek: boolean;
@@ -364,7 +388,6 @@ export type PlanWeekDraft = {
   workouts: PlanWeekWorkoutDraft[];
   goals: PlanWeekGoalDraft[];
   hasExistingPlan: boolean;
-  mismatchAcknowledged: boolean;
 };
 
 export type GoalRace = {
@@ -408,6 +431,7 @@ export type RecurringGoal = {
   id: string;
   trainingPlanId: string | null;
   athleteAccountId: string;
+  metricKey?: WeekGoalMetric | null;
   category: WeekGoalCategory;
   goalType: WeekGoalType;
   label: string;
@@ -421,6 +445,17 @@ export type RecurringGoal = {
   notes: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type GoalMetricDefinition = {
+  key: WeekGoalMetric;
+  label: string;
+  category: WeekGoalCategory;
+  unit: WeekGoalUnit;
+  valueType: "integer" | "decimal";
+  operators: WeekGoalEvaluationMode[];
+  minimum: number;
+  maximum: number | null;
 };
 
 export type PlanWeekSummary = {
@@ -442,6 +477,25 @@ export type PlanWeekSummary = {
   isDownWeek: boolean;
   hasManualOverride: boolean;
   warning: string | null;
+};
+
+export type ScaffoldPreviewChange = {
+  field: string;
+  from: string | number | boolean | null;
+  to: string | number | boolean | null;
+};
+
+export type ScaffoldPreviewWeek = {
+  weekStartDate: string;
+  action: "create" | "annotate" | "update" | "skip_overridden" | "unlink";
+  changes: ScaffoldPreviewChange[];
+  warnings: string[];
+};
+
+export type ScaffoldPreview = {
+  weeks: ScaffoldPreviewWeek[];
+  warnings: string[];
+  weekSummaries: PlanWeekSummary[];
 };
 
 export type TrainingPlanSummary = {

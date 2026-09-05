@@ -6,7 +6,6 @@ import type {
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
   TrainingWeek,
-  WeekPurposeId,
   Workout
 } from "../../types/domain";
 import {
@@ -15,6 +14,7 @@ import {
   draftWorkoutsFromWeek,
   evaluatePlanAlignment,
   planWeekDraftToPayload,
+  rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
   suggestLoad
 } from "./planWeekDrafts";
@@ -27,7 +27,7 @@ describe("plan week draft helpers", () => {
     expect(suggestLoad(null, "custom", [makeDraftWorkout({ plannedDistance: "12" })]).suggestedMileage).toBe(12);
   });
 
-  it("copies a prior week's workouts onto matching target weekdays", () => {
+  it("starts a new week blank and copies prior workouts only when requested", () => {
     const priorWeek = makeWeek("2026-06-22", {
       workouts: [
         makeWorkout({
@@ -45,12 +45,40 @@ describe("plan week draft helpers", () => {
       [targetWeek.weekStartDate]: targetWeek
     });
 
-    expect(draft.startingPoint).toBe("copy_prior");
-    expect(draft.workouts[0]).toMatchObject({
+    expect(draft.startingPoint).toBe("blank");
+    expect(draft.workouts).toEqual([]);
+
+    const copiedDraft = rebuildPlanWeekDraftForStartingPoint(draft, "copy_prior", {
+      [priorWeek.weekStartDate]: priorWeek,
+      [targetWeek.weekStartDate]: targetWeek
+    });
+
+    expect(copiedDraft.workouts[0]).toMatchObject({
       plannedDate: "2026-07-01",
       title: "Midweek aerobic",
       plannedDistance: "5"
     });
+  });
+
+  it("treats legacy notes as custom purpose instead of guessing a structured purpose", () => {
+    const week = makeWeek("2026-06-29", { notes: "Maintain", purpose: "" });
+
+    const draft = buildPlanWeekDraft(week, { [week.weekStartDate]: week });
+
+    expect(draft.purpose).toBe("custom");
+    expect(draft.customPurpose).toBe("Maintain");
+    expect(draft.purposeIsSuggested).toBe(false);
+  });
+
+  it("keeps an untouched purpose suggestion out of the save payload", () => {
+    const week = makeWeek("2026-06-29", { notes: "", purpose: "" });
+
+    const draft = buildPlanWeekDraft(week, { [week.weekStartDate]: week });
+    const payload = planWeekDraftToPayload(draft);
+
+    expect(draft.purpose).toBe("maintain");
+    expect(draft.purposeIsSuggested).toBe(true);
+    expect(payload.purpose).toBeNull();
   });
 
   it("seeds workout drafts from completed run activities", () => {
@@ -101,7 +129,7 @@ describe("plan week draft helpers", () => {
     expect(scaled[2]).toBe(rest);
   });
 
-  it("derives schedule goals and guardrails from the draft week", () => {
+  it("derives schedule goals without duplicating shared plan checks", () => {
     const draft = makeDraft({
       workouts: [
         makeDraftWorkout({ plannedDate: "2026-06-29", plannedDistance: "4" }),
@@ -139,7 +167,7 @@ describe("plan week draft helpers", () => {
     expect(achievementCategories).toEqual(
       expect.arrayContaining(["mileage", "quality", "long_run", "recovery", "sessions", "strength"])
     );
-    expect(guardrailCategories).toEqual(["long_run", "quality"]);
+    expect(guardrailCategories).toEqual([]);
   });
 
   it("evaluates aligned and mismatched plan goals", () => {
@@ -195,13 +223,13 @@ describe("plan week draft helpers", () => {
     expect(alignmentById.get("recovery")).toBe("aligned");
   });
 
-  it("builds a save payload without draft-only fields and keeps goal source", () => {
+  it("builds a save payload without week purpose or draft-only fields", () => {
     const draft = makeDraft({
       purpose: "maintain",
       workouts: [
         makeDraftWorkout({
           plannedDistance: "8",
-          plannedDuration: "64",
+          plannedDuration: "1:04:00",
           workoutType: "long_run"
         })
       ],
@@ -221,7 +249,8 @@ describe("plan week draft helpers", () => {
     const payload = planWeekDraftToPayload(draft);
 
     expect(payload).toMatchObject({
-      purpose: "maintain",
+      purpose: null,
+      customPurpose: "",
       targetLongRunDistance: 8
     });
     expect(payload.workouts[0]).toMatchObject({
@@ -236,6 +265,56 @@ describe("plan week draft helpers", () => {
     expect(payload.goals[0]).not.toHaveProperty("draftId");
     expect(payload.goals[0]).not.toHaveProperty("sourceLabel");
     expect(payload.goals[0]).not.toHaveProperty("qualityType");
+  });
+
+  it("regenerates schedule-owned goals from the final schedule before saving", () => {
+    const draft = makeDraft({
+      workouts: [makeDraftWorkout({ plannedDistance: "8" })],
+      goals: [
+        makeGoalDraft({
+          category: "mileage",
+          label: "Run 5 miles",
+          targetValue: "5",
+          minAcceptable: "4.7",
+          maxAcceptable: "5.3",
+          source: "workouts"
+        })
+      ]
+    });
+
+    const payload = planWeekDraftToPayload(draft);
+    const mileageGoal = payload.goals.find((goal) => goal.category === "mileage");
+
+    expect(mileageGoal).toMatchObject({
+      label: "Run 8 miles",
+      targetValue: 8,
+      source: "workouts"
+    });
+  });
+
+  it("normalizes a strength workout that carries stale running fields", () => {
+    const draft = makeDraft({
+      workouts: [
+        makeDraftWorkout({
+          title: "Strength",
+          sport: "run",
+          workoutType: "strength",
+          intensityCategory: "strength",
+          plannedDistance: "6"
+        })
+      ]
+    });
+
+    const goals = deriveGoalDraftsFromSchedule(draft, "Schedule");
+    const payload = planWeekDraftToPayload(draft);
+
+    expect(goals.some((goal) => goal.category === "mileage")).toBe(false);
+    expect(goals.some((goal) => goal.category === "strength")).toBe(true);
+    expect(payload.workouts[0]).toMatchObject({
+      sport: "strength",
+      workoutType: "strength",
+      plannedDistance: null
+    });
   });
 });
 
@@ -269,6 +348,7 @@ function makeWeek(
     targetLongRunSource: "manual",
     isDownWeek: false,
     notes: "",
+    reviewedAt: null,
     workouts,
     actualActivities,
     goals: [],
@@ -294,6 +374,7 @@ function makeWorkout(overrides: Partial<Workout> = {}): Workout {
     intensityCategory: "easy",
     plannedDistance: 5,
     plannedDuration: null,
+    plannedPace: null,
     plannedElevation: null,
     plannedTss: null,
     purpose: "",
@@ -339,7 +420,6 @@ function makeDraft(overrides: Partial<PlanWeekDraft> = {}): PlanWeekDraft {
     workouts: [],
     goals: [],
     hasExistingPlan: false,
-    mismatchAcknowledged: false,
     ...overrides
   };
 }
@@ -354,6 +434,7 @@ function makeDraftWorkout(overrides: Partial<PlanWeekWorkoutDraft> = {}): PlanWe
     intensityCategory: "easy",
     plannedDistance: "5",
     plannedDuration: "",
+    plannedPace: "",
     purpose: "",
     instructions: "",
     notes: "",

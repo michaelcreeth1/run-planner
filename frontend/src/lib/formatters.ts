@@ -59,11 +59,20 @@ export function formatWorkoutMeta(workout: Workout) {
   if (workout.plannedDistance !== null && workout.plannedDistance > 0) {
     pieces.push(`${formatNumber(workout.plannedDistance)} mi`);
   }
-  const pace = formatPace(workout.plannedDuration, workout.plannedDistance);
+  const pace = workout.plannedPace
+    ? `${formatPaceSeconds(workout.plannedPace)}/mi`
+    : formatPace(workout.plannedDuration, workout.plannedDistance);
   if (pace !== "-") {
     pieces.push(pace);
   }
   return pieces.join(" · ") || workout.status.replaceAll("_", " ");
+}
+
+function formatPaceSeconds(paceSeconds: number) {
+  const rounded = Math.round(paceSeconds);
+  const minutes = Math.floor(rounded / 60);
+  const remainder = String(rounded % 60).padStart(2, "0");
+  return `${minutes}:${remainder}`;
 }
 
 export function formatNumber(value: number) {
