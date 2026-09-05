@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -55,9 +55,12 @@ describe("PlanWeekDrawer", () => {
     const onSave = vi.fn();
     render(<PlannerHarness onSave={onSave} />);
 
-    expect(screen.getByText("2 checks pending")).toBeInTheDocument();
-    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Week plan" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Plan check" })).toBeVisible();
+    expect(screen.getByText("1 adjustment")).toBeInTheDocument();
     expect(screen.getByText("5 planned, target range 10-12")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Goals" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Week-specific targets")).not.toBeInTheDocument();
     expect(screen.queryByText(/goals are advisory and never prevent you from saving/i)).not.toBeInTheDocument();
 
     const saveButton = screen.getByRole("button", { name: "Save plan" });
@@ -213,28 +216,44 @@ describe("PlanWeekDrawer", () => {
     const user = userEvent.setup();
     render(<PlannerHarness onSave={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: "Match schedule" }));
+    await user.click(screen.getByRole("button", { name: "Match target" }));
 
     expect(screen.getByLabelText("Mon session 1 mileage")).toHaveValue(10);
-    expect(screen.getByText("All goals met")).toBeInTheDocument();
+    expect(screen.getByText("Schedule looks good so far")).toBeInTheDocument();
     expect(screen.queryByText("5 planned, target range 10-12")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Update target" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use schedule" })).not.toBeInTheDocument();
   });
 
   it("can update a mismatched target from the current schedule", async () => {
     const user = userEvent.setup();
     render(<PlannerHarness onSave={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: "Update target" }));
+    await user.click(screen.getByRole("button", { name: "Use schedule" }));
 
-    expect(screen.getByText("All goals met")).toBeInTheDocument();
+    expect(screen.getByText("Schedule looks good so far")).toBeInTheDocument();
   });
 
-  it("shows every rule with its status baked in, guardrails included", async () => {
-    const user = userEvent.setup();
+  it("shows one plan check when stored and inherited guardrails overlap", () => {
     const draft = mismatchedDraft();
+    draft.goals = [];
+    draft.workouts = Array.from({ length: 3 }, (_, index) => ({
+      ...draft.workouts[0],
+      draftId: `hard-${index}`,
+      plannedDate: addDays(draft.weekStartDate, index),
+      title: "Threshold workout",
+      workoutType: "threshold" as const,
+      intensityCategory: "workout" as const
+    }));
+    draft.workouts.push({
+      ...draft.workouts[0],
+      draftId: "long-run",
+      plannedDate: addDays(draft.weekStartDate, 3),
+      title: "Long run",
+      workoutType: "long_run",
+      intensityCategory: "easy"
+    });
     draft.goals.push({
-      ...draft.goals[0],
+      ...mismatchedDraft().goals[0],
       draftId: "guardrail-1",
       category: "quality",
       goalType: "guardrail",
@@ -248,48 +267,21 @@ describe("PlanWeekDrawer", () => {
     });
     render(<PlannerHarness initialDraft={draft} onSave={vi.fn()} />);
 
-    expect(screen.getAllByText("Goals")).toHaveLength(1);
-    expect(screen.getByText("Week-specific targets")).toBeInTheDocument();
-    expect(screen.queryByText("Targets")).not.toBeInTheDocument();
-    expect(screen.queryByText("Guardrails")).not.toBeInTheDocument();
-    expect(screen.getByText("Run 10 miles")).toBeInTheDocument();
-    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Plan check" })).toBeVisible();
+    expect(screen.getByText("1 adjustment")).toBeInTheDocument();
     expect(screen.getAllByText("No more than 2 hard days")).toHaveLength(1);
-
-    await user.click(screen.getByRole("button", { name: "Show all goals" }));
-
-    expect(screen.getAllByText("No more than 2 hard days")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Hide passing goals" })).toBeInTheDocument();
-
-    await user.click(screen.getByLabelText("Edit Mileage rule"));
-
-    expect(screen.getByLabelText("Target mileage")).toHaveValue(10);
+    expect(screen.queryByText("Week-specific targets")).not.toBeInTheDocument();
   });
 
-  it("keeps an open rule visible after edits bring it back in line", async () => {
-    const user = userEvent.setup();
+  it("keeps the schedule-derived week summary live and out of the footer", () => {
     render(<PlannerHarness onSave={vi.fn()} />);
 
-    await user.click(screen.getByLabelText("Edit Mileage rule"));
-    const minimumInput = screen.getByLabelText("Minimum mileage");
-    await user.clear(minimumInput);
-    await user.type(minimumInput, "4");
-
-    expect(screen.getByText("All goals met")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum mileage")).toHaveValue(4);
-
-    await user.click(screen.getByLabelText("Edit Mileage rule"));
-
-    expect(screen.queryByText("Run 10 miles")).not.toBeInTheDocument();
-  });
-
-  it("keeps live schedule totals and the load suggestion in the footer", () => {
-    render(<PlannerHarness onSave={vi.fn()} />);
-
-    expect(screen.getByText("Planned")).toBeInTheDocument();
-    expect(screen.getByText("Suggested")).toBeInTheDocument();
-    expect(screen.getByText("1 session · 0 hard")).toBeInTheDocument();
-    expect(screen.getByText("prior 5 mi")).toBeInTheDocument();
+    const summary = screen.getByLabelText("Week plan summary");
+    expect(within(summary).getByText("Mileage")).toBeInTheDocument();
+    expect(within(summary).getAllByText("5 mi")).toHaveLength(2);
+    expect(within(summary).getByText("0 hard days")).toBeInTheDocument();
+    expect(within(summary).getByText("6 rest days")).toBeInTheDocument();
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
   });
 });
 

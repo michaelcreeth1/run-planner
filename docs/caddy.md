@@ -41,9 +41,10 @@ run.home.arpa, run.creeth.net {
 }
 ```
 
-If Strava webhooks are enabled, `https://run.creeth.net/api/webhooks/strava`
-must be reachable from Strava. Keep any non-webhook admin traffic private where
-possible.
+`run.creeth.net` is private-only: it resolves through the homelab DNS server and
+is reachable only from the LAN or through Tailscale. Strava therefore cannot
+deliver webhooks to this deployment. Keep webhooks disabled and use the worker's
+30-minute reconciliation poll for activity freshness.
 
 Set these environment values when serving through Caddy:
 
@@ -51,9 +52,10 @@ Set these environment values when serving through Caddy:
 APP_BASE_URL=https://run.creeth.net
 API_BASE_URL=https://run.creeth.net
 STRAVA_REDIRECT_URI=https://run.creeth.net/api/auth/strava/callback
-STRAVA_WEBHOOK_ENABLED=true
-STRAVA_WEBHOOK_VERIFY_TOKEN=<long random string>
-STRAVA_WEBHOOK_SUBSCRIPTION_ID=<subscription id from Strava>
+STRAVA_SYNC_ENABLED=true
+STRAVA_SYNC_INTERVAL_SECONDS=1800
+STRAVA_SYNC_LOOKBACK_DAYS=14
+STRAVA_WEBHOOK_ENABLED=false
 SESSION_COOKIE_SECURE=true
 CORS_ORIGINS=https://run.home.arpa,https://run.creeth.net
 VITE_API_BASE_URL=

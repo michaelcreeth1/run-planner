@@ -3683,6 +3683,63 @@ dt {
   margin-top: 2px;
 }
 
+.week-plan-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.week-plan-metric {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.week-plan-metric span {
+  color: var(--text-secondary);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.week-plan-metric strong {
+  display: block;
+  font-size: 0.9rem;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.plan-check-clear {
+  align-items: center;
+  background: var(--tint-success-bg);
+  border: 1px solid var(--tint-success-border);
+  border-radius: var(--radius-md);
+  color: var(--tint-success-text);
+  display: flex;
+  gap: 9px;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.plan-check-clear > div {
+  display: grid;
+  gap: 1px;
+}
+
+.plan-check-clear strong {
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.plan-check-clear small {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
 .alignment-list,
 .schedule-draft {
   display: grid;
@@ -4190,7 +4247,7 @@ dt {
 .plan-week-footer .plan-week-actions {
   border-top: 0;
   box-shadow: none;
-  padding-top: 0;
+  padding-top: 14px;
   position: static;
 }
 
@@ -6651,6 +6708,10 @@ button.goal-impact-cell:focus-visible {
     order: 1;
     padding-left: 24px;
     width: 100%;
+  }
+
+  .week-plan-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .schedule-draft-day {

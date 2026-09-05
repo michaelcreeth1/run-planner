@@ -347,31 +347,6 @@ export function deriveGoalDraftsFromSchedule(draft: PlanWeekDraft, sourceLabel: 
     }));
   }
 
-  if (scheduleMileage > 0) {
-    goals.push(newGoalDraft({
-      category: "long_run",
-      goalType: "guardrail",
-      label: "Long run no more than 30% of week",
-      targetValue: 30,
-      maxAcceptable: 30,
-      unit: "percent",
-      evaluationMode: "at_most",
-      priority: "guardrail",
-      sourceLabel
-    }));
-    goals.push(newGoalDraft({
-      category: "quality",
-      goalType: "guardrail",
-      label: "No more than 2 hard days",
-      targetValue: 2,
-      maxAcceptable: 2,
-      unit: "days",
-      evaluationMode: "at_most",
-      priority: "guardrail",
-      sourceLabel
-    }));
-  }
-
   return goals;
 }
 
@@ -527,10 +502,16 @@ export function numericAlignment(id: string, label: string, value: number, goal:
 }
 
 export function planWeekDraftToPayload(draft: PlanWeekDraft) {
+  const retainedGoals = draft.goals.filter((goal) => goal.source !== "workouts");
+  const retainedGoalKeys = new Set(retainedGoals.map(goalIdentityKey));
+  const scheduleGoals = deriveGoalDraftsFromSchedule(draft, "Schedule").filter(
+    (goal) => !retainedGoalKeys.has(goalIdentityKey(goal))
+  );
+  const goals = [...retainedGoals, ...scheduleGoals];
   return {
     purpose: null,
     customPurpose: "",
-    targetLongRunDistance: optionalNumber(draft.goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
+    targetLongRunDistance: optionalNumber(goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => {
       const sessionType = sessionTypeForWorkout(workout);
       return formToPayload({
@@ -542,12 +523,16 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
         plannedPace: sessionType.sport === "run" ? workout.plannedPace : ""
       });
     }),
-    goals: draft.goals.map((goal) => ({
+    goals: goals.map((goal) => ({
       ...goalFormToPayload({ ...goal, weekId: draft.weekId }),
       label: goalLabelFromDraft(goal),
       source: goal.source
     }))
   };
+}
+
+function goalIdentityKey(goal: Pick<PlanWeekGoalDraft, "category" | "goalType" | "metricKey">) {
+  return goal.metricKey ?? `${goal.category}:${goal.goalType}`;
 }
 
 export function normalizeWeekPurposeId(value: string): WeekPurposeId {

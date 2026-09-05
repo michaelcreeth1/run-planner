@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Copy, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
@@ -15,17 +15,14 @@ import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday 
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import type { AlignmentItem } from "../../types/domain";
 import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
+import { buildPlanRules, evaluateRulesForWeek } from "../goals/ruleEvaluation";
 import {
-  buildPlanRules,
-  evaluateRulesForWeek,
-  ruleStatusLabels
-} from "../goals/ruleEvaluation";
-import {
+  countDraftRestDays,
   countDraftHardSessions,
-  draftGoalTitle,
   effectiveWorkoutSport,
   evaluateGoalDraft,
   goalLabelFromDraft,
+  maxDraftRunDistance,
   newWorkoutDraft,
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
@@ -56,23 +53,16 @@ export function PlanWeekDrawer({
   setDraft: Dispatch<SetStateAction<PlanWeekDraft | null>>;
   weekStack: Record<string, TrainingWeek>;
 }) {
-  const [showAllRules, setShowAllRules] = useState(false);
-  const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
   const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
   const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
   const ruleRows = draft.goals
-    .filter((goal) => goal.isEnabled)
+    .filter((goal) => goal.isEnabled && goal.source !== "workouts")
     .map((goal) => ({ goal, evaluation: evaluateGoalDraft(draft, goal) }));
-  const mismatchCount = ruleRows.filter((row) => row.evaluation.status === "mismatch").length;
-  const visibleRuleRows = showAllRules
-    ? ruleRows
-    : ruleRows.filter(
-        ({ goal, evaluation }) => evaluation.status === "mismatch" || goal.draftId === openRuleId
-      );
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
-  const scheduledSessions = draft.workouts.filter((workout) => effectiveWorkoutSport(workout) !== "rest").length;
+  const scheduledLongRun = maxDraftRunDistance(draft.workouts);
+  const scheduledRestDays = countDraftRestDays(draft.workouts, draft.weekStartDate);
   const copyWeekOptions = Array.from({ length: 12 }, (_, index) => {
     const weekStartDate = addDays(draft.weekStartDate, (index + 1) * -7);
     return { weekStartDate, week: weekStack[weekStartDate] ?? null };
@@ -91,17 +81,21 @@ export function PlanWeekDrawer({
     },
     [draft, plan, rules, weekStack]
   );
-  const sharedAttentionCount = sharedEvaluations.filter((evaluation) =>
-    evaluation.status === "warning" || evaluation.status === "fail"
-  ).length;
   const sharedPendingCount = sharedEvaluations.filter((evaluation) => evaluation.status === "pending").length;
-  const sharedStatusSummary = sharedAttentionCount
-    ? sharedAttentionCount === 1
-      ? "1 check needs attention"
-      : `${sharedAttentionCount} checks need attention`
-    : sharedPendingCount
-      ? `${sharedPendingCount} check${sharedPendingCount === 1 ? "" : "s"} pending`
-      : "All checks pass";
+  const sharedRuleIds = new Set(sharedEvaluations.map((evaluation) => evaluation.ruleId));
+  const targetIssues = ruleRows.filter(
+    ({ goal, evaluation }) =>
+      evaluation.status === "mismatch" && !isCoveredBySharedCheck(goal, sharedRuleIds)
+  );
+  const hasLongRunTargetIssue = targetIssues.some(
+    ({ goal }) => goal.goalType === "achievement" && goal.category === "long_run"
+  );
+  const sharedIssues = sharedEvaluations.filter(
+    (evaluation) =>
+      (evaluation.status === "warning" || evaluation.status === "fail") &&
+      !(evaluation.ruleId === "long-run-scheduled" && hasLongRunTargetIssue)
+  );
+  const issueCount = sharedIssues.length + targetIssues.length;
   const drawerTitle =
     draft.weekState === "past"
       ? "Review week"
@@ -173,17 +167,6 @@ export function PlanWeekDrawer({
       return next;
     });
     setIsCopyWeekMenuOpen(false);
-  }
-
-  function updateGoal(goalDraftId: string, updates: Partial<PlanWeekGoalDraft>) {
-    updateDraft((current) => ({
-      ...current,
-      goals: current.goals.map((goal) =>
-        goal.draftId === goalDraftId
-          ? { ...goal, ...updates, manuallyEdited: true, source: "manual", sourceLabel: "Edited" }
-          : goal
-      )
-    }));
   }
 
   function updateWorkout(workoutDraftId: string, updates: Partial<PlanWeekWorkoutDraft>) {
@@ -472,109 +455,69 @@ export function PlanWeekDrawer({
             </div>
           </section>
 
-          <section className="plan-week-section rules-section">
-            <div className="section-heading section-heading--split">
-              <h3>Goals</h3>
-              <span className={`rules-status${sharedAttentionCount ? " rules-status--attention" : ""}`}>
-                {sharedStatusSummary}
-              </span>
+          <section className="plan-week-section week-plan-section">
+            <div className="section-heading">
+              <h3>Week plan</h3>
             </div>
-            <div className="rule-list">
-              {sharedEvaluations.map((evaluation) => (
-                <SharedRuleRow evaluation={evaluation} key={evaluation.ruleId} />
-              ))}
+            <div className="week-plan-summary" aria-label="Week plan summary">
+              <WeekPlanMetric label="Mileage" value={`${formatNumber(scheduledMileage)} mi`} />
+              <WeekPlanMetric
+                label="Hard days"
+                value={`${scheduledQuality} hard day${scheduledQuality === 1 ? "" : "s"}`}
+              />
+              <WeekPlanMetric label="Long run" value={`${formatNumber(scheduledLongRun)} mi`} />
+              <WeekPlanMetric
+                label="Recovery"
+                value={`${scheduledRestDays} rest day${scheduledRestDays === 1 ? "" : "s"}`}
+              />
             </div>
           </section>
 
-          <section className="plan-week-section rules-section">
+          <section className="plan-week-section plan-check-section">
             <div className="section-heading section-heading--split">
-              <h3>Week-specific targets</h3>
-              {ruleRows.length ? (
-                <span className={`rules-status${mismatchCount ? " rules-status--attention" : ""}`}>
-                  {mismatchCount
-                    ? `${mismatchCount} need${mismatchCount === 1 ? "s" : ""} attention`
-                    : "All goals met"}
+              <h3>Plan check</h3>
+              {issueCount ? (
+                <span className="rules-status rules-status--attention">
+                  {issueCount} {issueCount === 1 ? "adjustment" : "adjustments"}
                 </span>
               ) : null}
             </div>
-            {ruleRows.length ? (
-              <>
-                {visibleRuleRows.length ? (
-                  <div className="rule-list">
-                    {visibleRuleRows.map(({ goal, evaluation }) => {
-                      if (goal.goalType !== "achievement") {
-                        const mismatch = evaluation.status === "mismatch";
-                        return (
-                          <div
-                            className={`rule-row rule-row--readonly${mismatch ? " rule-row--mismatch" : ""}`}
-                            key={goal.draftId}
-                          >
-                            <RuleStatusIcon mismatch={mismatch} />
-                            <div className="rule-copy">
-                              <strong>{goal.label}</strong>
-                              {mismatch ? <small>{evaluation.detail}</small> : null}
-                            </div>
-                          </div>
-                        );
+            {issueCount ? (
+              <div className="rule-list">
+                {targetIssues.map(({ goal, evaluation }) => {
+                  const canAdjustSchedule =
+                    ["mileage", "long_run"].includes(goal.category) &&
+                    (goalTarget(goal) ?? 0) > 0 &&
+                    draft.workouts.some((workout) => effectiveWorkoutSport(workout) === "run");
+                  return (
+                    <TargetIssueRow
+                      evaluation={evaluation}
+                      goal={goal}
+                      key={goal.draftId}
+                      onMatchTarget={canAdjustSchedule ? () => adjustScheduleToTarget(goal.category) : null}
+                      onUseSchedule={
+                        goal.category !== "custom" ? () => updateTargetToSchedule(goal.category) : null
                       }
-                      const canAdjustSchedule =
-                        ["mileage", "long_run"].includes(goal.category) &&
-                        (goalTarget(goal) ?? 0) > 0 &&
-                        draft.workouts.some((workout) => effectiveWorkoutSport(workout) === "run");
-                      return (
-                        <RuleEditor
-                          evaluation={evaluation}
-                          goal={goal}
-                          isOpen={openRuleId === goal.draftId}
-                          key={goal.draftId}
-                          onChange={(updates) => updateGoal(goal.draftId, updates)}
-                          onMatchSchedule={canAdjustSchedule ? () => adjustScheduleToTarget(goal.category) : null}
-                          onToggle={() =>
-                            setOpenRuleId((current) => (current === goal.draftId ? null : goal.draftId))
-                          }
-                          onUpdateTarget={
-                            goal.category !== "custom" ? () => updateTargetToSchedule(goal.category) : null
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                ) : null}
-                {mismatchCount < ruleRows.length ? (
-                  <button
-                    className="text-action rules-toggle"
-                    type="button"
-                    onClick={() => setShowAllRules((current) => !current)}
-                  >
-                    {showAllRules ? "Hide passing goals" : "Show all goals"}
-                  </button>
-                ) : null}
-              </>
+                    />
+                  );
+                })}
+                {sharedIssues.map((evaluation) => (
+                  <SharedPlanIssueRow evaluation={evaluation} key={evaluation.ruleId} />
+                ))}
+              </div>
             ) : (
-              <p className="plan-week-note">No goals are set for this week.</p>
+              <div className="plan-check-clear">
+                <CheckCircle2 className="rule-status-icon" size={17} />
+                <div>
+                  <strong>{sharedPendingCount ? "Schedule looks good so far" : "Schedule matches targets"}</strong>
+                  {sharedPendingCount ? <small>Some checks will complete as you add sessions.</small> : null}
+                </div>
+              </div>
             )}
           </section>
         </div>
 
         <footer className="plan-week-footer">
-          <div aria-live="polite" className="plan-week-summary">
-            <div>
-              <span className="summary-label">Planned</span>
-              <strong>{formatNumber(scheduledMileage)} mi</strong>
-              <span className="summary-detail">
-                {scheduledSessions} session{scheduledSessions === 1 ? "" : "s"} · {scheduledQuality} hard
-              </span>
-            </div>
-            {draft.load.suggestedMileage > 0 || draft.load.priorMileage !== null ? (
-              <div>
-                <span className="summary-label">Suggested</span>
-                <strong>{formatNumber(draft.load.suggestedMileage)} mi</strong>
-                {draft.load.priorMileage !== null ? (
-                  <span className="summary-detail">prior {formatNumber(draft.load.priorMileage)} mi</span>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
           <div className="editor-actions plan-week-actions">
             <button type="button" onClick={onClose}>
               <X size={17} />
@@ -591,23 +534,69 @@ export function PlanWeekDrawer({
   );
 }
 
-function SharedRuleRow({ evaluation }: { evaluation: RuleEvaluation }) {
-  const needsAttention = evaluation.status === "warning" || evaluation.status === "fail";
-  const StatusIcon = evaluation.status === "pending" ? CircleDashed : needsAttention ? AlertTriangle : CheckCircle2;
+function WeekPlanMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className={`rule-row rule-row--readonly${needsAttention ? " rule-row--mismatch" : ""}`}>
-      <StatusIcon
-        className={`rule-status-icon${evaluation.status === "pending" ? " rule-status-icon--pending" : ""}`}
-        size={15}
-      />
+    <div className="week-plan-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TargetIssueRow({
+  evaluation,
+  goal,
+  onMatchTarget,
+  onUseSchedule
+}: {
+  evaluation: AlignmentItem;
+  goal: PlanWeekGoalDraft;
+  onMatchTarget: (() => void) | null;
+  onUseSchedule: (() => void) | null;
+}) {
+  return (
+    <div className="rule-row rule-row--readonly rule-row--mismatch">
+      <AlertTriangle className="rule-status-icon" size={15} />
+      <div className="rule-copy">
+        <strong>{goalLabelFromDraft(goal)}</strong>
+        <small>{evaluation.detail}</small>
+      </div>
+      <div className="rule-actions">
+        {onMatchTarget ? <button type="button" onClick={onMatchTarget}>Match target</button> : null}
+        {onUseSchedule ? <button type="button" onClick={onUseSchedule}>Use schedule</button> : null}
+      </div>
+    </div>
+  );
+}
+
+function SharedPlanIssueRow({ evaluation }: { evaluation: RuleEvaluation }) {
+  return (
+    <div className="rule-row rule-row--readonly rule-row--mismatch">
+      <AlertTriangle className="rule-status-icon" size={15} />
       <div className="rule-copy">
         <strong>{evaluation.ruleLabel}</strong>
         <small>{evaluation.reason}</small>
       </div>
-      <span className={`week-check-status week-check-status--${evaluation.status}`}>
-        {ruleStatusLabels[evaluation.status]}
-      </span>
     </div>
+  );
+}
+
+function isCoveredBySharedCheck(goal: PlanWeekGoalDraft, sharedRuleIds: Set<string>) {
+  if (goal.category === "recovery" && sharedRuleIds.has("rest-days")) {
+    return true;
+  }
+  if (
+    goal.goalType === "guardrail" &&
+    goal.category === "quality" &&
+    sharedRuleIds.has("hard-days")
+  ) {
+    return true;
+  }
+  return (
+    goal.goalType === "guardrail" &&
+    goal.category === "long_run" &&
+    goal.unit === "percent" &&
+    sharedRuleIds.has("long-run-percent")
   );
 }
 
@@ -845,182 +834,5 @@ function PastWeekReviewDrawer({
         </div>
       </aside>
     </div>
-  );
-}
-
-function RuleStatusIcon({ mismatch }: { mismatch: boolean }) {
-  return mismatch ? (
-    <AlertTriangle className="rule-status-icon" size={15} />
-  ) : (
-    <CheckCircle2 className="rule-status-icon" size={15} />
-  );
-}
-
-function RuleEditor({
-  evaluation,
-  goal,
-  isOpen,
-  onChange,
-  onMatchSchedule,
-  onToggle,
-  onUpdateTarget
-}: {
-  evaluation: AlignmentItem;
-  goal: PlanWeekGoalDraft;
-  isOpen: boolean;
-  onChange: (updates: Partial<PlanWeekGoalDraft>) => void;
-  onMatchSchedule: (() => void) | null;
-  onToggle: () => void;
-  onUpdateTarget: (() => void) | null;
-}) {
-  const mismatch = evaluation.status === "mismatch";
-  return (
-    <details className={`rule-row${mismatch ? " rule-row--mismatch" : ""}`} open={isOpen}>
-      <summary
-        aria-label={`Edit ${draftGoalTitle(goal)} rule`}
-        onClick={(event) => {
-          event.preventDefault();
-          onToggle();
-        }}
-      >
-        <RuleStatusIcon mismatch={mismatch} />
-        <div className="rule-copy">
-          <strong>{goalLabelFromDraft(goal)}</strong>
-          {mismatch ? <small>{evaluation.detail}</small> : null}
-        </div>
-        {mismatch ? (
-          <div className="rule-actions">
-            {onMatchSchedule ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onMatchSchedule();
-                }}
-              >
-                Match schedule
-              </button>
-            ) : null}
-            {onUpdateTarget ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onUpdateTarget();
-                }}
-              >
-                Update target
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <ChevronDown className="rule-chevron" size={16} />
-      </summary>
-      <div className="rule-fields">
-        {goal.category === "mileage" ? (
-          <div className="form-grid form-grid--three">
-            <label>
-              <span>Minimum mileage</span>
-              <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
-            </label>
-            <label>
-              <span>Target mileage</span>
-              <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
-            </label>
-            <label>
-              <span>Maximum mileage</span>
-              <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
-            </label>
-          </div>
-        ) : null}
-        {goal.category === "quality" ? (
-          <div className="form-grid">
-            <label>
-              <span>Hard sessions</span>
-              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-            </label>
-            <label>
-              <span>Quality type</span>
-              <select value={goal.qualityType ?? "any"} onChange={(event) => onChange({ qualityType: event.target.value as PlanWeekGoalDraft["qualityType"] })}>
-                <option value="any">Any quality</option>
-                <option value="threshold">Threshold</option>
-                <option value="tempo">Tempo</option>
-                <option value="intervals">Intervals</option>
-                <option value="hills">Hills</option>
-                <option value="race">Race</option>
-              </select>
-            </label>
-          </div>
-        ) : null}
-        {goal.category === "long_run" ? (
-          <div className="form-grid form-grid--three">
-            <label>
-              <span>Minimum distance</span>
-              <input type="number" step="0.1" value={goal.minAcceptable} onChange={(event) => onChange({ minAcceptable: event.target.value })} />
-            </label>
-            <label>
-              <span>Target distance</span>
-              <input type="number" step="0.1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value })} />
-            </label>
-            <label>
-              <span>Maximum distance</span>
-              <input type="number" step="0.1" value={goal.maxAcceptable} onChange={(event) => onChange({ maxAcceptable: event.target.value })} />
-            </label>
-          </div>
-        ) : null}
-        {goal.category === "recovery" ? (
-          <div className="form-grid">
-            <label>
-              <span>Minimum rest days</span>
-              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-            </label>
-            <label className="checkbox-row">
-              <input
-                checked={goal.noBackToBackHardDays ?? true}
-                type="checkbox"
-                onChange={(event) => onChange({ noBackToBackHardDays: event.target.checked })}
-              />
-              <span>No back-to-back hard days</span>
-            </label>
-          </div>
-        ) : null}
-        {goal.category === "sessions" ? (
-          <label>
-            <span>Target total sessions</span>
-            <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-          </label>
-        ) : null}
-        {goal.category === "strength" ? (
-          <div className="form-grid">
-            <label>
-              <span>Strength sessions</span>
-              <input type="number" min="0" step="1" value={goal.targetValue} onChange={(event) => onChange({ targetValue: event.target.value, minAcceptable: event.target.value })} />
-            </label>
-            <label className="checkbox-row">
-              <input
-                checked={goal.strengthRequired ?? true}
-                type="checkbox"
-                onChange={(event) => onChange({ strengthRequired: event.target.checked })}
-              />
-              <span>Required</span>
-            </label>
-          </div>
-        ) : null}
-        {goal.category === "custom" ? (
-          <>
-            <label>
-              <span>Goal label</span>
-              <input value={goal.label} onChange={(event) => onChange({ label: event.target.value })} />
-            </label>
-            <label>
-              <span>Goal description</span>
-              <textarea rows={2} value={goal.description} onChange={(event) => onChange({ description: event.target.value })} />
-            </label>
-          </>
-        ) : null}
-      </div>
-    </details>
   );
 }

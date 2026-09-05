@@ -129,7 +129,7 @@ describe("plan week draft helpers", () => {
     expect(scaled[2]).toBe(rest);
   });
 
-  it("derives schedule goals and guardrails from the draft week", () => {
+  it("derives schedule goals without duplicating shared plan checks", () => {
     const draft = makeDraft({
       workouts: [
         makeDraftWorkout({ plannedDate: "2026-06-29", plannedDistance: "4" }),
@@ -167,7 +167,7 @@ describe("plan week draft helpers", () => {
     expect(achievementCategories).toEqual(
       expect.arrayContaining(["mileage", "quality", "long_run", "recovery", "sessions", "strength"])
     );
-    expect(guardrailCategories).toEqual(["long_run", "quality"]);
+    expect(guardrailCategories).toEqual([]);
   });
 
   it("evaluates aligned and mismatched plan goals", () => {
@@ -265,6 +265,31 @@ describe("plan week draft helpers", () => {
     expect(payload.goals[0]).not.toHaveProperty("draftId");
     expect(payload.goals[0]).not.toHaveProperty("sourceLabel");
     expect(payload.goals[0]).not.toHaveProperty("qualityType");
+  });
+
+  it("regenerates schedule-owned goals from the final schedule before saving", () => {
+    const draft = makeDraft({
+      workouts: [makeDraftWorkout({ plannedDistance: "8" })],
+      goals: [
+        makeGoalDraft({
+          category: "mileage",
+          label: "Run 5 miles",
+          targetValue: "5",
+          minAcceptable: "4.7",
+          maxAcceptable: "5.3",
+          source: "workouts"
+        })
+      ]
+    });
+
+    const payload = planWeekDraftToPayload(draft);
+    const mileageGoal = payload.goals.find((goal) => goal.category === "mileage");
+
+    expect(mileageGoal).toMatchObject({
+      label: "Run 8 miles",
+      targetValue: 8,
+      source: "workouts"
+    });
   });
 
   it("normalizes a strength workout that carries stale running fields", () => {
