@@ -37,9 +37,7 @@ def make_session() -> Session:
 
 def assert_past_week_read_only(response) -> None:
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Past weeks are read-only. Complete a review instead."
-    }
+    assert response.json() == {"detail": "Past weeks are read-only. Complete a review instead."}
 
 
 def test_current_week_and_workout_crud() -> None:
@@ -93,6 +91,71 @@ def test_current_week_and_workout_crud() -> None:
         assert delete_response.status_code == 204
         clone_delete_response = client.delete(f"/api/planned-workouts/{duplicate['id']}")
         assert clone_delete_response.status_code == 204
+
+
+def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        payload = {
+            "plannedDate": week["weekStartDate"],
+            "title": "Threshold repetitions",
+            "workoutType": "threshold",
+            "intensityCategory": "workout",
+            "prescription": {
+                "blocks": [
+                    {
+                        "kind": "step",
+                        "role": "warmup",
+                        "extent": "distance",
+                        "distanceMeters": 3218.688,
+                        "displayUnit": "mi",
+                    },
+                    {
+                        "kind": "repeat",
+                        "repetitions": 5,
+                        "recoveryAfterFinal": False,
+                        "steps": [
+                            {
+                                "kind": "step",
+                                "role": "work",
+                                "extent": "distance",
+                                "distanceMeters": 1000,
+                                "displayUnit": "km",
+                            },
+                            {
+                                "kind": "step",
+                                "role": "recovery",
+                                "extent": "duration",
+                                "durationSeconds": 120,
+                                "displayUnit": "min",
+                            },
+                        ],
+                    },
+                ]
+            },
+        }
+        response = client.post("/api/planned-workouts", json=payload)
+        assert response.status_code == 201
+        workout = response.json()
+        assert workout["currentPrescriptionRevision"]["revisionNumber"] == 1
+        assert (
+            workout["currentPrescriptionRevision"]["calculatedTotals"]["knownDurationSeconds"]
+            == 480
+        )
+        assert workout["prescription"]["blocks"][1]["repetitions"] == 5
+        assert workout["prescription"]["blocks"][1]["steps"][0]["distanceMeters"] == 1000
+
+        revision = client.patch(
+            f"/api/planned-workouts/{workout['id']}",
+            json={
+                "purpose": "Lactate threshold",
+                "prescription": payload["prescription"],
+                "expectedVersion": workout["version"],
+            },
+        )
+        assert revision.status_code == 200
+        assert revision.json()["currentPrescriptionRevision"]["revisionNumber"] == 2
 
 
 def test_authenticated_users_are_isolated() -> None:
@@ -243,9 +306,7 @@ def test_save_week_plan_rejects_out_of_week_workouts_before_creating_virtual_wee
         assert "2099-07-06 and 2099-07-12" in response.json()["detail"]
         with SessionLocal() as db:
             persisted_week = db.scalars(
-                select(TrainingWeek).where(
-                    TrainingWeek.week_start_date == date(2099, 7, 6)
-                )
+                select(TrainingWeek).where(TrainingWeek.week_start_date == date(2099, 7, 6))
             ).first()
             assert persisted_week is None
 
@@ -274,15 +335,14 @@ def test_patch_endpoints_reject_null_required_fields_and_allow_nullable_clears()
         assert goal_response.status_code == 201
         goal = goal_response.json()
 
-        assert client.patch(
-            f"/api/planned-workouts/{workout['id']}", json={"title": None}
-        ).status_code == 422
-        assert client.patch(
-            f"/api/weeks/{week['id']}", json={"purpose": None}
-        ).status_code == 422
-        assert client.patch(
-            f"/api/week-goals/{goal['id']}", json={"label": None}
-        ).status_code == 422
+        assert (
+            client.patch(f"/api/planned-workouts/{workout['id']}", json={"title": None}).status_code
+            == 422
+        )
+        assert client.patch(f"/api/weeks/{week['id']}", json={"purpose": None}).status_code == 422
+        assert (
+            client.patch(f"/api/week-goals/{goal['id']}", json={"label": None}).status_code == 422
+        )
 
         cleared_workout = client.patch(
             f"/api/planned-workouts/{workout['id']}",
@@ -292,19 +352,13 @@ def test_patch_endpoints_reject_null_required_fields_and_allow_nullable_clears()
         assert cleared_workout.json()["plannedDistance"] is None
         assert cleared_workout.json()["title"] == "Easy 5"
 
-        set_target = client.patch(
-            f"/api/weeks/{week['id']}", json={"targetMileage": 20}
-        )
+        set_target = client.patch(f"/api/weeks/{week['id']}", json={"targetMileage": 20})
         assert set_target.status_code == 200
-        cleared_target = client.patch(
-            f"/api/weeks/{week['id']}", json={"targetMileage": None}
-        )
+        cleared_target = client.patch(f"/api/weeks/{week['id']}", json={"targetMileage": None})
         assert cleared_target.status_code == 200
         assert cleared_target.json()["targetMileage"] is None
 
-        cleared_goal = client.patch(
-            f"/api/week-goals/{goal['id']}", json={"targetValue": None}
-        )
+        cleared_goal = client.patch(f"/api/week-goals/{goal['id']}", json={"targetValue": None})
         assert cleared_goal.status_code == 200
         assert cleared_goal.json()["targetValue"] is None
 
@@ -357,17 +411,13 @@ def test_past_week_read_only_guard_covers_all_planning_mutations(
                 json={"label": "Another goal"},
             ),
             client.post(f"/api/weeks/{week['id']}/goals/derive"),
-            client.patch(
-                f"/api/week-goals/{goal['id']}", json={"label": "Changed"}
-            ),
+            client.patch(f"/api/week-goals/{goal['id']}", json={"label": "Changed"}),
             client.delete(f"/api/week-goals/{goal['id']}"),
             client.post(
                 "/api/planned-workouts",
                 json={"plannedDate": "2099-03-05", "title": "Late addition"},
             ),
-            client.patch(
-                f"/api/planned-workouts/{workout['id']}", json={"title": "Changed"}
-            ),
+            client.patch(f"/api/planned-workouts/{workout['id']}", json={"title": "Changed"}),
             client.post(
                 f"/api/planned-workouts/{workout['id']}/move",
                 json={"plannedDate": "2101-03-03"},
@@ -591,9 +641,7 @@ def test_copy_prior_week_returns_and_persists_valid_manual_goal_source() -> None
         assert copied_goal["source"] == "manual"
         with SessionLocal() as db:
             persisted_week = db.scalars(
-                select(TrainingWeek).where(
-                    TrainingWeek.week_start_date == date(2099, 3, 9)
-                )
+                select(TrainingWeek).where(TrainingWeek.week_start_date == date(2099, 3, 9))
             ).one()
             assert [goal.source for goal in persisted_week.goals] == ["manual"]
 
@@ -690,14 +738,14 @@ def test_run_mileage_excludes_non_run_strava_activities() -> None:
         db.add_all(
             [
                 StravaActivity(
-                strava_activity_id="activity-1",
-                athlete_account_id=athlete.id,
-                name="Morning Run",
-                sport_type="Run",
-                start_date=datetime(2024, 1, 3, 15, 0, 0),
-                start_date_local=datetime(2024, 1, 3, 8, 0, 0),
-                distance=1609.344 * 4.2,
-                raw_payload_json={},
+                    strava_activity_id="activity-1",
+                    athlete_account_id=athlete.id,
+                    name="Morning Run",
+                    sport_type="Run",
+                    start_date=datetime(2024, 1, 3, 15, 0, 0),
+                    start_date_local=datetime(2024, 1, 3, 8, 0, 0),
+                    distance=1609.344 * 4.2,
+                    raw_payload_json={},
                 ),
                 StravaActivity(
                     strava_activity_id="activity-2",

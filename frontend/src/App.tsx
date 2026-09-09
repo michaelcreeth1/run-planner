@@ -670,7 +670,9 @@ function AppShell() {
       purpose: workout.purpose,
       instructions: workout.instructions,
       notes: workout.notes,
-      status: workout.status
+      status: workout.status,
+      prescription: workout.prescription ?? null,
+      version: workout.version
     });
   }
 

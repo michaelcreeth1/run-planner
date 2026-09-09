@@ -15,7 +15,8 @@ export function defaultForm(plannedDate: string): WorkoutForm {
     purpose: "",
     instructions: "",
     notes: "",
-    status: "planned"
+    status: "planned",
+    prescription: null
   };
 }
 
@@ -33,7 +34,9 @@ export function formToPayload(form: WorkoutForm) {
     purpose: form.purpose,
     instructions: form.instructions,
     notes: form.notes,
-    status: form.status
+    status: form.status,
+    prescription: form.prescription,
+    expectedVersion: form.version
   };
 }
 

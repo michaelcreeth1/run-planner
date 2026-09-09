@@ -9,13 +9,19 @@ from app.db.session import get_db
 from app.goal_metrics import goal_metric_catalog
 from app.models.planning import AthleteAccount
 from app.schemas.planning import (
+    MatchSuggestion,
+    PerformedSessionCreate,
+    PerformedSessionRead,
     PlannedWorkoutCreate,
     PlannedWorkoutMove,
     PlannedWorkoutRead,
     PlannedWorkoutUpdate,
     PlanWeekSave,
+    PrescriptionTotals,
+    ReconciliationUpdate,
     RecurringGoalRead,
     RecurringGoalSpec,
+    ScheduleTemplateRequest,
     TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
@@ -23,12 +29,22 @@ from app.schemas.planning import (
     WeekGoalRead,
     WeekGoalUpdate,
     WeekListRead,
+    WorkoutPrescription,
+    WorkoutTemplateCreate,
+    WorkoutTemplateRead,
+    WorkoutTemplateUpdate,
 )
 from app.services import planning
 
 router = APIRouter(tags=["planning"])
 DbSession = Annotated[Session, Depends(get_db)]
 CurrentProfile = Annotated[AthleteAccount, Depends(require_current_profile)]
+
+
+@router.post("/prescriptions/preview", response_model=PrescriptionTotals)
+def preview_prescription(payload: WorkoutPrescription, profile: CurrentProfile) -> dict:
+    del profile
+    return planning.prescription_totals(payload)
 
 
 @router.get("/goal-metrics")
@@ -215,3 +231,78 @@ def move_planned_workout(
 @router.post("/planned-workouts/{workout_id}/duplicate", response_model=PlannedWorkoutRead)
 def duplicate_planned_workout(workout_id: str, db: DbSession, profile: CurrentProfile):
     return planning.duplicate_workout(db, workout_id, profile.id)
+
+
+@router.get("/workout-templates", response_model=list[WorkoutTemplateRead])
+def list_workout_templates(db: DbSession, profile: CurrentProfile) -> list[dict]:
+    return [
+        planning.serialize_template(template)
+        for template in planning.list_templates(db, profile.id)
+    ]
+
+
+@router.post(
+    "/workout-templates", response_model=WorkoutTemplateRead, status_code=status.HTTP_201_CREATED
+)
+def create_workout_template(
+    payload: WorkoutTemplateCreate, db: DbSession, profile: CurrentProfile
+) -> dict:
+    return planning.serialize_template(planning.create_template(db, payload, profile.id))
+
+
+@router.patch("/workout-templates/{template_id}", response_model=WorkoutTemplateRead)
+def update_workout_template(
+    template_id: str, payload: WorkoutTemplateUpdate, db: DbSession, profile: CurrentProfile
+) -> dict:
+    return planning.serialize_template(
+        planning.update_template(db, template_id, payload, profile.id)
+    )
+
+
+@router.post("/workout-templates/{template_id}/schedule", response_model=PlannedWorkoutRead)
+def schedule_workout_template(
+    template_id: str, payload: ScheduleTemplateRequest, db: DbSession, profile: CurrentProfile
+):
+    return planning.schedule_template(
+        db, template_id, payload.planned_date, profile.id, payload.title
+    )
+
+
+@router.get("/performed-sessions", response_model=list[PerformedSessionRead])
+def list_sessions(db: DbSession, profile: CurrentProfile) -> list[dict]:
+    return [
+        planning.serialize_performed_session(db, session)
+        for session in planning.list_performed_sessions(db, profile.id)
+    ]
+
+
+@router.post(
+    "/performed-sessions", response_model=PerformedSessionRead, status_code=status.HTTP_201_CREATED
+)
+def create_session(payload: PerformedSessionCreate, db: DbSession, profile: CurrentProfile) -> dict:
+    return planning.serialize_performed_session(
+        db, planning.create_performed_session(db, payload, profile.id)
+    )
+
+
+@router.get("/performed-sessions/{session_id}", response_model=PerformedSessionRead)
+def get_session(session_id: str, db: DbSession, profile: CurrentProfile) -> dict:
+    return planning.serialize_performed_session(
+        db, planning.get_performed_session(db, session_id, profile.id)
+    )
+
+
+@router.get(
+    "/performed-sessions/{session_id}/match-suggestions", response_model=list[MatchSuggestion]
+)
+def get_match_suggestions(session_id: str, db: DbSession, profile: CurrentProfile) -> list[dict]:
+    return planning.match_suggestions(db, session_id, profile.id)
+
+
+@router.put("/performed-sessions/{session_id}/reconciliation", response_model=PerformedSessionRead)
+def update_reconciliation(
+    session_id: str, payload: ReconciliationUpdate, db: DbSession, profile: CurrentProfile
+) -> dict:
+    return planning.serialize_performed_session(
+        db, planning.reconcile_session(db, session_id, payload, profile.id)
+    )

@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -31,6 +32,18 @@ CALCULATOR_VERSION = 1
 
 
 @dataclass(frozen=True)
+class SessionOccurrence:
+    """Activity-shaped, one-per-session value used by every weekly metric."""
+
+    id: str
+    sport_type: str
+    start_date_local: object
+    distance: float
+    moving_time: int | None
+    name: str
+
+
+@dataclass(frozen=True)
 class WeeklyMetricMeasurement:
     metric_key: GoalMetricKey
     unit: str
@@ -54,7 +67,9 @@ def calculate_weekly_metrics(
     activities: list[StravaActivity],
     *,
     today: date,
+    sessions: list[object] | None = None,
 ) -> dict[GoalMetricKey, WeeklyMetricMeasurement]:
+    activities = effective_training_occurrences(activities, sessions or [])
     run_workouts = [workout for workout in workouts if workout.sport == "run"]
     run_activities = [activity for activity in activities if is_run_activity(activity)]
     training_workouts = [workout for workout in workouts if workout.sport != "rest"]
@@ -150,9 +165,7 @@ def calculate_weekly_metrics(
     )
     projected_longest = max(actual_longest, remaining_longest)
 
-    actual_strength_dates = {
-        activity.start_date_local.date() for activity in strength_activities
-    }
+    actual_strength_dates = {activity.start_date_local.date() for activity in strength_activities}
     manually_completed_strength_workouts = [
         workout
         for workout in strength_workouts
@@ -255,7 +268,7 @@ def measurement(
     *,
     remaining: float | None = None,
     workouts: list[PlannedWorkout] | None = None,
-    activities: list[StravaActivity] | None = None,
+    activities: Iterable[object] | None = None,
 ) -> WeeklyMetricMeasurement:
     return WeeklyMetricMeasurement(
         metric_key=metric_key,
@@ -326,3 +339,47 @@ def count_back_to_back_pairs(values: set[date]) -> int:
 
 def has_back_to_back_dates(values: set[date]) -> bool:
     return count_back_to_back_pairs(values) > 0
+
+
+def effective_training_occurrences(
+    activities: list[StravaActivity], sessions: list[object]
+) -> list[StravaActivity | SessionOccurrence]:
+    """Use one entry per performed session while retaining ungrouped imports.
+
+    This is intentionally backend-owned: recording count cannot inflate
+    session, mileage, long-run, or hard-day metrics.
+    """
+    by_id = {activity.id: activity for activity in activities}
+    grouped_ids = {
+        recording.strava_activity_id
+        for session in sessions
+        for recording in getattr(session, "recordings", [])
+    }
+    effective: list[StravaActivity | SessionOccurrence] = [
+        activity for activity in activities if activity.id not in grouped_ids
+    ]
+    for session in sessions:
+        recordings = [
+            by_id[recording.strava_activity_id]
+            for recording in getattr(session, "recordings", [])
+            if recording.contributes_to_totals and recording.strava_activity_id in by_id
+        ]
+        distance = sum(activity.distance for activity in recordings) + (
+            getattr(session, "manual_distance_meters", None) or 0
+        )
+        duration = sum(activity.moving_time or 0 for activity in recordings) + (
+            getattr(session, "manual_duration_seconds", None) or 0
+        )
+        effective.append(
+            SessionOccurrence(
+                id=session.id,
+                sport_type=session.sport,
+                start_date_local=session.occurred_at,
+                distance=distance,
+                moving_time=duration or None,
+                name="workout"
+                if getattr(session, "intensity_category", None) in {"workout", "race"}
+                else "session",
+            )
+        )
+    return effective

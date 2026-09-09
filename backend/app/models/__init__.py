@@ -2,6 +2,8 @@ from app.models.planning import (
     AthleteAccount,
     GoalRace,
     Mesocycle,
+    PerformedSession,
+    PerformedSessionRecording,
     PlannedWorkout,
     PlannedWorkoutStep,
     RecurringGoal,
@@ -10,6 +12,8 @@ from app.models.planning import (
     UserAccount,
     WeekGoal,
     WeeklyMetricSnapshot,
+    WorkoutPrescriptionRevision,
+    WorkoutScheduleEvent,
     WorkoutTemplate,
 )
 from app.models.strava import StravaActivity, StravaOAuthToken, StravaWebhookEvent, SyncJob
@@ -18,6 +22,8 @@ __all__ = [
     "AthleteAccount",
     "GoalRace",
     "Mesocycle",
+    "PerformedSession",
+    "PerformedSessionRecording",
     "PlannedWorkout",
     "PlannedWorkoutStep",
     "RecurringGoal",
@@ -30,5 +36,7 @@ __all__ = [
     "UserAccount",
     "WeekGoal",
     "WeeklyMetricSnapshot",
+    "WorkoutPrescriptionRevision",
+    "WorkoutScheduleEvent",
     "WorkoutTemplate",
 ]

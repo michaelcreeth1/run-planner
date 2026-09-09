@@ -8497,3 +8497,79 @@ button.goal-impact-cell:focus-visible {
   border-color: var(--primary);
   box-shadow: inset 0 0 0 1px var(--primary);
 }
+
+.workout-structure {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+}
+
+.workout-structure__heading,
+.workout-structure__actions,
+.workout-step__tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.workout-structure__heading small {
+  display: block;
+}
+
+.workout-structure__blocks {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.workout-step,
+.workout-repeat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.7rem;
+  border-radius: 0.7rem;
+  background: var(--surface-raised);
+}
+
+.workout-step__tools {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.workout-step select,
+.workout-step input {
+  width: auto;
+  min-width: 5rem;
+  flex: 1 1 6rem;
+}
+
+.workout-step input[aria-label*="guidance"] {
+  flex-basis: 12rem;
+}
+
+.workout-repeat {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.workout-repeat label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+@media (max-width: 600px) {
+  .workout-structure__heading,
+  .workout-structure__actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

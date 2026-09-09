@@ -9,22 +9,32 @@ from sqlalchemy.orm import Session, selectinload
 from app.goal_metrics import GOAL_METRICS, infer_goal_metric, normalized_goal_thresholds
 from app.models.planning import (
     AthleteAccount,
+    PerformedSession,
+    PerformedSessionRecording,
     PlannedWorkout,
     PlannedWorkoutStep,
     RecurringGoal,
     TrainingWeek,
     WeekGoal,
     WeeklyMetricSnapshot,
+    WorkoutPrescriptionRevision,
+    WorkoutScheduleEvent,
+    WorkoutTemplate,
 )
 from app.models.strava import StravaActivity
 from app.schemas.planning import (
+    PerformedSessionCreate,
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
     PlanWeekSave,
+    ReconciliationUpdate,
     RecurringGoalSpec,
     TrainingWeekPatch,
     WeekGoalCreate,
     WeekGoalUpdate,
+    WorkoutPrescription,
+    WorkoutTemplateCreate,
+    WorkoutTemplateUpdate,
 )
 from app.services import weekly_metrics
 
@@ -81,6 +91,132 @@ WEEK_PURPOSE_IDS = frozenset(
     }
 )
 PAST_WEEK_READ_ONLY_DETAIL = "Past weeks are read-only. Complete a review instead."
+
+
+def prescription_totals(prescription: WorkoutPrescription | dict) -> dict:
+    """Calculate only totals the prescription can honestly establish.
+
+    Time-based and open-ended steps do not invent distance.  A repeat's final
+    recovery is controlled explicitly instead of relying on a convention.
+    """
+    document = (
+        prescription.model_dump(by_alias=False, exclude_none=True)
+        if isinstance(prescription, WorkoutPrescription)
+        else prescription
+    )
+
+    def blocks_totals(blocks: list[dict], multiplier: int = 1) -> tuple[float, int, bool, bool]:
+        distance = 0.0
+        duration = 0
+        distance_complete = True
+        duration_complete = True
+        for block in blocks:
+            if block["kind"] == "step":
+                if block["extent"] == "distance":
+                    distance += block["distance_meters"] * multiplier
+                    duration_complete = False
+                elif block["extent"] == "duration":
+                    duration += block["duration_seconds"] * multiplier
+                    distance_complete = False
+                else:
+                    distance_complete = False
+                    duration_complete = False
+                continue
+            repetitions = block["repetitions"]
+            child_distance, child_duration, child_dist_complete, child_time_complete = (
+                blocks_totals(block["steps"], repetitions * multiplier)
+            )
+            # A recovery nested in a group is "between repetitions" by
+            # default.  Do not count a fifth recovery in 5 x work unless the
+            # author explicitly asks for it.
+            if not block.get("recovery_after_final", False):
+                recovery_blocks = [
+                    child
+                    for child in block["steps"]
+                    if child["kind"] == "step" and child.get("role") == "recovery"
+                ]
+                if recovery_blocks:
+                    final_distance, final_duration, _, _ = blocks_totals(
+                        recovery_blocks, multiplier
+                    )
+                    child_distance -= final_distance
+                    child_duration -= final_duration
+            distance += child_distance
+            duration += child_duration
+            distance_complete = distance_complete and child_dist_complete
+            duration_complete = duration_complete and child_time_complete
+        return distance, duration, distance_complete, duration_complete
+
+    distance, duration, distance_complete, duration_complete = blocks_totals(document["blocks"])
+
+    def has_open_extent(blocks: list[dict]) -> bool:
+        return any(
+            block["extent"] == "open"
+            if block["kind"] == "step"
+            else has_open_extent(block["steps"])
+            for block in blocks
+        )
+
+    has_open = has_open_extent(document["blocks"])
+    return {
+        "known_distance_meters": round(distance, 2) if distance else None,
+        "known_duration_seconds": duration or None,
+        "has_open_ended_extent": has_open,
+        "distance_complete": distance_complete,
+        "duration_complete": duration_complete,
+        "summary": "Exact totals"
+        if distance_complete and duration_complete
+        else "Open-ended extent; totals are incomplete"
+        if has_open
+        else "Mixed time and distance extents; no distance estimate was assumed",
+    }
+
+
+def legacy_prescription(workout_data: dict) -> WorkoutPrescription:
+    """Represent old simple workouts as one valid structured step."""
+    miles = workout_data.get("planned_distance")
+    duration = workout_data.get("planned_duration")
+    if miles:
+        block = {
+            "kind": "step",
+            "role": "other",
+            "extent": "distance",
+            "distance_meters": miles * 1609.344,
+            "display_unit": "mi",
+        }
+    elif duration:
+        block = {
+            "kind": "step",
+            "role": "other",
+            "extent": "duration",
+            "duration_seconds": duration,
+            "display_unit": "sec",
+        }
+    else:
+        block = {"kind": "step", "role": "other", "extent": "open"}
+    return WorkoutPrescription.model_validate({"blocks": [block]})
+
+
+def add_prescription_revision(
+    db: Session, workout: PlannedWorkout, prescription: WorkoutPrescription | None
+) -> WorkoutPrescriptionRevision:
+    document = prescription or legacy_prescription(
+        {"planned_distance": workout.planned_distance, "planned_duration": workout.planned_duration}
+    )
+    prior_revision = max(
+        (item.revision_number for item in workout.prescription_revisions), default=0
+    )
+    revision = WorkoutPrescriptionRevision(
+        planned_workout_id=workout.id,
+        revision_number=prior_revision + 1,
+        prescription_json=document.model_dump(by_alias=False, exclude_none=True),
+        calculated_totals_json=prescription_totals(document),
+    )
+    db.add(revision)
+    db.flush()
+    workout.current_prescription_revision_id = revision.id
+    workout.current_prescription = revision
+    return revision
 
 
 def week_start_for(day: date) -> date:
@@ -387,9 +523,7 @@ def update_week_goal(
     athlete_account_id: str | None = None,
 ) -> WeekGoal:
     goal = get_week_goal(db, goal_id, athlete_account_id)
-    ensure_week_is_mutable(
-        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
-    )
+    ensure_week_is_mutable(get_week_by_id(db, goal.training_week_id, goal.athlete_account_id))
     updates = payload.model_dump(exclude_unset=True)
     current = {
         field: getattr(goal, field)
@@ -423,9 +557,7 @@ def update_week_goal(
 
 def delete_week_goal(db: Session, goal_id: str, athlete_account_id: str | None = None) -> None:
     goal = get_week_goal(db, goal_id, athlete_account_id)
-    ensure_week_is_mutable(
-        get_week_by_id(db, goal.training_week_id, goal.athlete_account_id)
-    )
+    ensure_week_is_mutable(get_week_by_id(db, goal.training_week_id, goal.athlete_account_id))
     db.delete(goal)
     db.commit()
 
@@ -687,7 +819,9 @@ def recalculate_week(
     *,
     refresh_existing_workout_goals: bool = False,
 ) -> TrainingWeek:
-    totals = week_totals(list(week.workouts), activities_for_week(db, week))
+    totals = week_totals(
+        list(week.workouts), activities_for_week(db, week), performed_sessions_for_week(db, week)
+    )
     week.planned_mileage = totals["planned_mileage"]
     week.planned_time = totals["planned_time"]
     week.actual_mileage = totals["actual_mileage"]
@@ -712,12 +846,17 @@ def create_workout(
     athlete = ensure_default_athlete(db) if athlete_account_id is None else None
     active_athlete_id = athlete_account_id or athlete.id
     week = get_or_create_mutable_week(db, payload.planned_date, active_athlete_id)
+    data = payload.model_dump(exclude={"prescription"})
+    prescription = payload.prescription
     workout = PlannedWorkout(
         athlete_account_id=active_athlete_id,
         training_week_id=week.id,
-        **payload.model_dump(),
+        **data,
     )
     db.add(workout)
+    db.flush()
+    add_prescription_revision(db, workout, prescription)
+    db.add(WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date))
     db.commit()
     db.refresh(workout)
     recalculate_week(db, week, refresh_existing_workout_goals=True)
@@ -746,7 +885,13 @@ def get_workout(
     if athlete_account_id is not None:
         conditions.append(PlannedWorkout.athlete_account_id == athlete_account_id)
     workout = db.scalars(
-        select(PlannedWorkout).where(*conditions).options(selectinload(PlannedWorkout.steps))
+        select(PlannedWorkout)
+        .where(*conditions)
+        .options(
+            selectinload(PlannedWorkout.steps),
+            selectinload(PlannedWorkout.prescription_revisions),
+            selectinload(PlannedWorkout.current_prescription),
+        )
     ).first()
     if not workout:
         raise HTTPException(
@@ -764,10 +909,17 @@ def update_workout(
 ) -> PlannedWorkout:
     workout = get_workout(db, workout_id, athlete_account_id)
     original_week_id = workout.training_week_id
-    ensure_week_is_mutable(
-        get_week_by_id(db, original_week_id, workout.athlete_account_id)
-    )
+    ensure_week_is_mutable(get_week_by_id(db, original_week_id, workout.athlete_account_id))
     updates = payload.model_dump(exclude_unset=True)
+    expected_version = updates.pop("expected_version", None)
+    prescription = updates.pop("prescription", None)
+    if prescription is not None:
+        prescription = WorkoutPrescription.model_validate(prescription)
+    if expected_version is not None and expected_version != workout.version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This workout changed in another editor. Reload before saving.",
+        )
 
     new_week = None
     if "planned_date" in updates:
@@ -782,6 +934,25 @@ def update_workout(
 
     if new_week is not None:
         workout.training_week_id = new_week.id
+
+    if prescription is not None:
+        add_prescription_revision(db, workout, prescription)
+        totals = prescription_totals(prescription)
+        # Keep legacy summary fields useful to existing boards without
+        # rescaling or mutating the structured steps.
+        if totals["distance_complete"]:
+            workout.planned_distance = (totals["known_distance_meters"] or 0) / 1609.344
+        if totals["duration_complete"]:
+            workout.planned_duration = totals["known_duration_seconds"]
+    if "planned_date" in updates:
+        db.add(
+            WorkoutScheduleEvent(
+                planned_workout_id=workout.id,
+                scheduled_date=workout.planned_date,
+                event_type="moved",
+            )
+        )
+    workout.version += 1
 
     db.commit()
     db.refresh(workout)
@@ -813,9 +984,7 @@ def duplicate_workout(
     athlete_account_id: str | None = None,
 ) -> PlannedWorkout:
     source = get_workout(db, workout_id, athlete_account_id)
-    ensure_week_is_mutable(
-        get_week_by_id(db, source.training_week_id, source.athlete_account_id)
-    )
+    ensure_week_is_mutable(get_week_by_id(db, source.training_week_id, source.athlete_account_id))
     clone = clone_workout(
         source,
         source.training_week_id,
@@ -823,6 +992,14 @@ def duplicate_workout(
         title=f"{source.title} copy",
     )
     db.add(clone)
+    db.flush()
+    source_document = (
+        WorkoutPrescription.model_validate(source.current_prescription.prescription_json)
+        if source.current_prescription is not None
+        else None
+    )
+    add_prescription_revision(db, clone, source_document)
+    db.add(WorkoutScheduleEvent(planned_workout_id=clone.id, scheduled_date=clone.planned_date))
     db.commit()
     db.refresh(clone)
     recalculate_week(
@@ -831,6 +1008,342 @@ def duplicate_workout(
         refresh_existing_workout_goals=True,
     )
     return get_workout(db, clone.id, source.athlete_account_id)
+
+
+def serialize_template(template: WorkoutTemplate) -> dict:
+    return {
+        "id": template.id,
+        "athlete_account_id": template.athlete_account_id,
+        "name": template.name,
+        "workout_type": template.workout_type,
+        "tags": __import__("json").loads(template.tags or "[]"),
+        "prescription": template.prescription_json,
+        "purpose": template.default_purpose,
+        "instructions": template.default_instructions,
+        "version": template.version,
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
+def list_templates(db: Session, athlete_account_id: str) -> list[WorkoutTemplate]:
+    return list(
+        db.scalars(
+            select(WorkoutTemplate)
+            .where(WorkoutTemplate.athlete_account_id == athlete_account_id)
+            .order_by(WorkoutTemplate.name)
+        )
+    )
+
+
+def create_template(
+    db: Session, payload: WorkoutTemplateCreate, athlete_account_id: str
+) -> WorkoutTemplate:
+    import json
+
+    template = WorkoutTemplate(
+        athlete_account_id=athlete_account_id,
+        name=payload.name,
+        workout_type=payload.workout_type,
+        tags=json.dumps(payload.tags),
+        prescription_json=payload.prescription.model_dump(exclude_none=True),
+        default_purpose=payload.purpose,
+        default_instructions=payload.instructions,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return template
+
+
+def get_template(db: Session, template_id: str, athlete_account_id: str) -> WorkoutTemplate:
+    template = db.scalars(
+        select(WorkoutTemplate).where(
+            WorkoutTemplate.id == template_id,
+            WorkoutTemplate.athlete_account_id == athlete_account_id,
+        )
+    ).first()
+    if template is None:
+        raise HTTPException(status_code=404, detail="Workout template not found.")
+    return template
+
+
+def update_template(
+    db: Session, template_id: str, payload: WorkoutTemplateUpdate, athlete_account_id: str
+) -> WorkoutTemplate:
+    import json
+
+    template = get_template(db, template_id, athlete_account_id)
+    changes = payload.model_dump(exclude_unset=True)
+    expected_version = changes.pop("expected_version", None)
+    if expected_version is not None and expected_version != template.version:
+        raise HTTPException(
+            status_code=409, detail="This template changed in another editor. Reload before saving."
+        )
+    if "prescription" in changes:
+        changes["prescription_json"] = WorkoutPrescription.model_validate(
+            changes.pop("prescription")
+        ).model_dump(exclude_none=True)
+    if "tags" in changes:
+        changes["tags"] = json.dumps(changes["tags"])
+    if "purpose" in changes:
+        changes["default_purpose"] = changes.pop("purpose")
+    if "instructions" in changes:
+        changes["default_instructions"] = changes.pop("instructions")
+    for name, value in changes.items():
+        setattr(template, name, value)
+    template.version += 1
+    db.commit()
+    db.refresh(template)
+    return template
+
+
+def schedule_template(
+    db: Session,
+    template_id: str,
+    planned_date: date,
+    athlete_account_id: str,
+    title: str | None = None,
+) -> PlannedWorkout:
+    template = get_template(db, template_id, athlete_account_id)
+    prescription = WorkoutPrescription.model_validate(template.prescription_json)
+    totals = prescription_totals(prescription)
+    workout = create_workout(
+        db,
+        PlannedWorkoutCreate(
+            planned_date=planned_date,
+            title=title or template.name,
+            workout_type=template.workout_type,
+            planned_distance=(totals["known_distance_meters"] or 0) / 1609.344
+            if totals["distance_complete"]
+            else None,
+            planned_duration=totals["known_duration_seconds"]
+            if totals["duration_complete"]
+            else None,
+            purpose=template.default_purpose,
+            instructions=template.default_instructions,
+            prescription=prescription,
+        ),
+        athlete_account_id,
+    )
+    return workout
+
+
+def _replace_session_recordings(db: Session, session: PerformedSession, recordings: list) -> None:
+    seen: set[str] = set()
+    session.recordings.clear()
+    db.flush()
+    for input_recording in recordings:
+        if input_recording.strava_activity_id in seen:
+            raise HTTPException(
+                status_code=422, detail="A recording can only appear once in a session."
+            )
+        seen.add(input_recording.strava_activity_id)
+        activity = db.get(StravaActivity, input_recording.strava_activity_id)
+        if activity is None or activity.athlete_account_id != session.athlete_account_id:
+            raise HTTPException(status_code=404, detail="Activity not found for this athlete.")
+        existing = db.scalars(
+            select(PerformedSessionRecording).where(
+                PerformedSessionRecording.strava_activity_id == activity.id,
+                PerformedSessionRecording.performed_session_id != session.id,
+            )
+        ).first()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409, detail="This recording already belongs to another session."
+            )
+        session.recordings.append(
+            PerformedSessionRecording(
+                strava_activity_id=activity.id,
+                contributes_to_totals=input_recording.contributes_to_totals,
+            )
+        )
+
+
+def session_totals(db: Session, session: PerformedSession) -> tuple[float | None, int | None]:
+    activity_ids = [
+        recording.strava_activity_id
+        for recording in session.recordings
+        if recording.contributes_to_totals
+    ]
+    activities = (
+        list(db.scalars(select(StravaActivity).where(StravaActivity.id.in_(activity_ids))))
+        if activity_ids
+        else []
+    )
+    distance = sum(activity.distance for activity in activities) + (
+        session.manual_distance_meters or 0
+    )
+    duration = sum(activity.moving_time or 0 for activity in activities) + (
+        session.manual_duration_seconds or 0
+    )
+    return (distance or None, duration or None)
+
+
+def serialize_performed_session(db: Session, session: PerformedSession) -> dict:
+    distance, duration = session_totals(db, session)
+    return {
+        "id": session.id,
+        "athlete_account_id": session.athlete_account_id,
+        "occurred_at": session.occurred_at,
+        "sport": session.sport,
+        "recordings": [
+            {
+                "strava_activity_id": item.strava_activity_id,
+                "contributes_to_totals": item.contributes_to_totals,
+            }
+            for item in session.recordings
+        ],
+        "manual_distance_meters": session.manual_distance_meters,
+        "manual_duration_seconds": session.manual_duration_seconds,
+        "planned_workout_id": session.planned_workout_id,
+        "prescription_revision_id": session.prescription_revision_id,
+        "association": session.association,
+        "match_provenance": session.match_provenance,
+        "outcome": session.outcome,
+        "intensity_category": session.intensity_category,
+        "evidence": session.evidence,
+        "assessment_note": session.assessment_note,
+        "evidence_changed": session.evidence_changed,
+        "version": session.version,
+        "total_distance_meters": distance,
+        "total_duration_seconds": duration,
+    }
+
+
+def create_performed_session(
+    db: Session, payload: PerformedSessionCreate, athlete_account_id: str
+) -> PerformedSession:
+    session = PerformedSession(
+        athlete_account_id=athlete_account_id,
+        occurred_at=payload.occurred_at,
+        sport=payload.sport,
+        manual_distance_meters=payload.manual_distance_meters,
+        manual_duration_seconds=payload.manual_duration_seconds,
+    )
+    if payload.planned_workout_id:
+        workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
+        session.planned_workout_id = workout.id
+        session.prescription_revision_id = workout.current_prescription_revision_id
+        session.association = "associated"
+        session.match_provenance = "user_confirmed"
+    db.add(session)
+    db.flush()
+    _replace_session_recordings(db, session, payload.recordings)
+    db.commit()
+    return get_performed_session(db, session.id, athlete_account_id)
+
+
+def get_performed_session(
+    db: Session, session_id: str, athlete_account_id: str
+) -> PerformedSession:
+    session = db.scalars(
+        select(PerformedSession)
+        .where(
+            PerformedSession.id == session_id,
+            PerformedSession.athlete_account_id == athlete_account_id,
+        )
+        .options(selectinload(PerformedSession.recordings))
+    ).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Performed session not found.")
+    return session
+
+
+def list_performed_sessions(db: Session, athlete_account_id: str) -> list[PerformedSession]:
+    return list(
+        db.scalars(
+            select(PerformedSession)
+            .where(PerformedSession.athlete_account_id == athlete_account_id)
+            .options(selectinload(PerformedSession.recordings))
+            .order_by(PerformedSession.occurred_at.desc())
+        )
+    )
+
+
+def reconcile_session(
+    db: Session, session_id: str, payload: ReconciliationUpdate, athlete_account_id: str
+) -> PerformedSession:
+    session = get_performed_session(db, session_id, athlete_account_id)
+    if payload.expected_version is not None and payload.expected_version != session.version:
+        raise HTTPException(
+            status_code=409, detail="This session changed in another editor. Reload before saving."
+        )
+    if payload.recordings is not None:
+        _replace_session_recordings(db, session, payload.recordings)
+    if payload.planned_workout_id is None:
+        session.planned_workout_id = None
+        session.prescription_revision_id = None
+        session.association = "unmatched"
+        session.match_provenance = None
+    else:
+        workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
+        session.planned_workout_id = workout.id
+        session.prescription_revision_id = workout.current_prescription_revision_id
+        session.association = payload.association
+        session.match_provenance = payload.match_provenance
+    session.outcome = payload.outcome
+    session.intensity_category = payload.intensity_category
+    session.evidence = payload.evidence
+    session.assessment_note = payload.assessment_note
+    session.version += 1
+    db.commit()
+    return get_performed_session(db, session.id, athlete_account_id)
+
+
+def match_suggestions(db: Session, session_id: str, athlete_account_id: str) -> list[dict]:
+    """Return only explainable, review-required candidates.
+
+    The caller still owns the association decision.  This deliberately avoids
+    a numeric score or import-order-dependent automatic assignment.
+    """
+    session = get_performed_session(db, session_id, athlete_account_id)
+    session_date = session.occurred_at.date()
+    candidates = list(
+        db.scalars(
+            select(PlannedWorkout)
+            .where(
+                PlannedWorkout.athlete_account_id == athlete_account_id,
+                PlannedWorkout.planned_date >= session_date - timedelta(days=1),
+                PlannedWorkout.planned_date <= session_date + timedelta(days=1),
+            )
+            .order_by(PlannedWorkout.planned_date, PlannedWorkout.created_at)
+        )
+    )
+    already_associated = set(
+        db.scalars(
+            select(PerformedSession.planned_workout_id).where(
+                PerformedSession.athlete_account_id == athlete_account_id,
+                PerformedSession.planned_workout_id.is_not(None),
+                PerformedSession.id != session.id,
+                PerformedSession.association == "associated",
+            )
+        )
+    )
+    suggestions: list[dict] = []
+    for workout in candidates:
+        if workout.id in already_associated:
+            continue
+        compatible = workout.sport == session.sport or {workout.sport, session.sport} <= {
+            "run",
+            "cross_training",
+        }
+        if not compatible:
+            continue
+        if workout.planned_date == session_date:
+            reason = "Same day and compatible sport. Review to confirm the intended workout."
+        else:
+            direction = "previous" if workout.planned_date < session_date else "next"
+            reason = f"Compatible {direction}-day workout. Review before associating it."
+        suggestions.append(
+            {
+                "planned_workout_id": workout.id,
+                "title": workout.title,
+                "planned_date": workout.planned_date,
+                "reason": reason,
+            }
+        )
+    return suggestions
 
 
 def copy_prior_week(
@@ -842,9 +1355,7 @@ def copy_prior_week(
     target: TrainingWeek | None = None
     if virtual_target_start is not None:
         ensure_week_start_is_mutable(db, virtual_target_start, athlete_account_id)
-        active_athlete_id = (
-            athlete_account_id or ensure_default_athlete(db).id
-        )
+        active_athlete_id = athlete_account_id or ensure_default_athlete(db).id
         target_start = virtual_target_start
     else:
         target = get_or_create_week_for_mutation(db, week_id, athlete_account_id)
@@ -924,12 +1435,17 @@ def save_week_plan(
     db.flush()
 
     for workout_payload in payload.workouts:
+        workout_data = workout_payload.model_dump(exclude={"prescription"})
+        workout = PlannedWorkout(
+            athlete_account_id=week.athlete_account_id,
+            training_week_id=week.id,
+            **workout_data,
+        )
+        db.add(workout)
+        db.flush()
+        add_prescription_revision(db, workout, workout_payload.prescription)
         db.add(
-            PlannedWorkout(
-                athlete_account_id=week.athlete_account_id,
-                training_week_id=week.id,
-                **workout_payload.model_dump(),
-            )
+            WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date)
         )
 
     for goal_payload in payload.goals:
@@ -954,11 +1470,15 @@ def complete_week_review(
 ) -> TrainingWeek:
     """Persist a past-week review without modifying its plan or outcomes."""
     virtual_week_start = week_start_from_virtual_id(week_id, athlete_account_id)
-    if virtual_week_start is not None and week_state_for_start(
-        db,
-        virtual_week_start,
-        athlete_account_id,
-    ) != "past":
+    if (
+        virtual_week_start is not None
+        and week_state_for_start(
+            db,
+            virtual_week_start,
+            athlete_account_id,
+        )
+        != "past"
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only completed weeks can be reviewed.",
@@ -1071,11 +1591,7 @@ def clone_week_goal(source: WeekGoal, target: TrainingWeek) -> WeekGoal:
         evaluation_mode=source.evaluation_mode,
         priority=source.priority,
         status="not_started" if source.status != "waived" else "waived",
-        source=(
-            source.source
-            if source.source in {"plan", "workouts", "default"}
-            else "manual"
-        ),
+        source=(source.source if source.source in {"plan", "workouts", "default"} else "manual"),
         is_editable=source.is_editable,
         is_enabled=source.is_enabled,
     )
@@ -1135,6 +1651,23 @@ def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]
     )
 
 
+def performed_sessions_for_week(db: Session, week: TrainingWeek) -> list[PerformedSession]:
+    start = datetime.combine(week.week_start_date, time.min)
+    end = datetime.combine(week.week_end_date + timedelta(days=1), time.min)
+    return list(
+        db.scalars(
+            select(PerformedSession)
+            .where(
+                PerformedSession.athlete_account_id == week.athlete_account_id,
+                PerformedSession.occurred_at >= start,
+                PerformedSession.occurred_at < end,
+            )
+            .options(selectinload(PerformedSession.recordings))
+            .order_by(PerformedSession.occurred_at)
+        )
+    )
+
+
 def activities_for_date_range(
     db: Session,
     athlete_account_id: str,
@@ -1182,7 +1715,8 @@ def serialize_week(
         default_goals = list_default_goals(db, week.athlete_account_id)
     workouts = list(week.workouts)
     actual_activities = activities_for_week(db, week)
-    totals = week_totals(workouts, actual_activities)
+    performed_sessions = performed_sessions_for_week(db, week)
+    totals = week_totals(workouts, actual_activities, performed_sessions)
     hard_days = {
         workout.planned_date
         for workout in workouts
@@ -1205,6 +1739,7 @@ def serialize_week(
         workouts,
         actual_activities,
         today=current_day,
+        sessions=performed_sessions,
     )
     goal_evaluations = [
         evaluate_goal(
@@ -1237,6 +1772,9 @@ def serialize_week(
         "reviewed_at": week.reviewed_at.isoformat() if week.reviewed_at else None,
         "workouts": workouts,
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
+        "performed_sessions": [
+            serialize_performed_session(db, session) for session in performed_sessions
+        ],
         "goals": [serialize_goal(goal) for goal in goals],
         "goal_evaluations": goal_evaluations,
         "week_state": week_state,
@@ -1250,7 +1788,13 @@ def serialize_week(
 def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: str) -> dict:
     week_end = week_end_for(week_start)
     actual_activities = activities_for_date_range(db, athlete_account_id, week_start, week_end)
-    totals = week_totals([], actual_activities)
+    virtual_week = TrainingWeek(
+        athlete_account_id=athlete_account_id,
+        week_start_date=week_start,
+        week_end_date=week_end,
+    )
+    performed_sessions = performed_sessions_for_week(db, virtual_week)
+    totals = week_totals([], actual_activities, performed_sessions)
     athlete = db.get(AthleteAccount, athlete_account_id)
     return {
         "id": virtual_week_id(athlete_account_id, week_start),
@@ -1272,6 +1816,9 @@ def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: st
         "reviewed_at": None,
         "workouts": [],
         "actual_activities": [serialize_activity(activity) for activity in actual_activities],
+        "performed_sessions": [
+            serialize_performed_session(db, session) for session in performed_sessions
+        ],
         "goals": [],
         "goal_evaluations": [],
         "week_state": get_week_state_from_dates(
@@ -1286,23 +1833,55 @@ def serialize_virtual_week(db: Session, week_start: date, athlete_account_id: st
     }
 
 
-def week_totals(workouts: list[PlannedWorkout], activities: list[StravaActivity]) -> dict:
+def week_totals(
+    workouts: list[PlannedWorkout],
+    activities: list[StravaActivity],
+    sessions: list[PerformedSession] | None = None,
+) -> dict:
     planned_mileage = sum(
         workout.planned_distance or 0 for workout in workouts if workout.sport == "run"
     )
     planned_time = sum(workout.planned_duration or 0 for workout in workouts)
-    actual_mileage = sum(
-        activity.distance / 1609.344
-        for activity in activities
-        if is_run_activity(activity)
+    sessions = sessions or []
+    grouped_activity_ids = {
+        recording.strava_activity_id for session in sessions for recording in session.recordings
+    }
+    ungrouped_activities = [
+        activity for activity in activities if activity.id not in grouped_activity_ids
+    ]
+    actual_meters = sum(
+        activity.distance for activity in ungrouped_activities if is_run_activity(activity)
     )
-    actual_time = sum(activity.moving_time or 0 for activity in activities)
+    actual_time = sum(activity.moving_time or 0 for activity in ungrouped_activities)
+    for session in sessions:
+        distance, duration = session_totals_for_activities(session, activities)
+        if session.sport == "run":
+            actual_meters += distance or 0
+        actual_time += duration or 0
     return {
         "planned_mileage": round(planned_mileage, 2),
         "planned_time": planned_time or None,
-        "actual_mileage": round(actual_mileage, 2),
+        "actual_mileage": round(actual_meters / 1609.344, 2),
         "actual_time": actual_time or None,
     }
+
+
+def session_totals_for_activities(
+    session: PerformedSession, activities: list[StravaActivity]
+) -> tuple[float | None, int | None]:
+    by_id = {activity.id: activity for activity in activities}
+    recordings = [
+        by_id[recording.strava_activity_id]
+        for recording in session.recordings
+        if recording.contributes_to_totals and recording.strava_activity_id in by_id
+    ]
+    distance = sum(activity.distance for activity in recordings) + (
+        session.manual_distance_meters or 0
+    )
+    duration = sum(activity.moving_time or 0 for activity in recordings) + (
+        session.manual_duration_seconds or 0
+    )
+    return distance or None, duration or None
 
 
 def enabled_goals_for_week(
@@ -1434,9 +2013,7 @@ def default_goals_for_week(week: TrainingWeek) -> list[dict]:
         planned_mileage = round(week.target_mileage, 1)
     planned_sessions = len([workout for workout in workouts if workout.sport != "rest"])
     hard_dates = {
-        workout.planned_date
-        for workout in workouts
-        if weekly_metrics.is_quality_workout(workout)
+        workout.planned_date for workout in workouts if weekly_metrics.is_quality_workout(workout)
     }
     strength_sessions = len(
         [
@@ -1863,8 +2440,7 @@ def evaluate_long_run_goal(
     manual_completed_runs = [
         workout
         for workout in planned_runs
-        if is_manually_completed_workout(workout)
-        and workout.planned_date not in run_activity_dates
+        if is_manually_completed_workout(workout) and workout.planned_date not in run_activity_dates
     ]
     actual = round(
         max(

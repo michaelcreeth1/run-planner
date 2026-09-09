@@ -47,6 +47,61 @@ export type Workout = {
     | "replaced"
     | "skipped_intentionally"
     | "partial";
+  prescription?: WorkoutPrescription | null;
+  currentPrescriptionRevision?: WorkoutPrescriptionRevision | null;
+  version?: number;
+};
+
+export type PrescriptionTarget = {
+  kind: "pace" | "heart_rate" | "rpe" | "guidance";
+  minValue?: number | null;
+  maxValue?: number | null;
+  value?: number | null;
+  unit?: string | null;
+  guidance: string;
+};
+
+export type PrescriptionStep = {
+  kind: "step";
+  id?: string;
+  role: "warmup" | "work" | "recovery" | "cooldown" | "other";
+  extent: "distance" | "duration" | "open";
+  distanceMeters?: number | null;
+  durationSeconds?: number | null;
+  displayUnit?: "m" | "km" | "mi" | "min" | "sec" | null;
+  primaryTarget?: PrescriptionTarget | null;
+  supportingTargets: PrescriptionTarget[];
+  notes: string;
+};
+
+export type PrescriptionRepeatGroup = {
+  kind: "repeat";
+  id?: string;
+  repetitions: number;
+  steps: PrescriptionBlock[];
+  recoveryAfterFinal: boolean;
+  notes: string;
+};
+
+export type PrescriptionBlock = PrescriptionStep | PrescriptionRepeatGroup;
+
+export type WorkoutPrescription = { blocks: PrescriptionBlock[] };
+
+export type PrescriptionTotals = {
+  knownDistanceMeters: number | null;
+  knownDurationSeconds: number | null;
+  hasOpenEndedExtent: boolean;
+  distanceComplete: boolean;
+  durationComplete: boolean;
+  summary: string;
+};
+
+export type WorkoutPrescriptionRevision = {
+  id: string;
+  revisionNumber: number;
+  prescription: WorkoutPrescription;
+  calculatedTotals: PrescriptionTotals;
+  createdAt: string;
 };
 
 export type WeekGoalCategory = "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";
@@ -137,6 +192,7 @@ export type TrainingWeek = {
   actualMileage: number;
   plannedTime: number | null;
   actualTime: number | null;
+  performedSessions?: PerformedSession[];
   mesocycleId: string | null;
   purpose: WeekPurposeId | string;
   purposeSource: FieldSource;
@@ -156,6 +212,28 @@ export type TrainingWeek = {
   hardDays: number;
   longRunDistance: number;
   longRunPercentage: number;
+};
+
+export type PerformedSession = {
+  id: string;
+  athleteAccountId: string;
+  occurredAt: string;
+  sport: Workout["sport"];
+  recordings: Array<{ stravaActivityId: string; contributesToTotals: boolean }>;
+  manualDistanceMeters: number | null;
+  manualDurationSeconds: number | null;
+  plannedWorkoutId: string | null;
+  prescriptionRevisionId: string | null;
+  association: "unmatched" | "suggested" | "associated";
+  matchProvenance: "automatic" | "suggested" | "user_confirmed" | null;
+  outcome: "unresolved" | "as_planned" | "modified" | "partial" | "replaced" | "skipped" | "missed";
+  intensityCategory: Workout["intensityCategory"] | null;
+  evidence: "activity_summary" | "recorded_laps" | "user_confirmation" | "insufficient_data";
+  assessmentNote: string;
+  evidenceChanged: boolean;
+  version: number;
+  totalDistanceMeters: number | null;
+  totalDurationSeconds: number | null;
 };
 
 export type ActualActivity = {
@@ -326,6 +404,8 @@ export type WorkoutForm = {
   instructions: string;
   notes: string;
   status: Workout["status"];
+  prescription?: WorkoutPrescription | null;
+  version?: number;
 };
 
 export type WeekGoalForm = {

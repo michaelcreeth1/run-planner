@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -49,6 +49,17 @@ WorkoutStatus = Literal[
     "replaced",
     "skipped_intentionally",
     "partial",
+]
+PrescriptionRole = Literal["warmup", "work", "recovery", "cooldown", "other"]
+PrescriptionExtent = Literal["distance", "duration", "open"]
+PrescriptionTargetKind = Literal["pace", "heart_rate", "rpe", "guidance"]
+SessionAssociation = Literal["unmatched", "suggested", "associated"]
+SessionOutcome = Literal[
+    "unresolved", "as_planned", "modified", "partial", "replaced", "skipped", "missed"
+]
+MatchProvenance = Literal["automatic", "suggested", "user_confirmed"]
+EvidenceLevel = Literal[
+    "activity_summary", "recorded_laps", "user_confirmation", "insufficient_data"
 ]
 WeekGoalCategory = Literal[
     "mileage",
@@ -110,6 +121,82 @@ class PlannedWorkoutStepRead(ApiModel):
     notes: str
 
 
+class PrescriptionTarget(ApiModel):
+    """A primary target with optional supporting constraints.
+
+    Numeric pace values are seconds per kilometre or mile only when paired
+    with the display unit in the containing step.  The stored prescription
+    keeps the number canonical in seconds per metre so no unit conversion can
+    alter its meaning.
+    """
+
+    kind: PrescriptionTargetKind
+    min_value: float | None = None
+    max_value: float | None = None
+    value: float | None = None
+    unit: str | None = None
+    guidance: str = ""
+
+
+class PrescriptionStep(ApiModel):
+    kind: Literal["step"] = "step"
+    id: str | None = None
+    role: PrescriptionRole = "other"
+    extent: PrescriptionExtent
+    distance_meters: float | None = Field(default=None, gt=0)
+    duration_seconds: int | None = Field(default=None, gt=0)
+    display_unit: Literal["m", "km", "mi", "min", "sec"] | None = None
+    primary_target: PrescriptionTarget | None = None
+    supporting_targets: list[PrescriptionTarget] = []
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def validate_extent(self):
+        if self.extent == "distance":
+            if self.distance_meters is None or self.duration_seconds is not None:
+                raise ValueError("Distance steps require distance_meters only.")
+        elif self.extent == "duration":
+            if self.duration_seconds is None or self.distance_meters is not None:
+                raise ValueError("Duration steps require duration_seconds only.")
+        elif self.distance_meters is not None or self.duration_seconds is not None:
+            raise ValueError("Open-ended steps cannot have a fixed distance or duration.")
+        return self
+
+
+class PrescriptionRepeatGroup(ApiModel):
+    kind: Literal["repeat"] = "repeat"
+    id: str | None = None
+    repetitions: int = Field(ge=1, le=100)
+    steps: list["PrescriptionBlock"] = Field(min_length=1)
+    recovery_after_final: bool = False
+    notes: str = ""
+
+
+PrescriptionBlock = PrescriptionStep | PrescriptionRepeatGroup
+PrescriptionRepeatGroup.model_rebuild()
+
+
+class WorkoutPrescription(ApiModel):
+    blocks: list[PrescriptionBlock] = Field(min_length=1)
+
+
+class PrescriptionTotals(ApiModel):
+    known_distance_meters: float | None = None
+    known_duration_seconds: int | None = None
+    has_open_ended_extent: bool = False
+    distance_complete: bool
+    duration_complete: bool
+    summary: str
+
+
+class WorkoutPrescriptionRevisionRead(ApiModel):
+    id: str
+    revision_number: int
+    prescription: WorkoutPrescription
+    calculated_totals: PrescriptionTotals
+    created_at: datetime
+
+
 class PlannedWorkoutBase(ApiModel):
     planned_date: date
     title: str = Field(min_length=1, max_length=120)
@@ -125,6 +212,7 @@ class PlannedWorkoutBase(ApiModel):
     instructions: str = ""
     notes: str = ""
     status: WorkoutStatus = "planned"
+    prescription: WorkoutPrescription | None = None
 
 
 class PlannedWorkoutCreate(PlannedWorkoutBase):
@@ -146,6 +234,8 @@ class PlannedWorkoutUpdate(ApiModel):
     instructions: str | None = None
     notes: str | None = None
     status: WorkoutStatus | None = None
+    prescription: WorkoutPrescription | None = None
+    expected_version: int | None = Field(default=None, ge=1)
 
     @field_validator(
         "planned_date",
@@ -175,6 +265,97 @@ class PlannedWorkoutRead(PlannedWorkoutBase):
     training_week_id: str
     athlete_account_id: str
     steps: list[PlannedWorkoutStepRead] = []
+    current_prescription_revision: WorkoutPrescriptionRevisionRead | None = None
+    version: int = 1
+
+
+class WorkoutTemplateBase(ApiModel):
+    name: str = Field(min_length=1, max_length=120)
+    workout_type: WorkoutType = "easy"
+    tags: list[str] = []
+    prescription: WorkoutPrescription
+    purpose: str = ""
+    instructions: str = ""
+
+
+class WorkoutTemplateCreate(WorkoutTemplateBase):
+    pass
+
+
+class WorkoutTemplateUpdate(ApiModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    workout_type: WorkoutType | None = None
+    tags: list[str] | None = None
+    prescription: WorkoutPrescription | None = None
+    purpose: str | None = None
+    instructions: str | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class WorkoutTemplateRead(WorkoutTemplateBase):
+    id: str
+    athlete_account_id: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleTemplateRequest(ApiModel):
+    planned_date: date
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class SessionRecordingInput(ApiModel):
+    strava_activity_id: str
+    contributes_to_totals: bool = True
+
+
+class PerformedSessionBase(ApiModel):
+    occurred_at: datetime
+    sport: Sport = "run"
+    recordings: list[SessionRecordingInput] = []
+    manual_distance_meters: float | None = Field(default=None, ge=0)
+    manual_duration_seconds: int | None = Field(default=None, ge=0)
+
+
+class PerformedSessionCreate(PerformedSessionBase):
+    planned_workout_id: str | None = None
+
+
+class ReconciliationUpdate(ApiModel):
+    planned_workout_id: str | None = None
+    recordings: list[SessionRecordingInput] | None = None
+    association: SessionAssociation = "associated"
+    match_provenance: MatchProvenance = "user_confirmed"
+    outcome: SessionOutcome = "unresolved"
+    intensity_category: IntensityCategory | None = None
+    evidence: EvidenceLevel = "user_confirmation"
+    assessment_note: str = ""
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class PerformedSessionRead(PerformedSessionBase):
+    id: str
+    athlete_account_id: str
+    planned_workout_id: str | None = None
+    prescription_revision_id: str | None = None
+    association: SessionAssociation
+    match_provenance: MatchProvenance | None = None
+    outcome: SessionOutcome
+    intensity_category: IntensityCategory | None = None
+    evidence: EvidenceLevel
+    assessment_note: str
+    evidence_changed: bool
+    version: int
+    total_distance_meters: float | None = None
+    total_duration_seconds: int | None = None
+
+
+class MatchSuggestion(ApiModel):
+    planned_workout_id: str
+    title: str
+    planned_date: date
+    reason: str
 
 
 class ActualActivityRead(ApiModel):
@@ -350,6 +531,7 @@ class TrainingWeekRead(ApiModel):
     actual_mileage: float
     planned_time: int | None = None
     actual_time: int | None = None
+    performed_sessions: list[PerformedSessionRead] = []
     mesocycle_id: str | None = None
     purpose: WeekPurpose | str
     purpose_source: FieldSource

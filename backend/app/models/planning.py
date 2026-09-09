@@ -2,6 +2,8 @@ from datetime import date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -193,6 +195,10 @@ class PlannedWorkout(Base):
     instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String, nullable=False, default="planned")
+    current_prescription_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workout_prescription_revisions.id", ondelete="SET NULL")
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -206,6 +212,139 @@ class PlannedWorkout(Base):
         cascade="all, delete-orphan",
         order_by="PlannedWorkoutStep.step_order",
     )
+    prescription_revisions: Mapped[list["WorkoutPrescriptionRevision"]] = relationship(
+        back_populates="planned_workout",
+        foreign_keys="WorkoutPrescriptionRevision.planned_workout_id",
+        cascade="all, delete-orphan",
+        order_by="WorkoutPrescriptionRevision.revision_number",
+    )
+    current_prescription: Mapped["WorkoutPrescriptionRevision | None"] = relationship(
+        foreign_keys=[current_prescription_revision_id],
+        post_update=True,
+    )
+    schedule_history: Mapped[list["WorkoutScheduleEvent"]] = relationship(
+        back_populates="planned_workout", cascade="all, delete-orphan"
+    )
+    performed_sessions: Mapped[list["PerformedSession"]] = relationship(
+        back_populates="planned_workout", foreign_keys="PerformedSession.planned_workout_id"
+    )
+
+    @property
+    def prescription(self) -> dict | None:
+        return (
+            self.current_prescription.prescription_json
+            if self.current_prescription is not None
+            else None
+        )
+
+    @property
+    def current_prescription_revision(self) -> "WorkoutPrescriptionRevision | None":
+        return self.current_prescription
+
+
+class WorkoutPrescriptionRevision(Base):
+    """An immutable snapshot of a workout prescription.
+
+    The JSON document deliberately owns the nested workout structure.  The
+    relational row gives that document a stable, auditable identity.
+    """
+
+    __tablename__ = "workout_prescription_revisions"
+    __table_args__ = (UniqueConstraint("planned_workout_id", "revision_number"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    planned_workout_id: Mapped[str] = mapped_column(
+        ForeignKey("planned_workouts.id", ondelete="CASCADE"), nullable=False
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    prescription_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    calculated_totals_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    planned_workout: Mapped[PlannedWorkout] = relationship(
+        back_populates="prescription_revisions", foreign_keys=[planned_workout_id]
+    )
+
+    @property
+    def prescription(self) -> dict:
+        return self.prescription_json
+
+    @property
+    def calculated_totals(self) -> dict:
+        return self.calculated_totals_json
+
+
+class WorkoutScheduleEvent(Base):
+    __tablename__ = "workout_schedule_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    planned_workout_id: Mapped[str] = mapped_column(
+        ForeignKey("planned_workouts.id", ondelete="CASCADE"), nullable=False
+    )
+    scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
+    slot: Mapped[str | None] = mapped_column(String)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, default="scheduled")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    planned_workout: Mapped[PlannedWorkout] = relationship(back_populates="schedule_history")
+
+
+class PerformedSession(Base):
+    __tablename__ = "performed_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    athlete_account_id: Mapped[str] = mapped_column(
+        ForeignKey("athlete_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    sport: Mapped[str] = mapped_column(String, nullable=False, default="run")
+    planned_workout_id: Mapped[str | None] = mapped_column(
+        ForeignKey("planned_workouts.id", ondelete="SET NULL")
+    )
+    prescription_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workout_prescription_revisions.id", ondelete="SET NULL")
+    )
+    association: Mapped[str] = mapped_column(String, nullable=False, default="unmatched")
+    match_provenance: Mapped[str | None] = mapped_column(String)
+    outcome: Mapped[str] = mapped_column(String, nullable=False, default="unresolved")
+    intensity_category: Mapped[str | None] = mapped_column(String)
+    evidence: Mapped[str] = mapped_column(String, nullable=False, default="insufficient_data")
+    assessment_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    manual_distance_meters: Mapped[float | None] = mapped_column(Float)
+    manual_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    evidence_changed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    planned_workout: Mapped["PlannedWorkout | None"] = relationship(
+        back_populates="performed_sessions", foreign_keys=[planned_workout_id]
+    )
+    prescription_revision: Mapped["WorkoutPrescriptionRevision | None"] = relationship(
+        foreign_keys=[prescription_revision_id]
+    )
+    recordings: Mapped[list["PerformedSessionRecording"]] = relationship(
+        back_populates="performed_session", cascade="all, delete-orphan"
+    )
+
+
+class PerformedSessionRecording(Base):
+    __tablename__ = "performed_session_recordings"
+    __table_args__ = (UniqueConstraint("strava_activity_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    performed_session_id: Mapped[str] = mapped_column(
+        ForeignKey("performed_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    strava_activity_id: Mapped[str] = mapped_column(
+        ForeignKey("strava_activities.id", ondelete="CASCADE"), nullable=False
+    )
+    contributes_to_totals: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    performed_session: Mapped[PerformedSession] = relationship(back_populates="recordings")
 
 
 class PlannedWorkoutStep(Base):
@@ -247,6 +386,8 @@ class WorkoutTemplate(Base):
     default_purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")
     default_instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    prescription_json: Mapped[dict | None] = mapped_column(JSON)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
