@@ -1,6 +1,7 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
 import { weekPurposes } from "../../lib/options";
+import { completedSessionCount, isCompletedWorkout } from "../../lib/weekMetrics";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -997,14 +998,6 @@ function plannedSessionCount(week: TrainingWeek) {
   return week.workouts.filter((workout) => workout.sport !== "rest").length;
 }
 
-function completedSessionCount(week: TrainingWeek) {
-  const activityDates = new Set(week.actualActivities.map((activity) => activity.activityDate));
-  const manualCompletions = week.workouts.filter(
-    (workout) => isCompletedWorkout(workout) && !activityDates.has(workout.plannedDate)
-  ).length;
-  return week.actualActivities.length + manualCompletions;
-}
-
 function completedMileage(week: TrainingWeek) {
   const runActivityDates = new Set(
     week.actualActivities
@@ -1020,10 +1013,6 @@ function completedMileage(week: TrainingWeek) {
     )
     .reduce((total, workout) => total + (workout.plannedDistance ?? 0), 0);
   return week.actualMileage + manualMiles;
-}
-
-function isCompletedWorkout(workout: Workout) {
-  return workout.status.startsWith("completed") || workout.status === "partial";
 }
 
 function plannedHardDayCount(week: TrainingWeek) {

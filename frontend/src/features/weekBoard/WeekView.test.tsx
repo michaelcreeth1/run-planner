@@ -10,6 +10,63 @@ import type { TrainingWeek, Workout } from "../../types/domain";
 import { WeekView } from "./WeekView";
 
 describe("WeekView workout completion", () => {
+  it("keeps today's sessions in the weekly schedule without a duplicate feature card", async () => {
+    const user = userEvent.setup();
+    const completed = { ...makeWorkout(), status: "completed_as_planned" as const };
+    const remaining = { ...makeWorkout(), id: "remaining", title: "Evening mobility" };
+    const week = { ...makeWeek(completed), workouts: [completed, remaining] };
+    const props = makeProps(week, vi.fn());
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...props} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.queryByRole("region", { name: "Today's training" })).not.toBeInTheDocument();
+    const schedule = within(screen.getByRole("region", { name: "Weekly schedule" }));
+    expect(schedule.getByRole("button", { name: `Edit ${remaining.title}` })).toBeVisible();
+    expect(schedule.getAllByText("30 min")).toHaveLength(2);
+    await user.click(schedule.getByRole("button", { name: `Edit ${remaining.title}` }));
+    expect(props.onEdit).toHaveBeenCalledWith(remaining);
+  });
+
+  it("opens session actions on demand, restores focus on Escape, and closes after an action", async () => {
+    const user = userEvent.setup();
+    const workout = makeWorkout();
+    const week = makeWeek(workout);
+    const props = makeProps(week, vi.fn());
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...props} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const trigger = screen.getByRole("button", { name: `Actions for ${workout.title}` });
+    expect(screen.queryByTitle("Delete workout")).not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getByTitle("Duplicate workout")).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    await user.click(screen.getByTitle("Duplicate workout"));
+    expect(props.onDuplicate).toHaveBeenCalledWith(workout);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+  });
+
   it("marks an unmatched workout complete and allows undoing it", async () => {
     const user = userEvent.setup();
     const onSetCompletion = vi.fn();
@@ -49,7 +106,7 @@ describe("WeekView workout completion", () => {
       </QueryClientProvider>
     );
 
-    expect(screen.getByText("completed")).toBeVisible();
+    expect(within(screen.getByLabelText("Weekly schedule")).getByText("Completed")).toBeVisible();
     const undo = screen.getByRole("button", { name: "Mark Untracked strength session incomplete" });
     expect(undo).toHaveAttribute("aria-pressed", "true");
     await user.click(undo);
@@ -202,7 +259,7 @@ describe("WeekView workout completion", () => {
     expect(screen.getByText("Not planned yet · target 28 mi · Base W1")).toBeVisible();
   });
 
-  it("positions the initial week immediately and smooth-scrolls later selections below the sticky UI", () => {
+  it("positions initial and later week selections immediately below the sticky UI", () => {
     server.use(
       http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
       http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
@@ -258,10 +315,11 @@ describe("WeekView workout completion", () => {
 
     const { rerender } = render(renderView(currentWeek));
 
-    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 284 });
+    // The onboarding prompt scrolls away; only the 64px app header and 20px gap remain sticky.
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 336 });
     scrollTo.mockClear();
     rerender(renderView(nextWeek));
-    expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "smooth" }));
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 616 });
 
     boundingRect.mockRestore();
     offsetHeight.mockRestore();

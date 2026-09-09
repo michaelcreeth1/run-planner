@@ -1,5 +1,7 @@
 import { Save, X } from "lucide-react";
+import { useRef } from "react";
 import type { FormEvent } from "react";
+import { useModalDialog } from "../../hooks/useModalDialog";
 import type { WorkoutForm } from "../../types/domain";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import { recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
@@ -20,6 +22,20 @@ export function WorkoutEditor({
   onClose: () => void;
 }) {
   const selectedSessionType = sessionTypeForWorkout(editor);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
+
+  function handleClose() {
+    if (isSaving) {
+      return;
+    }
+    if (JSON.stringify(editor) !== initialEditorSnapshotRef.current && !window.confirm("Discard unsaved workout changes?")) {
+      return;
+    }
+    onClose();
+  }
+
+  useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
 
   function setMetric(field: WorkoutMetricField, value: string) {
     setEditor(recalculateWorkoutMetrics({ ...editor, [field]: value }, field));
@@ -27,10 +43,10 @@ export function WorkoutEditor({
 
   return (
     <div className="editor-backdrop">
-      <aside className="editor-panel" aria-label="Workout editor">
+      <aside aria-label="Workout editor" aria-modal="true" className="editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
           <h2>{editor.id ? "Edit workout" : "New workout"}</h2>
-          <button type="button" title="Close" disabled={isSaving} onClick={onClose}>
+          <button type="button" title="Close" disabled={isSaving} onClick={handleClose}>
             <X size={18} />
           </button>
         </header>

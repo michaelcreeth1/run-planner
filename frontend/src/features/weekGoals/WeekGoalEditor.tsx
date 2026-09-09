@@ -16,6 +16,7 @@ import {
   goalValueUnit,
   metricMap
 } from "../goals/goalDrafts";
+import { useModalDialog } from "../../hooks/useModalDialog";
 
 export function WeekGoalEditor({
   editor,
@@ -36,10 +37,24 @@ export function WeekGoalEditor({
 }) {
   const metricsByKey = useMemo(() => metricMap(metrics), [metrics]);
   const customLabelRef = useRef(Boolean(editor.id && editor.label.trim()));
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
   const draft = goalDraftFromWeekForm(editor);
   const metric = draft.metricKey ? metricsByKey.get(draft.metricKey) : undefined;
   const validationError = goalDraftError(draft, metricsByKey);
   const suggestedLabel = metric ? goalSentence(draft, metric) : "Choose a metric to build this goal.";
+
+  function handleClose() {
+    if (isSaving) {
+      return;
+    }
+    if (JSON.stringify(editor) !== initialEditorSnapshotRef.current && !window.confirm("Discard unsaved goal changes?")) {
+      return;
+    }
+    onClose();
+  }
+
+  useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
 
   function applyDraft(nextDraft: GoalDraft, forceSuggestedLabel = false) {
     if (!nextDraft.metricKey) {
@@ -98,10 +113,10 @@ export function WeekGoalEditor({
 
   return (
     <div className="editor-backdrop">
-      <aside className="editor-panel" aria-label="Weekly goal editor">
+      <aside aria-label="Weekly goal editor" aria-modal="true" className="editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
           <h2>{editor.id ? "Edit week goal" : "New week goal"}</h2>
-          <button type="button" title="Close" disabled={isSaving} onClick={onClose}>
+          <button type="button" title="Close" disabled={isSaving} onClick={handleClose}>
             <X size={18} />
           </button>
         </header>

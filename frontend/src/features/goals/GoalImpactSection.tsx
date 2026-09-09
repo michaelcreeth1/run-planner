@@ -169,7 +169,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
       {!error && matrix && summary && matrix.columns.length > 0 ? (
         <>
           <p className="goal-impact-summary">
-            Healthy <strong>{summary.healthyWeeks} / {summary.totalWeeks}</strong> weeks
+            Meeting all checks <strong>{summary.healthyWeeks} / {summary.evaluatedWeeks}</strong> evaluated week{summary.evaluatedWeeks === 1 ? "" : "s"}
             <span> · {summary.warningWeeks} warning{summary.warningWeeks === 1 ? "" : "s"}</span>
             <span> · {summary.failureWeeks} failing week{summary.failureWeeks === 1 ? "" : "s"}</span>
             <span> · {summary.pendingWeeks} pending</span>

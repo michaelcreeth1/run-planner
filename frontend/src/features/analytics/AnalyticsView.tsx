@@ -141,11 +141,17 @@ function MileageLineChart({
   );
   const yMax = Math.ceil(maxMileage / 10) * 10;
   const actualPoints = weeks
-    .filter((week) => week.weekStartDate <= anchorWeekStartDate && week.actualMileage > 0)
+    .filter((week) => week.weekStartDate < anchorWeekStartDate && week.actualMileage > 0)
     .map((week) => ({
       ...chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding),
       mileage: week.actualMileage
     }));
+  const currentActualPoint = weeks
+    .filter((week) => week.weekStartDate === anchorWeekStartDate && week.actualMileage > 0)
+    .map((week) => ({
+      ...chartPoint(week.weekStartDate, week.actualMileage, weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: week.actualMileage
+    }))[0];
   const plannedPoints = weeks
     .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0)
     .map((week) => ({
@@ -160,6 +166,7 @@ function MileageLineChart({
     }));
   const interactivePoints = [
     ...actualPoints.map((point) => ({ ...point, kind: "actual" as const })),
+    ...(currentActualPoint ? [{ ...currentActualPoint, kind: "actual-to-date" as const }] : []),
     ...plannedPoints.map((point) => ({ ...point, kind: "planned" as const })),
     ...targetPoints.map((point) => ({ ...point, kind: "target" as const }))
   ];
@@ -179,7 +186,7 @@ function MileageLineChart({
           disabled={!latestActual}
           onClick={() => latestActual && onSelectWeek(latestActual.weekStartDate)}
         >
-          <span>Latest actual</span>
+          <span>{latestActual?.weekState === "current" ? "This week to date" : "Latest actual"}</span>
           <strong>{latestActual ? `${formatNumber(latestActual.actualMileage)} mi` : "-"}</strong>
         </button>
         <button
@@ -232,6 +239,7 @@ function MileageLineChart({
         {actualPoints.map((point) => (
           <ChartPoint key={`actual-${point.weekStartDate}`} kind="actual" point={point} />
         ))}
+        {currentActualPoint ? <ChartPoint kind="actual-to-date" point={currentActualPoint} /> : null}
         {plannedPoints.map((point) => (
           <ChartPoint key={`planned-${point.weekStartDate}`} kind="planned" point={point} />
         ))}
@@ -249,7 +257,7 @@ function MileageLineChart({
         </svg>
         {interactivePoints.map((point) => (
           <button
-            aria-label={`Open ${point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
+            aria-label={`Open ${point.kind === "actual-to-date" ? "week-to-date" : point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
             className={`mileage-point-control mileage-point-control--${point.kind}`}
             key={`${point.kind}-${point.weekStartDate}`}
             onClick={() => onSelectWeek(point.weekStartDate)}
@@ -261,6 +269,7 @@ function MileageLineChart({
 
       <div className="mileage-chart-legend" aria-label="Mileage chart legend">
         <span><i className="actual" /> Actual</span>
+        <span><i className="actual-to-date" /> Week to date</span>
         <span><i className="planned" /> Planned</span>
         <span><i className="target" /> Plan target</span>
         <span><i className="baseline" /> Baseline</span>
@@ -273,7 +282,7 @@ function ChartPoint({
   kind,
   point
 }: {
-  kind: "actual" | "planned" | "target";
+  kind: "actual" | "actual-to-date" | "planned" | "target";
   point: { weekStartDate: string; x: number; y: number };
 }) {
   return (

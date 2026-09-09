@@ -1,4 +1,4 @@
-import { ArrowUpRight, Link } from "lucide-react";
+import { ChevronRight, Link } from "lucide-react";
 import type { StravaActivity } from "../../types/domain";
 import { formatDateTime, formatPace } from "../../lib/formatters";
 import { parseDate, startOfWeek } from "../../lib/dates";
@@ -48,19 +48,21 @@ export function ActivitiesView({
               <span>{activity.sportType}</span>
             </div>
             <span className="activity-date">{formatDateTime(activity.startDateLocal)}</span>
-            <span className="activity-col-num">{activity.distanceMiles.toFixed(1)}</span>
+            <span className="activity-col-num">
+              {activity.distanceMiles.toFixed(1)}<span className="activity-mobile-unit"> mi</span>
+            </span>
             <span className="activity-col-num">{formatPace(activity.movingTime, activity.distanceMiles)}</span>
             <span className="activity-col-num">
-              {activity.averageHeartrate ? Math.round(activity.averageHeartrate) : "–"}
+              {activity.averageHeartrate ? <>{Math.round(activity.averageHeartrate)}<span className="activity-mobile-unit"> bpm</span></> : "–"}
             </span>
             <button
               type="button"
               className="activity-open-week"
-              title={`Open the week containing ${activity.name}`}
-              aria-label={`Open the week containing ${activity.name}`}
+              title={`View the week containing ${activity.name}`}
+              aria-label={`View the week containing ${activity.name}`}
               onClick={() => onSelectWeek(startOfWeek(parseDate(activity.startDateLocal.slice(0, 10))))}
             >
-              <ArrowUpRight size={15} />
+              <ChevronRight size={18} />
             </button>
           </article>
         ))}

@@ -1,45 +1,22 @@
 import { CalendarPlus, Check, ChevronRight, Circle, Moon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 import type { WeekContextStripViewModel } from "../../features/weekBoard/buildWeekContextStrip";
 
 type WeekContextStripProps = {
   viewModel: WeekContextStripViewModel | null;
   onOpenPlan: () => void;
   onJumpToToday: () => void;
-  onOpenWorkout: (workoutId: string) => void;
 };
 
-export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday, onOpenWorkout }: WeekContextStripProps) {
-  const stripRef = useRef<HTMLElement | null>(null);
-  const [isCompact, setIsCompact] = useState(false);
-
-  useEffect(() => {
-    const main = stripRef.current?.closest("main");
-    const updateCompactState = () => {
-      setIsCompact(window.scrollY > 24 || (main instanceof HTMLElement && main.scrollTop > 24));
-    };
-
-    updateCompactState();
-    window.addEventListener("scroll", updateCompactState, { passive: true });
-    main?.addEventListener("scroll", updateCompactState, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", updateCompactState);
-      main?.removeEventListener("scroll", updateCompactState);
-    };
-  }, [viewModel?.kind]);
-
+export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday }: WeekContextStripProps) {
   if (!viewModel) {
     return null;
   }
 
-  const compactClassName = isCompact ? " week-context-strip--compact" : "";
-
   if (viewModel.kind === "onboarding") {
     return (
       <section
-        className={`week-context-strip week-context-strip--onboarding${compactClassName}`}
+        className="week-context-strip week-context-strip--onboarding"
         aria-label="Training context"
-        ref={stripRef}
       >
         <div className="week-context-onboarding-copy">
           <strong>{viewModel.headline}</strong>
@@ -54,7 +31,7 @@ export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday, onOpenW
   }
 
   return (
-    <section className={`week-context-strip${compactClassName}`} aria-label="Training context" ref={stripRef}>
+    <section className="week-context-strip week-context-strip--active" aria-label="Training context">
       <div className="week-context-segments">
         {viewModel.segments.map((segment) => (
           <div className="week-context-segment" data-context-segment={segment.id} key={segment.id}>
@@ -67,7 +44,7 @@ export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday, onOpenW
         ))}
       </div>
       {viewModel.today ? (
-        <TodayChip today={viewModel.today} onJumpToToday={onJumpToToday} onOpenWorkout={onOpenWorkout} />
+        <TodayChip today={viewModel.today} onJumpToToday={onJumpToToday} />
       ) : null}
     </section>
   );
@@ -75,12 +52,10 @@ export function WeekContextStrip({ viewModel, onOpenPlan, onJumpToToday, onOpenW
 
 function TodayChip({
   today,
-  onJumpToToday,
-  onOpenWorkout
+  onJumpToToday
 }: {
   today: NonNullable<Extract<WeekContextStripViewModel, { kind: "active" }>["today"]>;
   onJumpToToday: () => void;
-  onOpenWorkout: (workoutId: string) => void;
 }) {
   if (today.kind === "rest") {
     return (
@@ -110,9 +85,10 @@ function TodayChip({
   const StatusIcon = today.status === "done" ? Check : Circle;
   return (
     <button
+      aria-label={`Show ${today.label.toLowerCase()}'s ${today.title} in this week`}
       type="button"
       className={`week-context-today week-context-today--${today.status}`}
-      onClick={() => (today.workoutId ? onOpenWorkout(today.workoutId) : onJumpToToday())}
+      onClick={onJumpToToday}
     >
       <span className="week-context-today-label">{today.label}</span>
       <span className="week-context-today-main">

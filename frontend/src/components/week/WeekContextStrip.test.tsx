@@ -4,16 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { WeekContextStrip } from "./WeekContextStrip";
 
 describe("WeekContextStrip", () => {
-  it("opens a surfaced workout directly", async () => {
+  it("takes a surfaced workout back to the current week", async () => {
     const user = userEvent.setup();
     const onJumpToToday = vi.fn();
-    const onOpenWorkout = vi.fn();
 
     render(
       <WeekContextStrip
         onJumpToToday={onJumpToToday}
         onOpenPlan={vi.fn()}
-        onOpenWorkout={onOpenWorkout}
         viewModel={{
           kind: "active",
           segments: [],
@@ -29,9 +27,8 @@ describe("WeekContextStrip", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: /Next up.*Long run/i }));
+    await user.click(screen.getByRole("button", { name: /Show next up's Long run/i }));
 
-    expect(onOpenWorkout).toHaveBeenCalledWith("workout-2");
-    expect(onJumpToToday).not.toHaveBeenCalled();
+    expect(onJumpToToday).toHaveBeenCalledOnce();
   });
 });
