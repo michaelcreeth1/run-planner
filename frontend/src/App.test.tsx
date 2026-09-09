@@ -311,13 +311,14 @@ describe("App authentication states", () => {
     await user.type(screen.getByLabelText("Password"), "test-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    const deleteButton = await screen.findByTitle("Delete workout");
-    await user.click(deleteButton);
+    await user.click(await screen.findByRole("button", { name: "Actions for Easy five" }));
+    await user.click(screen.getByTitle("Delete workout"));
     expect(confirm).toHaveBeenCalledWith('Delete "Easy five"? This cannot be undone.');
     expect(onDelete).not.toHaveBeenCalled();
 
     confirm.mockReturnValue(true);
-    await user.click(deleteButton);
+    await user.click(screen.getByRole("button", { name: "Actions for Easy five" }));
+    await user.click(screen.getByTitle("Delete workout"));
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith("workout-delete"));
     confirm.mockRestore();
   });
@@ -498,7 +499,7 @@ describe("App authentication states", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByRole("heading", { name: "1 activities" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Open the week containing Morning Run" }));
+    await user.click(screen.getByRole("button", { name: "View the week containing Morning Run" }));
 
     await waitFor(() => {
       expect(window.location.pathname).toBe("/week/2026-07-13");
@@ -907,7 +908,7 @@ describe("App mutation handling", () => {
     render(<App />);
     await signIn(user);
 
-    await user.click(await screen.findByTitle("Edit workout"));
+    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
     const title = screen.getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Updated easy five");
@@ -945,13 +946,16 @@ describe("App mutation handling", () => {
     render(<App />);
     await signIn(user);
 
-    const duplicateButton = await screen.findByTitle("Duplicate workout");
-    await user.dblClick(duplicateButton);
+    await user.click(await screen.findByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Duplicate workout"));
+    await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Duplicate workout"));
     await waitFor(() => expect(duplicateRequests).toBe(1));
     resolveDuplicate(HttpResponse.json({ detail: "Duplicate failed." }, { status: 503 }));
 
     expect(await screen.findByText("Could not duplicate workout.")).toBeVisible();
-    await user.click(duplicateButton);
+    await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Duplicate workout"));
     await waitFor(() => expect(duplicateRequests).toBe(2));
   });
 

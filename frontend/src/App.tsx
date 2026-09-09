@@ -68,9 +68,13 @@ const primaryTabs = [
 
 type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
-type WeekScrollSnapshot =
+type WeekScrollSnapshot = {
+  anchorWeekStart: string | null;
+  anchorTop: number;
+} & (
   | { container: "main"; scrollHeight: number; scrollTop: number }
-  | { container: "window"; scrollHeight: number; scrollTop: number };
+  | { container: "window"; scrollHeight: number; scrollTop: number }
+);
 type CompatibilityState =
   | { status: "checking" }
   | { status: "compatible"; apiVersion: ApiVersion }
@@ -1487,8 +1491,17 @@ function latestDateValue(values: Array<string | null | undefined>) {
 }
 
 function captureWeekScroll(main: HTMLElement): WeekScrollSnapshot {
+  const headerBottom = main.querySelector(".app-header")?.getBoundingClientRect().bottom ?? 0;
+  const anchor = Array.from(main.querySelectorAll<HTMLElement>(".week-row")).find(
+    (row) => row.getBoundingClientRect().bottom > headerBottom
+  );
+  const position = {
+    anchorWeekStart: anchor?.dataset.weekStart ?? null,
+    anchorTop: anchor?.getBoundingClientRect().top ?? 0
+  };
   if (window.matchMedia("(max-width: 860px)").matches) {
     return {
+      ...position,
       container: "window",
       scrollHeight: document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight,
       scrollTop: window.scrollY
@@ -1496,6 +1509,7 @@ function captureWeekScroll(main: HTMLElement): WeekScrollSnapshot {
   }
 
   return {
+    ...position,
     container: "main",
     scrollHeight: main.scrollHeight,
     scrollTop: main.scrollTop
@@ -1503,6 +1517,21 @@ function captureWeekScroll(main: HTMLElement): WeekScrollSnapshot {
 }
 
 function restoreScrollAfterPrepend(main: HTMLElement, snapshot: WeekScrollSnapshot) {
+  // Preserve a visible row, so layout changes elsewhere and browser scroll anchoring
+  // cannot move the reader when history is inserted above it.
+  const anchor = Array.from(main.querySelectorAll<HTMLElement>(".week-row")).find(
+    (row) => row.dataset.weekStart === snapshot.anchorWeekStart
+  );
+  if (anchor) {
+    const delta = anchor.getBoundingClientRect().top - snapshot.anchorTop;
+    if (snapshot.container === "window") {
+      window.scrollTo({ top: window.scrollY + delta, behavior: "auto" });
+    } else {
+      main.scrollTop += delta;
+    }
+    return;
+  }
+
   if (snapshot.container === "window") {
     const scrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight;
     window.scrollTo({

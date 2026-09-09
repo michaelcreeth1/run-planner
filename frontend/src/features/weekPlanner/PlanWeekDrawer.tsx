@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
   PlanWeekDraft,
   PlanWeekGoalDraft,
@@ -13,6 +13,8 @@ import type {
 import { addDays, todayDateString } from "../../lib/dates";
 import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
+import { completedSessionCount } from "../../lib/weekMetrics";
+import { useModalDialog } from "../../hooks/useModalDialog";
 import type { AlignmentItem } from "../../types/domain";
 import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
 import { buildPlanRules, evaluateRulesForWeek } from "../goals/ruleEvaluation";
@@ -55,7 +57,9 @@ export function PlanWeekDrawer({
 }) {
   const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
   const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
   const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
+  const initialDraftSnapshotRef = useRef(draftSnapshot(draft));
   const ruleRows = draft.goals
     .filter((goal) => goal.isEnabled && goal.source !== "workouts")
     .map((goal) => ({ goal, evaluation: evaluateGoalDraft(draft, goal) }));
@@ -63,6 +67,17 @@ export function PlanWeekDrawer({
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledLongRun = maxDraftRunDistance(draft.workouts);
   const scheduledRestDays = countDraftRestDays(draft.workouts, draft.weekStartDate);
+  const sourceWeek = weekStack[draft.weekStartDate];
+  const isAdjustingRemainingWeek = draft.weekState === "current" && draft.hasExistingPlan;
+  const completedSessions = sourceWeek ? completedSessionCount(sourceWeek) : 0;
+  const remainingMileage = sumDraftRunDistance(
+    draft.workouts.filter(
+      (workout) => workout.plannedDate >= todayDateString() && !isCompletedDraftWorkout(workout, sourceWeek)
+    )
+  );
+  const projectedMileage = isAdjustingRemainingWeek && sourceWeek
+    ? sourceWeek.actualMileage + remainingMileage
+    : scheduledMileage;
   const copyWeekOptions = Array.from({ length: 12 }, (_, index) => {
     const weekStartDate = addDays(draft.weekStartDate, (index + 1) * -7);
     return { weekStartDate, week: weekStack[weekStartDate] ?? null };
@@ -105,6 +120,26 @@ export function PlanWeekDrawer({
         ? "Edit week plan"
         : "Plan week";
 
+  function handleClose() {
+    if (isSaving) {
+      return;
+    }
+    if (isCopyWeekMenuOpen) {
+      setIsCopyWeekMenuOpen(false);
+      return;
+    }
+    if (
+      draft.weekState !== "past" &&
+      draftSnapshot(draft) !== initialDraftSnapshotRef.current &&
+      !window.confirm("Discard unsaved week changes?")
+    ) {
+      return;
+    }
+    onClose();
+  }
+
+  useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
+
   useEffect(() => {
     if (!isCopyWeekMenuOpen) {
       return;
@@ -133,8 +168,9 @@ export function PlanWeekDrawer({
   if (draft.weekState === "past") {
     return (
       <PastWeekReviewDrawer
+        drawerRef={drawerRef}
         isSaving={isSaving}
-        onClose={onClose}
+        onClose={handleClose}
         onComplete={() => onCompleteReview(draft.weekId)}
         week={weekStack[draft.weekStartDate]}
         weekEndDate={draft.weekEndDate}
@@ -296,13 +332,13 @@ export function PlanWeekDrawer({
 
   return (
     <div className="editor-backdrop">
-      <aside className="editor-panel plan-week-panel" aria-label={drawerTitle}>
+      <aside aria-label={drawerTitle} aria-modal="true" className="editor-panel plan-week-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
           <div>
             <h2>{drawerTitle}</h2>
             <span>{formatCompactWeekRange(draft.weekStartDate, draft.weekEndDate)}</span>
           </div>
-          <button type="button" title="Close" onClick={onClose}>
+          <button type="button" title="Close" onClick={handleClose}>
             <X size={18} />
           </button>
         </header>
@@ -354,6 +390,12 @@ export function PlanWeekDrawer({
                 ) : null}
               </div>
             </div>
+            {isAdjustingRemainingWeek ? (
+              <p className="schedule-adjustment-note">
+                <CheckCircle2 aria-hidden="true" size={15} />
+                {completedSessions} completed session{completedSessions === 1 ? "" : "s"} stay fixed. Adjust only today and the remaining days.
+              </p>
+            ) : null}
             <div className="schedule-draft-column-labels" aria-hidden="true">
               <span />
               <div>
@@ -368,6 +410,13 @@ export function PlanWeekDrawer({
                 const dayWorkouts = draft.workouts.filter(
                   (workout) => workout.plannedDate === dateValue && effectiveWorkoutSport(workout) !== "rest"
                 );
+                const visibleDayWorkouts = isAdjustingRemainingWeek
+                  ? dayWorkouts.filter(
+                      (workout) => workout.plannedDate >= todayDateString() && !isCompletedDraftWorkout(workout, sourceWeek)
+                    )
+                  : dayWorkouts;
+                const isEarlierDay = isAdjustingRemainingWeek && dateValue < todayDateString();
+                const hasFixedSession = isAdjustingRemainingWeek && dayWorkouts.length > visibleDayWorkouts.length;
                 return (
                   <div className="schedule-draft-day" key={dateValue}>
                     <div className="schedule-day-heading">
@@ -383,8 +432,8 @@ export function PlanWeekDrawer({
                       </button>
                     </div>
                     <div className="schedule-draft-sessions">
-                      {dayWorkouts.length ? (
-                        dayWorkouts.map((workout, workoutIndex) => {
+                      {visibleDayWorkouts.length ? (
+                        visibleDayWorkouts.map((workout, workoutIndex) => {
                           const sessionType = sessionTypeForWorkout(workout);
                           const fieldPrefix = `${formatWeekday(dateValue)} session ${workoutIndex + 1}`;
                           return (
@@ -443,6 +492,11 @@ export function PlanWeekDrawer({
                             </div>
                           );
                         })
+                      ) : isEarlierDay || hasFixedSession ? (
+                        <div className="schedule-fixed-row">
+                          <CheckCircle2 aria-hidden="true" size={15} />
+                          <span>{isEarlierDay ? "Earlier in week" : "Completed today"}</span>
+                        </div>
                       ) : (
                         <div className="schedule-rest-row">
                           <span className="schedule-rest">Rest</span>
@@ -460,7 +514,11 @@ export function PlanWeekDrawer({
               <h3>Week plan</h3>
             </div>
             <div className="week-plan-summary" aria-label="Week plan summary">
-              <WeekPlanMetric label="Mileage" value={`${formatNumber(scheduledMileage)} mi`} />
+              <WeekPlanMetric
+                detail={isAdjustingRemainingWeek && sourceWeek ? `${formatNumber(sourceWeek.actualMileage)} completed + ${formatNumber(remainingMileage)} remaining` : undefined}
+                label={isAdjustingRemainingWeek ? "Projected mileage" : "Mileage"}
+                value={`${formatNumber(projectedMileage)} mi`}
+              />
               <WeekPlanMetric
                 label="Hard days"
                 value={`${scheduledQuality} hard day${scheduledQuality === 1 ? "" : "s"}`}
@@ -519,7 +577,7 @@ export function PlanWeekDrawer({
 
         <footer className="plan-week-footer">
           <div className="editor-actions plan-week-actions">
-            <button type="button" onClick={onClose}>
+            <button type="button" onClick={handleClose}>
               <X size={17} />
               <span>Cancel</span>
             </button>
@@ -534,11 +592,12 @@ export function PlanWeekDrawer({
   );
 }
 
-function WeekPlanMetric({ label, value }: { label: string; value: string }) {
+function WeekPlanMetric({ detail, label, value }: { detail?: string; label: string; value: string }) {
   return (
     <div className="week-plan-metric">
       <span>{label}</span>
       <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
@@ -605,6 +664,26 @@ function startingPointSnapshot(draft: PlanWeekDraft) {
     workouts: draft.workouts.map(({ draftId: _draftId, ...workout }) => workout),
     goals: draft.goals.map(({ draftId: _draftId, ...goal }) => goal)
   });
+}
+
+function draftSnapshot(draft: PlanWeekDraft) {
+  return JSON.stringify(draft);
+}
+
+function isCompletedDraftWorkout(workout: PlanWeekWorkoutDraft, sourceWeek: TrainingWeek | undefined) {
+  const sourceWorkout = sourceWeek?.workouts.find((candidate) => candidate.id === workout.id);
+  if (!sourceWorkout) {
+    return false;
+  }
+  if (sourceWorkout.status.startsWith("completed") || sourceWorkout.status === "partial") {
+    return true;
+  }
+  return (
+    sourceWorkout.sport === "run" &&
+    sourceWeek?.actualActivities.some(
+      (activity) => activity.activityDate === sourceWorkout.plannedDate && activity.sportType.toLowerCase().includes("run")
+    )
+  );
 }
 
 function trainingWeekFromDraft(draft: PlanWeekDraft, sourceWeek?: TrainingWeek): TrainingWeek {
@@ -743,6 +822,7 @@ function goalTarget(goal: PlanWeekGoalDraft | undefined) {
 }
 
 function PastWeekReviewDrawer({
+  drawerRef,
   isSaving,
   onClose,
   onComplete,
@@ -750,6 +830,7 @@ function PastWeekReviewDrawer({
   weekEndDate,
   weekStartDate
 }: {
+  drawerRef: RefObject<HTMLElement | null>;
   isSaving: boolean;
   onClose: () => void;
   onComplete: () => void;
@@ -757,12 +838,12 @@ function PastWeekReviewDrawer({
   weekEndDate: string;
   weekStartDate: string;
 }) {
-  const completedWorkouts = week?.workouts.filter((workout) => workout.status.startsWith("completed")).length ?? 0;
+  const completedWorkouts = week ? completedSessionCount(week) : 0;
   const goalOutcomes = week?.goalEvaluations ?? [];
 
   return (
     <div className="editor-backdrop">
-      <aside className="editor-panel plan-week-panel" aria-label="Review week">
+      <aside aria-label="Review week" aria-modal="true" className="editor-panel plan-week-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
           <div>
             <h2>Review week</h2>

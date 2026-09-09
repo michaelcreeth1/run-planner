@@ -131,6 +131,46 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(reviewed.modeLabel).toBe("Reviewed");
   });
 
+  it("counts imported and manually completed sessions without double-counting a matched run", () => {
+    const viewModel = buildWeekCommandCenterViewModel({
+      today: "2026-07-15",
+      week: makeWeek({
+        actualMileage: 5,
+        plannedMileage: 5,
+        weekState: "current",
+        actualActivities: [
+          {
+            id: "activity-1",
+            stravaActivityId: "strava-1",
+            name: "Morning Run",
+            sportType: "Run",
+            startDateLocal: "2026-07-15T06:00:00",
+            activityDate: "2026-07-15",
+            distance: 8046.72,
+            distanceMiles: 5,
+            movingTime: 2700,
+            averageHeartrate: 142
+          }
+        ],
+        workouts: [
+          makeWorkout({ status: "completed_as_planned" }),
+          makeWorkout({
+            id: "workout-2",
+            plannedDate: "2026-07-16",
+            sport: "strength",
+            workoutType: "strength",
+            intensityCategory: "strength",
+            plannedDistance: null,
+            status: "completed_as_planned",
+            title: "Strength session"
+          })
+        ]
+      })
+    });
+
+    expect(viewModel.primarySummary).toContain("2 completed");
+  });
+
   it("offers planning for target-only upcoming weeks and editing once sessions exist", () => {
     const targetOnly = buildWeekCommandCenterViewModel({
       today: "2026-07-05",

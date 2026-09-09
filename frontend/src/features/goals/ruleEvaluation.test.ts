@@ -541,6 +541,7 @@ describe("summarizeRuleMatrix", () => {
     ];
     const summary = summarizeRuleMatrix(evaluations);
     expect(summary.totalWeeks).toBe(2);
+    expect(summary.evaluatedWeeks).toBe(1);
     expect(summary.failureWeeks).toBe(1);
     expect(summary.pendingWeeks).toBe(1);
     expect(summary.healthyWeeks).toBe(0);

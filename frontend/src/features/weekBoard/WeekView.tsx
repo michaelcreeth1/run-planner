@@ -1,5 +1,6 @@
-import { Check, ChevronRight, Circle, Copy, Edit3, ExternalLink, Minus, Trash2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Check, ChevronRight, Circle, Copy, Edit3, Ellipsis, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
 import { MileageTrendBadge } from "../../components/shared/MileageTrendBadge";
 import { WeekChecksCard } from "../../components/week/WeekChecksCard";
@@ -102,7 +103,6 @@ export function WeekView({
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLElement | null>(null);
-  const previousSelectedWeekRef = useRef<string | null>(null);
   const contextStrip = buildWeekContextStrip({
     plan: activePlan,
     currentWeek: weekStack[currentWeekStart] ?? null,
@@ -125,16 +125,20 @@ export function WeekView({
       return;
     }
 
-    const isNewSelection = previousSelectedWeekRef.current !== null &&
-      previousSelectedWeekRef.current !== selectedWeekStart;
-    scrollExpandedWeekIntoView(selectedRow, isNewSelection ? "smooth" : "auto");
-    previousSelectedWeekRef.current = selectedWeekStart;
+    // Replacing the expanded row changes the timeline height. Position immediately
+    // so a smooth scroll cannot be interrupted by history loading or scroll anchoring.
+    scrollExpandedWeekIntoView(selectedRow, "auto");
+    // Settle after the app has restored any prepended history in its layout effect.
+    const frame = window.requestAnimationFrame(() => {
+      scrollExpandedWeekIntoView(selectedRow, "auto");
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [contextStrip?.kind, selectedWeekIsLoaded, selectedWeekIsVisible, selectedWeekStart]);
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
     const root = sentinel?.closest("main");
-    if (!sentinel || !(root instanceof HTMLElement) || !canLoadOlderWeeks) {
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadOlderWeeks || !selectedWeekIsLoaded || isLoading) {
       return;
     }
 
@@ -145,20 +149,20 @@ export function WeekView({
         }
       },
       {
-        root,
-        rootMargin: "520px 0px 0px",
+        root: window.matchMedia("(max-width: 860px)").matches ? null : root,
+        rootMargin: "0px",
         threshold: 0
       }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [canLoadOlderWeeks, onLoadOlderWeeks]);
+  }, [canLoadOlderWeeks, isLoading, onLoadOlderWeeks, selectedWeekIsLoaded]);
 
   useEffect(() => {
     const sentinel = newerWeeksSentinelRef.current;
     const root = sentinel?.closest("main");
-    if (!sentinel || !(root instanceof HTMLElement) || !canLoadNewerWeeks) {
+    if (!sentinel || !(root instanceof HTMLElement) || !canLoadNewerWeeks || !selectedWeekIsLoaded || isLoading) {
       return;
     }
 
@@ -169,7 +173,7 @@ export function WeekView({
         }
       },
       {
-        root,
+        root: window.matchMedia("(max-width: 860px)").matches ? null : root,
         rootMargin: "0px 0px 520px",
         threshold: 0
       }
@@ -177,22 +181,22 @@ export function WeekView({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [canLoadNewerWeeks, onLoadNewerWeeks]);
+  }, [canLoadNewerWeeks, isLoading, onLoadNewerWeeks, selectedWeekIsLoaded]);
 
   return (
     <>
       <WeekContextStrip
         viewModel={contextStrip}
-        onJumpToToday={onJumpToThisWeek}
-        onOpenPlan={onOpenPlan}
-        onOpenWorkout={(workoutId) => {
-          const workout = weekStack[currentWeekStart]?.workouts.find((candidate) => candidate.id === workoutId);
-          if (workout) {
-            onEdit(workout);
-            return;
+        onJumpToToday={() => {
+          const target = timelineRef.current?.querySelector<HTMLElement>(".day-column--today")
+            ?? timelineRef.current?.querySelector<HTMLElement>(".week-row--expanded");
+          if (selectedWeekStart === currentWeekStart && target) {
+            scrollExpandedWeekIntoView(target, "smooth");
+          } else {
+            onJumpToThisWeek();
           }
-          onJumpToThisWeek();
         }}
+        onOpenPlan={onOpenPlan}
       />
       {reviewHandoff && reviewHandoff.reviewedWeekStart === week?.weekStartDate ? (
         <WeekReviewHandoff
@@ -586,9 +590,8 @@ function WeekSchedule({
   return (
     <section className="week-schedule-panel" aria-label="Weekly schedule">
       <header>
-        <div>
-          <span>Schedule</span>
-        </div>
+        <h2>Weekly schedule</h2>
+        {!days.includes(today) ? <span className="schedule-range">{formatCompactWeekRange(days[0], days[6])}</span> : null}
       </header>
       <div className="week-board">
         {days.map((dateValue) => {
@@ -609,11 +612,13 @@ function WeekSchedule({
                 isCompactDay ? " day-column--compact" : ""
               }`}
               key={dateValue}
+              aria-label={`${isToday ? "Today, " : ""}${formatWeekday(dateValue)}, ${formatShortDate(dateValue)}`}
             >
               <header>
                 <div>
-                  <span>{isToday ? "Today" : formatWeekdayShort(dateValue)}</span>
+                  <span>{formatWeekdayShort(dateValue)}</span>
                   <strong>{formatDayNumber(dateValue)}</strong>
+                  {isToday ? <small>Today</small> : null}
                 </div>
               </header>
               <div className="workout-stack">
@@ -637,9 +642,15 @@ function WeekSchedule({
                 {isEmpty && dateValue < today ? (
                   <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
-                {isEmpty && dateValue >= today && !readOnly ? (
-                  <button className="empty-day-action" type="button" onClick={() => onCreate(dateValue)}>
-                    Add session
+                {dateValue >= today && !readOnly ? (
+                  <button
+                    aria-label={`Add session to ${formatWeekday(dateValue)}`}
+                    className={`day-add-session${isEmpty ? " day-add-session--empty" : ""}`}
+                    type="button"
+                    onClick={() => onCreate(dateValue)}
+                  >
+                    <Plus aria-hidden="true" size={15} />
+                    <span>Add session</span>
                   </button>
                 ) : null}
               </div>
@@ -796,6 +807,13 @@ function actualStatsLabel(activity: ActualActivity) {
   return pieces.join(" · ");
 }
 
+function sessionMetrics(workout: Workout) {
+  if (workout.plannedDuration && !workout.plannedDistance && !workout.plannedPace) {
+    return `${formatNumber(workout.plannedDuration / 60)} min`;
+  }
+  return formatWorkoutMeta(workout);
+}
+
 function ActualActivityItem({ activity }: { activity: ActualActivity }) {
   const detail = [
     "unplanned",
@@ -812,11 +830,12 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
         <span>{actualStatsLabel(activity)}</span>
       </p>
       <small>{detail}</small>
-      <div className="activity-controls">
+      <SessionActions label={`Actions for ${activity.name}`}>
         <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activity)}>
           <ExternalLink size={15} />
+          View on Strava
         </button>
-      </div>
+      </SessionActions>
     </div>
   );
 }
@@ -844,7 +863,7 @@ function WorkoutItem({
   const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
   const isManuallyCompleted = !actual && workout.status === "completed_as_planned";
   const canSetCompletion = !readOnly && !actual && !isRest && (isManuallyCompleted || state !== "done");
-  const plannedMeta = formatWorkoutMeta(workout);
+  const plannedMeta = sessionMetrics(workout);
   const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
 
   let statusLine: string;
@@ -852,42 +871,38 @@ function WorkoutItem({
     statusLine = actualStatsLabel(actual);
   } else if (state === "done") {
     statusLine = hasPlannedMetrics ? plannedMeta : "done";
-  } else if (state === "missed") {
-    statusLine = workout.status === "skipped_intentionally" ? "skipped" : "missed";
   } else {
     statusLine = plannedMeta;
   }
 
   const detailPieces: string[] = [];
-  if ((actual || state === "missed") && hasPlannedMetrics) {
-    detailPieces.push(`plan ${plannedMeta}`);
+  if ((actual || state === "missed") && hasPlannedMetrics && plannedMeta !== statusLine) {
+    detailPieces.push(`Planned ${plannedMeta}`);
   }
   if (actual?.averageHeartrate) {
     detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
-  }
-  if (!actual && state === "done") {
-    detailPieces.push(
-      workout.status === "completed_modified"
-        ? "completed with changes"
-        : workout.status === "partial"
-          ? "partially completed"
-          : "completed"
-    );
   }
   const detail = detailPieces.join(" · ");
 
   const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
   const primaryContent = (
     <>
-      <span className="workout-title-row">
-        <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
-        <strong>{workout.title}</strong>
+      <span className="workout-heading">
+        <span className="workout-title-row">
+          <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
+          <strong>{workout.title}</strong>
+        </span>
+        <span className={`workout-state-label workout-state-label--${state}`}>
+          {isRest ? "Recovery" : workout.status === "partial" ? "Partially completed" : workout.status === "completed_modified" ? "Completed with changes" : state === "done" ? "Completed" : state === "missed" ? (workout.status === "skipped_intentionally" ? "Skipped" : "Missed") : labelForWorkoutType(workout.workoutType)}
+        </span>
       </span>
-      <span className={`workout-status-line workout-status-line--${state}`}>
-        {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
-        <span>{statusLine}</span>
+      <span className="workout-metrics">
+        <span className={`workout-status-line workout-status-line--${state}`}>
+          {StatusIcon ? <StatusIcon size={12} strokeWidth={2.75} aria-hidden="true" /> : null}
+          <span>{statusLine}</span>
+        </span>
+        {detail ? <small>{detail}</small> : null}
       </span>
-      {detail ? <small>{detail}</small> : null}
     </>
   );
 
@@ -918,25 +933,84 @@ function WorkoutItem({
         </button>
       ) : null}
       {actual || !readOnly ? (
-        <div className="workout-controls">
+        <SessionActions label={`Actions for ${workout.title}`}>
           {actual ? (
             <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
               <ExternalLink size={15} />
+              View on Strava
             </button>
           ) : null}
           {!readOnly ? (
             <>
               <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
                 <Edit3 size={15} />
+                Edit session
               </button>
               <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
                 <Copy size={15} />
+                Duplicate
               </button>
-              <button type="button" title="Delete workout" onClick={() => onDelete(workout)}>
+              <button className="session-action-delete" type="button" title="Delete workout" onClick={() => onDelete(workout)}>
                 <Trash2 size={15} />
+                Delete
               </button>
             </>
           ) : null}
+        </SessionActions>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionActions({ label, children }: { label: string; children: ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelId = useId();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="session-actions" ref={rootRef} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false);
+    }}>
+      <button
+        className="session-actions-trigger"
+        type="button"
+        ref={triggerRef}
+        aria-label={label}
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? panelId : undefined}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <Ellipsis size={18} />
+      </button>
+      {isOpen ? (
+        <div className="session-actions-panel" id={panelId} onClick={(event) => {
+          if (event.target instanceof Element && event.target.closest("button")) {
+            setIsOpen(false);
+            triggerRef.current?.focus();
+          }
+        }}>
+          {children}
         </div>
       ) : null}
     </div>
@@ -1095,7 +1169,8 @@ function scrollExpandedWeekIntoView(element: HTMLElement, behavior: ScrollBehavi
   const header = container.querySelector<HTMLElement>(":scope > .app-header");
   const context = container.querySelector<HTMLElement>(":scope > .week-context-strip");
   const isMobile = window.matchMedia("(max-width: 860px)").matches;
-  const stickyOffset = (header?.offsetHeight ?? 0) + (context?.offsetHeight ?? 0) + 14;
+  const contextHeight = context && getComputedStyle(context).position === "sticky" ? context.offsetHeight : 0;
+  const stickyOffset = (header?.offsetHeight ?? 0) + contextHeight + 20;
   const resolvedBehavior = prefersReducedMotion() ? "auto" : behavior;
 
   if (isMobile) {

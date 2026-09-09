@@ -117,6 +117,32 @@ describe("PlanWeekDrawer", () => {
     expect(screen.getByRole("menuitem", { name: "Copy Apr 20-26, 18 miles" })).toBeEnabled();
   });
 
+  it("closes the copy menu before dismissing the week drawer with Escape", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <PlanWeekDrawer
+        draft={mismatchedDraft()}
+        isSaving={false}
+        onClose={onClose}
+        onCompleteReview={vi.fn()}
+        onSave={vi.fn()}
+        setDraft={vi.fn()}
+        weekStack={{}}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy week" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("copies any selected week into matching weekdays", async () => {
     const user = userEvent.setup();
     const weeks = copyableWeeks();

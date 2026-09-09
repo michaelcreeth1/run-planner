@@ -227,6 +227,7 @@ export function evaluationBasis(week: TrainingWeek, today: string): EvaluationBa
 
 export type GoalImpactSummary = {
   totalWeeks: number;
+  evaluatedWeeks: number;
   healthyWeeks: number;
   warningWeeks: number;
   failureWeeks: number;
@@ -243,6 +244,7 @@ export function summarizeRuleMatrix(evaluations: RuleEvaluation[]): GoalImpactSu
 
   const summary: GoalImpactSummary = {
     totalWeeks: byWeek.size,
+    evaluatedWeeks: 0,
     healthyWeeks: 0,
     warningWeeks: 0,
     failureWeeks: 0,
@@ -252,12 +254,15 @@ export function summarizeRuleMatrix(evaluations: RuleEvaluation[]): GoalImpactSu
   byWeek.forEach((weekEvaluations) => {
     if (weekEvaluations.some((evaluation) => evaluation.status === "fail")) {
       summary.failureWeeks += 1;
+      summary.evaluatedWeeks += 1;
     } else if (weekEvaluations.some((evaluation) => evaluation.status === "warning")) {
       summary.warningWeeks += 1;
+      summary.evaluatedWeeks += 1;
     } else if (weekEvaluations.some((evaluation) => evaluation.status === "pending")) {
       summary.pendingWeeks += 1;
     } else {
       summary.healthyWeeks += 1;
+      summary.evaluatedWeeks += 1;
     }
   });
 
