@@ -2,6 +2,10 @@
 
 A self-hosted, mobile-first running planner that treats Strava as the source of completed activity data while owning the training plan, reconciliation, and weekly adjustment loop.
 
+## Product Direction and Roadmap
+
+The canonical [product direction and next-iteration roadmap](<../homelab/docs/Projects/Run Planner - Product Direction and Roadmap.md>) lives in the Obsidian knowledgebase. It records Michael's needs, five proposed improvement phases, delivery order, acceptance criteria, and deferred scope. Read it alongside `requirements/` when continuing work in a new task; keep phase status and implementation evidence in that note.
+
 ## Phase 0 Scope
 
 This repository currently contains the infrastructure skeleton:
