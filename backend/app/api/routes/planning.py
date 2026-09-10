@@ -259,6 +259,14 @@ def update_workout_template(
     )
 
 
+@router.delete("/workout-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workout_template(
+    template_id: str, db: DbSession, profile: CurrentProfile
+) -> Response:
+    planning.delete_template(db, template_id, profile.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/workout-templates/{template_id}/schedule", response_model=PlannedWorkoutRead)
 def schedule_workout_template(
     template_id: str, payload: ScheduleTemplateRequest, db: DbSession, profile: CurrentProfile

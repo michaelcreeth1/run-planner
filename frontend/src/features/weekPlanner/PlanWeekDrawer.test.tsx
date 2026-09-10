@@ -1,9 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { addDays } from "../../lib/dates";
-import type { PlanWeekDraft, TrainingWeek } from "../../types/domain";
+import { server } from "../../test/server";
+import type { PlanWeekDraft, TrainingWeek, WorkoutTemplate } from "../../types/domain";
 import { PlanWeekDrawer } from "./PlanWeekDrawer";
 
 function PlannerHarness({
@@ -236,6 +238,59 @@ describe("PlanWeekDrawer", () => {
 
     expect(screen.queryByLabelText("Tue session 1 name")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add session to Tue" })).toBeInTheDocument();
+  });
+
+  it("adds an independent copy of a saved workout from the library", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const template: WorkoutTemplate = {
+      id: "template-1",
+      athleteAccountId: "athlete-1",
+      name: "5K threshold builder",
+      workoutType: "threshold",
+      tags: ["threshold"],
+      prescription: {
+        blocks: [{
+          kind: "step",
+          role: "work",
+          extent: "distance",
+          distanceMeters: 5000,
+          displayUnit: "km",
+          durationSeconds: 1200,
+          supportingTargets: [],
+          notes: ""
+        }]
+      },
+      purpose: "Raise lactate threshold",
+      instructions: "Run controlled and even.",
+      version: 1,
+      createdAt: "2026-07-01T12:00:00Z",
+      updatedAt: "2026-07-01T12:00:00Z"
+    };
+    server.use(
+      http.get(new URL("/api/workout-templates", window.location.origin).toString(), () =>
+        HttpResponse.json([template])
+      )
+    );
+    render(<PlannerHarness onSave={onSave} />);
+
+    await user.click(screen.getByRole("button", { name: "Choose workout for Tue" }));
+    await user.click(await screen.findByRole("button", { name: /5K threshold builder/i }));
+
+    expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("5K threshold builder");
+    expect(screen.getByLabelText("Tue session 1 type")).toHaveValue("run:threshold");
+    expect(screen.getByLabelText("Tue session 1 mileage")).toHaveValue(3.1);
+
+    await user.click(screen.getByRole("button", { name: "Save plan" }));
+    const savedDraft = onSave.mock.calls[0][0] as PlanWeekDraft;
+    const scheduled = savedDraft.workouts.find((workout) => workout.title === template.name);
+    expect(scheduled).toMatchObject({
+      plannedDate: "2026-07-14",
+      purpose: "Raise lactate threshold",
+      instructions: "Run controlled and even."
+    });
+    expect(scheduled?.prescription).toEqual(template.prescription);
+    expect(scheduled?.prescription).not.toBe(template.prescription);
   });
 
   it("offers contextual fixes on the failing rule and clears them once met", async () => {

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { addDays, startOfWeek } from "./lib/dates";
 import { server } from "./test/server";
-import type { AnalyticsWeekSummary } from "./types/domain";
+import type { AnalyticsWeekSummary, WorkoutTemplate } from "./types/domain";
 
 const apiUrl = (path: string) => new URL(path, window.location.origin).toString();
 
@@ -263,6 +263,85 @@ describe("App authentication states", () => {
       })
     );
     expect(screen.queryByRole("heading", { name: "Plan week" })).not.toBeInTheDocument();
+  });
+
+  it("opens the workout library and edits and duplicates a reusable workout", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn();
+    useAuthenticatedAppHandlers();
+    const template: WorkoutTemplate = {
+      id: "template-1",
+      athleteAccountId: "profile-1",
+      name: "Threshold builder",
+      workoutType: "threshold",
+      tags: ["threshold"],
+      prescription: {
+        blocks: [{
+          kind: "step",
+          id: null,
+          role: "work",
+          extent: "distance",
+          distanceMeters: 5000,
+          durationSeconds: null,
+          displayUnit: "km",
+          primaryTarget: null,
+          supportingTargets: [],
+          notes: ""
+        }]
+      },
+      purpose: "Raise lactate threshold",
+      instructions: "Run controlled.",
+      version: 1,
+      createdAt: "2026-07-01T12:00:00Z",
+      updatedAt: "2026-07-01T12:00:00Z"
+    };
+    let templates = [template];
+    server.use(
+      http.get(apiUrl("/api/workout-templates"), () => HttpResponse.json(templates)),
+      http.patch(apiUrl("/api/workout-templates/:templateId"), async ({ request }) => {
+        const payload = await request.json() as { name: string };
+        onUpdate(payload);
+        templates = [{ ...templates[0], name: payload.name, version: 2 }];
+        return HttpResponse.json(templates[0]);
+      }),
+      http.post(apiUrl("/api/workout-templates"), async ({ request }) => {
+        const payload = await request.json() as Omit<WorkoutTemplate, "id" | "athleteAccountId" | "version" | "createdAt" | "updatedAt">;
+        templates = [...templates, {
+          ...payload,
+          id: "template-2",
+          athleteAccountId: "profile-1",
+          version: 1,
+          createdAt: "2026-07-01T12:00:00Z",
+          updatedAt: "2026-07-01T12:00:00Z"
+        }];
+        return HttpResponse.json(templates[1], { status: 201 });
+      })
+    );
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Sign in" });
+    await user.type(screen.getByLabelText("Username"), "michael");
+    await user.type(screen.getByLabelText("Password"), "test-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
+    await user.click(within(navigation).getByRole("button", { name: "Workouts" }));
+    expect(await screen.findByRole("heading", { name: "Reusable workouts" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Threshold builder" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Edit Threshold builder" }));
+    const title = screen.getByLabelText("Title");
+    await user.clear(title);
+    await user.type(title, "Cruise intervals");
+    await user.click(screen.getByRole("button", { name: "Save to library" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Cruise intervals", expectedVersion: 1 })
+    ));
+    expect(await screen.findByRole("heading", { name: "Cruise intervals" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Duplicate Cruise intervals" }));
+    expect(await screen.findByRole("heading", { name: "Cruise intervals copy" })).toBeVisible();
   });
 
   it("requires confirmation before deleting a workout", async () => {

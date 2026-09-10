@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  Library,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -27,6 +28,7 @@ import { buildPlanRules } from "./features/goals/ruleEvaluation";
 import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlanner/planWeekDrafts";
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
 import { WorkoutEditor } from "./features/workouts/WorkoutEditor";
+import { WorkoutLibraryView } from "./features/workouts/WorkoutLibraryView";
 import type { TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 import { fetchJson, toApiErrorPresentation } from "./lib/api";
@@ -62,6 +64,7 @@ const WEEK_STACK_LOAD_BATCH = 6;
 const primaryTabs = [
   { id: "week", label: "Week", icon: CalendarDays },
   { id: "plan", label: "Plan", icon: Route },
+  { id: "workouts", label: "Workouts", icon: Library },
   { id: "progress", label: "Progress", icon: TrendingUp },
   { id: "settings", label: "Settings", icon: Settings }
 ] as const;
@@ -1346,6 +1349,7 @@ function AppShell() {
               }}
             />
           </div>
+          {activeTab === "workouts" ? <WorkoutLibraryView writesBlocked={writesBlocked} /> : null}
           {activeTab === "progress" ? (
             <ProgressView
               activities={activities}

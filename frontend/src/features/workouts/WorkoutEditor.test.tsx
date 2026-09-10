@@ -185,4 +185,75 @@ describe("WorkoutEditor", () => {
     expect(screen.getByLabelText("Step 1 role")).toBeVisible();
     expect(screen.getByRole("button", { name: "Use simple workout" })).toBeVisible();
   });
+
+  it("shows repeat children, supports nested groups, and omits final-recovery controls", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <EditorHarness
+        initialEditor={{
+          ...defaultForm("2026-07-13"),
+          prescription: {
+            blocks: [{
+              kind: "repeat",
+              repetitions: 4,
+              recoveryAfterFinal: false,
+              notes: "",
+              steps: [
+                {
+                  kind: "step",
+                  role: "work",
+                  extent: "distance",
+                  distanceMeters: 1000,
+                  displayUnit: "km",
+                  supportingTargets: [],
+                  notes: ""
+                },
+                {
+                  kind: "step",
+                  role: "recovery",
+                  extent: "duration",
+                  durationSeconds: 120,
+                  displayUnit: "min",
+                  supportingTargets: [],
+                  notes: ""
+                }
+              ]
+            }]
+          }
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("dialog", { name: "Workout editor" })).toHaveClass("workout-editor-panel");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByText("Repeated sequence")).toBeVisible();
+    expect(screen.getByLabelText("Step 1.1 role")).toHaveValue("work");
+    expect(screen.getByLabelText("Step 1.2 role")).toHaveValue("recovery");
+    expect(screen.queryByText("Include recovery after final repetition")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add nested repeat group" }));
+    expect(screen.getByLabelText("Repeat group 1.3 repetitions")).toHaveValue(5);
+    expect(screen.getByLabelText("Step 1.3.1 role")).toHaveValue("work");
+    await user.selectOptions(screen.getByLabelText("Step 1.3.1 role"), "cooldown");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      prescription: expect.objectContaining({
+        blocks: [expect.objectContaining({
+          kind: "repeat",
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "repeat",
+              recoveryAfterFinal: false,
+              steps: expect.arrayContaining([expect.objectContaining({ role: "cooldown" })])
+            })
+          ])
+        })]
+      })
+    }));
+  });
 });

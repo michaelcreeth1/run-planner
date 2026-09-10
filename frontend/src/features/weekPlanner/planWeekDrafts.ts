@@ -14,13 +14,15 @@ import type {
   WeekGoalType,
   WeekGoalUnit,
   WeekPurposeId,
-  Workout
+  Workout,
+  WorkoutTemplate
 } from "../../types/domain";
 import { addDays, daysBetween } from "../../lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload, optionalNumber } from "../../lib/forms";
 import { comparisonMileage, formatNumber, labelForWorkoutType } from "../../lib/formatters";
 import { roundToTenth } from "../../lib/numbers";
-import { sessionTypeForWorkout, weekPurposes } from "../../lib/options";
+import { sessionTypeForWorkout, sessionTypes, weekPurposes } from "../../lib/options";
+import { prescriptionTotals } from "../../lib/prescriptions";
 import { formatDurationSeconds, paceInputFromMetrics } from "../../lib/workoutMetrics";
 
 export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, TrainingWeek>): PlanWeekDraft {
@@ -235,6 +237,32 @@ export function newWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
     draftId: draftId("workout"),
     title: "Easy run",
     purpose: "Aerobic training"
+  };
+}
+
+export function workoutDraftFromTemplate(
+  template: WorkoutTemplate,
+  plannedDate: string
+): PlanWeekWorkoutDraft {
+  const matchingType =
+    sessionTypes.find((option) => option.workoutType === template.workoutType) ??
+    sessionTypes.find((option) => option.value === "run:other")!;
+  const totals = prescriptionTotals(template.prescription);
+  return {
+    ...defaultForm(plannedDate),
+    draftId: draftId("workout"),
+    title: template.name,
+    sport: matchingType.sport,
+    workoutType: matchingType.workoutType,
+    intensityCategory: matchingType.intensityCategory,
+    plannedDistance:
+      matchingType.sport === "run" && totals.distance
+        ? String(roundToTenth(totals.distance / 1609.344))
+        : "",
+    plannedDuration: totals.duration ? formatDurationSeconds(totals.duration) : "",
+    purpose: template.purpose,
+    instructions: template.instructions,
+    prescription: structuredClone(template.prescription)
   };
 }
 

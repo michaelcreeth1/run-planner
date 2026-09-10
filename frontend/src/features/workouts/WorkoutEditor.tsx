@@ -10,6 +10,9 @@ export function WorkoutEditor({
   editor,
   error,
   isSaving,
+  mode = "scheduled",
+  templateTags = [],
+  setTemplateTags,
   setEditor,
   onSubmit,
   onClose
@@ -17,6 +20,9 @@ export function WorkoutEditor({
   editor: WorkoutForm;
   error: string | null;
   isSaving: boolean;
+  mode?: "scheduled" | "template";
+  templateTags?: string[];
+  setTemplateTags?: (tags: string[]) => void;
   setEditor: (editor: WorkoutForm) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
@@ -25,6 +31,7 @@ export function WorkoutEditor({
   const drawerRef = useRef<HTMLElement | null>(null);
   const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
   const [structureOpen, setStructureOpen] = useState(false);
+  const [tagInput, setTagInput] = useState(() => templateTags.join(", "));
 
   function handleClose() {
     if (isSaving) {
@@ -54,16 +61,74 @@ export function WorkoutEditor({
     };
   }
 
+  function newRepeatGroup(): PrescriptionBlock {
+    return {
+      kind: "repeat",
+      repetitions: 5,
+      recoveryAfterFinal: false,
+      notes: "",
+      steps: [
+        newStep("work"),
+        {
+          ...newStep("recovery"),
+          extent: "duration",
+          distanceMeters: null,
+          durationSeconds: 120,
+          displayUnit: "min"
+        }
+      ]
+    };
+  }
+
   function updateBlocks(updater: (blocks: PrescriptionBlock[]) => PrescriptionBlock[]) {
     setEditor({ ...editor, prescription: { blocks: updater(editor.prescription?.blocks ?? []) } });
   }
 
-  function updateStep(index: number, updates: Partial<PrescriptionStep>) {
-    updateBlocks((blocks) => blocks.map((block, current) => current === index && block.kind === "step" ? { ...block, ...updates } : block));
+  function transformBlocksAtPath(
+    blocks: PrescriptionBlock[],
+    parentPath: number[],
+    updater: (children: PrescriptionBlock[]) => PrescriptionBlock[]
+  ): PrescriptionBlock[] {
+    if (!parentPath.length) {
+      return updater(blocks);
+    }
+    const [parentIndex, ...remainingPath] = parentPath;
+    return blocks.map((block, index) =>
+      index === parentIndex && block.kind === "repeat"
+        ? { ...block, steps: transformBlocksAtPath(block.steps, remainingPath, updater) }
+        : block
+    );
   }
 
-  function moveBlock(index: number, direction: -1 | 1) {
-    updateBlocks((blocks) => {
+  function updateBlocksAtPath(
+    parentPath: number[],
+    updater: (children: PrescriptionBlock[]) => PrescriptionBlock[]
+  ) {
+    updateBlocks((blocks) => transformBlocksAtPath(blocks, parentPath, updater));
+  }
+
+  function updateBlockAtPath(
+    path: number[],
+    updater: (block: PrescriptionBlock) => PrescriptionBlock
+  ) {
+    const parentPath = path.slice(0, -1);
+    const blockIndex = path.at(-1);
+    if (blockIndex === undefined) return;
+    updateBlocksAtPath(parentPath, (blocks) =>
+      blocks.map((block, index) => index === blockIndex ? updater(block) : block)
+    );
+  }
+
+  function updateStep(path: number[], updates: Partial<PrescriptionStep>) {
+    updateBlockAtPath(path, (block) => block.kind === "step" ? { ...block, ...updates } : block);
+  }
+
+  function moveBlock(path: number[], direction: -1 | 1) {
+    const parentPath = path.slice(0, -1);
+    const blockIndex = path.at(-1);
+    if (blockIndex === undefined) return;
+    updateBlocksAtPath(parentPath, (blocks) => {
+      const index = blockIndex;
       const target = index + direction;
       if (target < 0 || target >= blocks.length) return blocks;
       const next = [...blocks];
@@ -72,21 +137,43 @@ export function WorkoutEditor({
     });
   }
 
-  function duplicateBlock(index: number) {
-    updateBlocks((blocks) => [
-      ...blocks.slice(0, index + 1),
-      structuredClone(blocks[index]),
-      ...blocks.slice(index + 1)
+  function duplicateBlock(path: number[]) {
+    const parentPath = path.slice(0, -1);
+    const blockIndex = path.at(-1);
+    if (blockIndex === undefined) return;
+    updateBlocksAtPath(parentPath, (blocks) => [
+      ...blocks.slice(0, blockIndex + 1),
+      structuredClone(blocks[blockIndex]),
+      ...blocks.slice(blockIndex + 1)
     ]);
   }
 
+  function removeBlock(path: number[]) {
+    const parentPath = path.slice(0, -1);
+    const blockIndex = path.at(-1);
+    if (blockIndex === undefined) return;
+    updateBlocksAtPath(parentPath, (blocks) => blocks.filter((_, index) => index !== blockIndex));
+  }
+
+  function addBlock(parentPath: number[], block: PrescriptionBlock) {
+    updateBlocksAtPath(parentPath, (blocks) => [...blocks, block]);
+  }
+
+  function blockNumber(path: number[]) {
+    return path.map((index) => index + 1).join(".");
+  }
+
   function structureSummary(blocks: PrescriptionBlock[]) {
-    const steps = blocks.reduce(
-      (total, block) => total + (block.kind === "repeat" ? block.steps.length : 1),
-      0
-    );
-    const repeats = blocks.filter((block) => block.kind === "repeat").length;
+    const { steps, repeats } = countStructure(blocks);
     return `${steps} ${steps === 1 ? "step" : "steps"}${repeats ? ` · ${repeats} repeat ${repeats === 1 ? "group" : "groups"}` : ""}`;
+  }
+
+  function countStructure(blocks: PrescriptionBlock[]): { steps: number; repeats: number } {
+    return blocks.reduce((total, block) => {
+      if (block.kind === "step") return { steps: total.steps + 1, repeats: total.repeats };
+      const nested = countStructure(block.steps);
+      return { steps: total.steps + nested.steps, repeats: total.repeats + nested.repeats + 1 };
+    }, { steps: 0, repeats: 0 });
   }
 
   function displayValue(step: PrescriptionStep) {
@@ -100,85 +187,177 @@ export function WorkoutEditor({
     return "";
   }
 
-  function setStepExtent(index: number, step: PrescriptionStep, extent: PrescriptionStep["extent"]) {
-    if (extent === "distance") updateStep(index, { extent, distanceMeters: 1609.344, durationSeconds: null, displayUnit: "mi" });
-    else if (extent === "duration") updateStep(index, { extent, distanceMeters: null, durationSeconds: 300, displayUnit: "min" });
-    else updateStep(index, { extent, distanceMeters: null, durationSeconds: null, displayUnit: null });
+  function setStepExtent(path: number[], step: PrescriptionStep, extent: PrescriptionStep["extent"]) {
+    if (extent === "distance") updateStep(path, { extent, distanceMeters: 1609.344, durationSeconds: null, displayUnit: "mi" });
+    else if (extent === "duration") updateStep(path, { extent, distanceMeters: null, durationSeconds: 300, displayUnit: "min" });
+    else updateStep(path, { extent, distanceMeters: null, durationSeconds: null, displayUnit: null });
   }
 
-  function setStepValue(index: number, step: PrescriptionStep, value: string) {
+  function setStepValue(path: number[], step: PrescriptionStep, value: string) {
     const number = Number(value);
     if (!Number.isFinite(number) || number <= 0) return;
     if (step.extent === "distance") {
       const multiplier = step.displayUnit === "km" ? 1000 : step.displayUnit === "m" ? 1 : 1609.344;
-      updateStep(index, { distanceMeters: number * multiplier });
+      updateStep(path, { distanceMeters: number * multiplier });
     } else if (step.extent === "duration") {
-      updateStep(index, { durationSeconds: Math.round(number * (step.displayUnit === "min" ? 60 : 1)) });
+      updateStep(path, { durationSeconds: Math.round(number * (step.displayUnit === "min" ? 60 : 1)) });
     }
+  }
+
+  function renderBlocks(blocks: PrescriptionBlock[], parentPath: number[] = []) {
+    const nested = parentPath.length > 0;
+    return (
+      <div className={nested ? "workout-repeat__blocks" : "workout-structure__blocks"}>
+        {blocks.map((block, index) => {
+          const path = [...parentPath, index];
+          const number = blockNumber(path);
+          if (block.kind === "step") {
+            return (
+              <article className="workout-step" key={block.id ?? `step-${number}`}>
+                <header className="workout-step__header">
+                  <strong>Step {number}</strong>
+                  <div className="workout-step__tools">
+                    <button aria-label={`Move step ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
+                    <button aria-label={`Move step ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
+                    <button aria-label={`Duplicate step ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
+                    <button className="workout-step__remove" aria-label={`Remove step ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
+                  </div>
+                </header>
+                <div className="workout-step__fields">
+                  <label><span>Role</span><select aria-label={`Step ${number} role`} value={block.role} onChange={(event) => updateStep(path, { role: event.target.value as PrescriptionStep["role"] })}>
+                    <option value="warmup">Warm-up</option><option value="work">Work</option><option value="recovery">Recovery</option><option value="cooldown">Cool-down</option><option value="other">Other</option>
+                  </select></label>
+                  <label><span>Extent</span><select aria-label={`Step ${number} extent`} value={block.extent} onChange={(event) => setStepExtent(path, block, event.target.value as PrescriptionStep["extent"])}>
+                    <option value="distance">Distance</option><option value="duration">Duration</option><option value="open">Open-ended</option>
+                  </select></label>
+                  {block.extent === "open" ? <p className="workout-step__open">No fixed distance or duration.</p> : <label className="workout-step__amount"><span>Amount</span><span className="workout-step__amount-fields">
+                    <input aria-label={`Step ${number} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(path, block, event.target.value)} />
+                    <select aria-label={`Step ${number} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => updateStep(path, { displayUnit: event.target.value as PrescriptionStep["displayUnit"] })}>
+                      {block.extent === "distance" ? <><option value="mi">mi</option><option value="km">km</option><option value="m">m</option></> : <><option value="min">min</option><option value="sec">sec</option></>}
+                    </select>
+                  </span></label>}
+                  <label className="workout-step__guidance"><span>Target or guidance</span><input aria-label={`Step ${number} guidance`} placeholder="Easy effort, threshold pace, HR ceiling…" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(path, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} /></label>
+                </div>
+              </article>
+            );
+          }
+
+          return (
+            <article className="workout-repeat" key={block.id ?? `repeat-${number}`}>
+              <header className="workout-repeat__header">
+                <span className="workout-repeat__title">
+                  <span className="workout-repeat__badge"><Repeat2 size={16} />{block.repetitions}×</span>
+                  <strong>Repeat group {number}</strong>
+                </span>
+                <div className="workout-step__tools">
+                  <button aria-label={`Move repeat group ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
+                  <button aria-label={`Move repeat group ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
+                  <button aria-label={`Duplicate repeat group ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
+                  <button className="workout-step__remove" aria-label={`Remove repeat group ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
+                </div>
+              </header>
+              <div className="workout-repeat__settings">
+                <label><span>Repetitions</span><input aria-label={`Repeat group ${number} repetitions`} min="1" max="100" type="number" value={block.repetitions} onChange={(event) => updateBlockAtPath(path, (item) => item.kind === "repeat" ? { ...item, repetitions: Math.max(1, Number(event.target.value)) } : item)} /></label>
+              </div>
+              <div className="workout-repeat__sequence">
+                <div className="workout-repeat__sequence-heading">
+                  <strong>Repeated sequence</strong>
+                  <span>{block.steps.length} direct {block.steps.length === 1 ? "block" : "blocks"}</span>
+                </div>
+                {renderBlocks(block.steps, path)}
+                <div className="workout-repeat__actions">
+                  <button type="button" onClick={() => addBlock(path, newStep())}><Plus size={16} /> Add step inside group</button>
+                  <button type="button" onClick={() => addBlock(path, newRepeatGroup())}><Repeat2 size={16} /> Add nested repeat group</button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
   }
 
   return (
     <div className="editor-backdrop">
-      <aside aria-label="Workout editor" aria-modal="true" className="editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
+      <aside aria-label="Workout editor" aria-modal="true" className="editor-panel workout-editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
-          <h2>{editor.id ? "Edit workout" : "New workout"}</h2>
+          <h2>{editor.id ? `Edit ${mode === "template" ? "library workout" : "workout"}` : `New ${mode === "template" ? "library workout" : "workout"}`}</h2>
           <button type="button" title="Close" disabled={isSaving} onClick={handleClose}>
             <X size={18} />
           </button>
         </header>
         <form aria-busy={isSaving} onSubmit={onSubmit}>
           {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
-          <label>
-            <span>Date</span>
-            <input
-              type="date"
-              value={editor.plannedDate}
-              onChange={(event) => setEditor({ ...editor, plannedDate: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>Title</span>
-            <input
-              aria-label="Title"
-              placeholder={selectedSessionType.label}
-              value={editor.title}
-              onChange={(event) => setEditor({ ...editor, title: event.target.value })}
-            />
-            <small className="field-help">Optional — defaults to {selectedSessionType.label}.</small>
-          </label>
-          <label>
-            <span>Session type</span>
-            <select
-              value={selectedSessionType.value}
-              onChange={(event) => {
-                const sessionType = sessionTypes.find((option) => option.value === event.target.value);
-                if (sessionType) {
-                  setEditor({
-                    ...editor,
-                    sport: sessionType.sport,
-                    workoutType: sessionType.workoutType,
-                    intensityCategory: sessionType.intensityCategory
-                  });
-                }
-              }}
-            >
-              {sessionTypeGroups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <div className="workout-editor-basics">
+            {mode === "scheduled" ? <label>
+              <span>Date</span>
+              <input
+                type="date"
+                value={editor.plannedDate}
+                onChange={(event) => setEditor({ ...editor, plannedDate: event.target.value })}
+              />
+            </label> : null}
+            <label>
+              <span>{mode === "template" ? "Name" : "Title"}</span>
+              <input
+                aria-label="Title"
+                placeholder={selectedSessionType.label}
+                value={editor.title}
+                onChange={(event) => setEditor({ ...editor, title: event.target.value })}
+              />
+              <small className="field-help">{mode === "template" ? "Use a short, searchable name." : `Optional — defaults to ${selectedSessionType.label}.`}</small>
+            </label>
+            <label>
+              <span>Session type</span>
+              <select
+                value={selectedSessionType.value}
+                onChange={(event) => {
+                  const sessionType = sessionTypes.find((option) => option.value === event.target.value);
+                  if (sessionType) {
+                    setEditor({
+                      ...editor,
+                      sport: sessionType.sport,
+                      workoutType: sessionType.workoutType,
+                      intensityCategory: sessionType.intensityCategory
+                    });
+                  }
+                }}
+              >
+                {sessionTypeGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            {mode === "template" ? (
+              <label>
+                <span>Tags</span>
+                <input
+                  aria-label="Workout tags"
+                  placeholder="threshold, track, marathon"
+                  value={tagInput}
+                  onChange={(event) => {
+                    setTagInput(event.target.value);
+                    setTemplateTags?.(
+                      event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean)
+                    );
+                  }}
+                />
+                <small className="field-help">Separate tags with commas.</small>
+              </label>
+            ) : null}
+          </div>
           <div className="form-grid form-grid--three workout-metrics-grid">
             <label>
               <span>Miles</span>
               <input
                 min="0"
-                step="0.1"
+                step="0.01"
                 type="number"
                 value={editor.plannedDistance}
                 onChange={(event) => setMetric("plannedDistance", event.target.value)}
@@ -231,45 +410,11 @@ export function WorkoutEditor({
               <p className="workout-structure__summary">{structureSummary(editor.prescription.blocks)}</p>
             ) : null}
             {editor.prescription && structureOpen ? (
-              <div className="workout-structure__blocks">
-                {editor.prescription.blocks.map((block, index) => block.kind === "step" ? (
-                  <article className="workout-step" key={block.id ?? `step-${index}`}>
-                    <header className="workout-step__header">
-                      <strong>Step {index + 1}</strong>
-                      <div className="workout-step__tools">
-                        <button aria-label={`Move step ${index + 1} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(index, -1)}><ArrowUp size={16} /></button>
-                        <button aria-label={`Move step ${index + 1} later`} disabled={index === editor.prescription!.blocks.length - 1} type="button" onClick={() => moveBlock(index, 1)}><ArrowDown size={16} /></button>
-                        <button aria-label={`Duplicate step ${index + 1}`} type="button" onClick={() => duplicateBlock(index)}><Copy size={16} /></button>
-                        <button className="workout-step__remove" aria-label={`Remove step ${index + 1}`} type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
-                      </div>
-                    </header>
-                    <div className="workout-step__fields">
-                      <label><span>Role</span><select aria-label={`Step ${index + 1} role`} value={block.role} onChange={(event) => updateStep(index, { role: event.target.value as PrescriptionStep["role"] })}>
-                        <option value="warmup">Warm-up</option><option value="work">Work</option><option value="recovery">Recovery</option><option value="cooldown">Cool-down</option><option value="other">Other</option>
-                      </select></label>
-                      <label><span>Extent</span><select aria-label={`Step ${index + 1} extent`} value={block.extent} onChange={(event) => setStepExtent(index, block, event.target.value as PrescriptionStep["extent"])}>
-                        <option value="distance">Distance</option><option value="duration">Duration</option><option value="open">Open-ended</option>
-                      </select></label>
-                      {block.extent === "open" ? <p className="workout-step__open">No fixed distance or duration.</p> : <label className="workout-step__amount"><span>Amount</span><span className="workout-step__amount-fields">
-                        <input aria-label={`Step ${index + 1} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(index, block, event.target.value)} />
-                        <select aria-label={`Step ${index + 1} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => updateStep(index, { displayUnit: event.target.value as PrescriptionStep["displayUnit"] })}>
-                          {block.extent === "distance" ? <><option value="mi">mi</option><option value="km">km</option><option value="m">m</option></> : <><option value="min">min</option><option value="sec">sec</option></>}
-                        </select>
-                      </span></label>}
-                      <label className="workout-step__guidance"><span>Target or guidance</span><input aria-label={`Step ${index + 1} guidance`} placeholder="Easy effort, threshold pace, HR ceiling…" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(index, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} /></label>
-                    </div>
-                  </article>
-                ) : (
-                  <article className="workout-repeat" key={block.id ?? `repeat-${index}`}>
-                    <header><span className="workout-repeat__title"><Repeat2 size={16} /><strong>Repeat group</strong></span><button className="workout-step__remove" aria-label={`Remove repeat group ${index + 1}`} type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}><Trash2 size={16} /></button></header>
-                    <label><span>Repetitions</span><input aria-label={`Repeat group ${index + 1} repetitions`} min="1" type="number" value={block.repetitions} onChange={(event) => updateBlocks((blocks) => blocks.map((item, current) => current === index && item.kind === "repeat" ? { ...item, repetitions: Math.max(1, Number(event.target.value)) } : item))} /></label>
-                    <label className="checkbox-label"><input checked={block.recoveryAfterFinal} type="checkbox" onChange={(event) => updateBlocks((blocks) => blocks.map((item, current) => current === index && item.kind === "repeat" ? { ...item, recoveryAfterFinal: event.target.checked } : item))} /> Include recovery after final repetition</label>
-                    <p>{block.steps.length} step{block.steps.length === 1 ? "" : "s"} per repetition</p>
-                  </article>
-                ))}
+              <div className="workout-structure__editor">
+                {renderBlocks(editor.prescription.blocks)}
                 <div className="workout-structure__actions">
-                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, newStep()])}><Plus size={16} /> Add step</button>
-                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, { kind: "repeat", repetitions: 5, recoveryAfterFinal: false, notes: "", steps: [newStep("work"), { ...newStep("recovery"), extent: "duration", distanceMeters: null, durationSeconds: 120, displayUnit: "min" }] }])}><Repeat2 size={16} /> Add repeat group</button>
+                  <button type="button" onClick={() => addBlock([], newStep())}><Plus size={16} /> Add top-level step</button>
+                  <button type="button" onClick={() => addBlock([], newRepeatGroup())}><Repeat2 size={16} /> Add top-level repeat group</button>
                   <button className="workout-structure__clear" type="button" onClick={() => {
                     setEditor({ ...editor, prescription: null });
                     setStructureOpen(false);
@@ -293,18 +438,18 @@ export function WorkoutEditor({
               onChange={(event) => setEditor({ ...editor, instructions: event.target.value })}
             />
           </label>
-          <label>
+          {mode === "scheduled" ? <label>
             <span>Notes</span>
             <textarea
               rows={3}
               value={editor.notes}
               onChange={(event) => setEditor({ ...editor, notes: event.target.value })}
             />
-          </label>
+          </label> : null}
           <div className="editor-actions">
             <button className="primary" disabled={isSaving} type="submit">
               <Save size={17} />
-              <span>{isSaving ? "Saving…" : "Save"}</span>
+              <span>{isSaving ? "Saving…" : mode === "template" ? "Save to library" : "Save"}</span>
             </button>
           </div>
         </form>

@@ -136,7 +136,7 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
             },
         }
         response = client.post("/api/planned-workouts", json=payload)
-        assert response.status_code == 201
+        assert response.status_code == 201, response.json()
         workout = response.json()
         assert workout["currentPrescriptionRevision"]["revisionNumber"] == 1
         assert (
@@ -156,6 +156,126 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
         )
         assert revision.status_code == 200
         assert revision.json()["currentPrescriptionRevision"]["revisionNumber"] == 2
+
+
+def test_nested_repeat_groups_round_trip_and_calculate_totals() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": week["weekStartDate"],
+                "title": "Nested interval sets",
+                "workoutType": "interval",
+                "intensityCategory": "workout",
+                "prescription": {
+                    "blocks": [{
+                        "kind": "repeat",
+                        "repetitions": 2,
+                        "steps": [{
+                            "kind": "repeat",
+                            "repetitions": 3,
+                            "steps": [
+                                {
+                                    "kind": "step",
+                                    "role": "work",
+                                    "extent": "distance",
+                                    "distanceMeters": 400,
+                                    "displayUnit": "m",
+                                },
+                                {
+                                    "kind": "step",
+                                    "role": "recovery",
+                                    "extent": "duration",
+                                    "durationSeconds": 60,
+                                    "displayUnit": "sec",
+                                },
+                            ],
+                        }],
+                    }]
+                },
+            },
+        )
+
+        assert response.status_code == 201, response.json()
+        workout = response.json()
+        nested = workout["prescription"]["blocks"][0]["steps"][0]
+        assert nested["kind"] == "repeat"
+        assert nested["repetitions"] == 3
+        totals = workout["currentPrescriptionRevision"]["calculatedTotals"]
+        assert totals["knownDistanceMeters"] == 2400
+        assert totals["knownDurationSeconds"] == 240
+
+
+def test_workout_library_crud_and_scheduling_preserve_independent_copy() -> None:
+    with TestClient(app) as client:
+        login(client)
+        prescription = {
+            "blocks": [
+                {
+                    "kind": "step",
+                    "role": "warmup",
+                    "extent": "distance",
+                    "distanceMeters": 3218.688,
+                    "displayUnit": "mi",
+                },
+                {
+                    "kind": "step",
+                    "role": "work",
+                    "extent": "duration",
+                    "durationSeconds": 1200,
+                    "displayUnit": "min",
+                    "primaryTarget": {"kind": "guidance", "guidance": "Threshold effort"},
+                },
+            ]
+        }
+        created_response = client.post(
+            "/api/workout-templates",
+            json={
+                "name": "Threshold builder",
+                "workoutType": "threshold",
+                "tags": ["threshold", "road"],
+                "prescription": prescription,
+                "purpose": "Raise lactate threshold",
+                "instructions": "Stay controlled.",
+            },
+        )
+        assert created_response.status_code == 201
+        created = created_response.json()
+        assert created["version"] == 1
+
+        listed = client.get("/api/workout-templates")
+        assert listed.status_code == 200
+        assert any(template["id"] == created["id"] for template in listed.json())
+
+        updated_response = client.patch(
+            f"/api/workout-templates/{created['id']}",
+            json={"name": "Threshold builder v2", "expectedVersion": created["version"]},
+        )
+        assert updated_response.status_code == 200
+        updated = updated_response.json()
+        assert updated["name"] == "Threshold builder v2"
+        assert updated["version"] == 2
+
+        scheduled_response = client.post(
+            f"/api/workout-templates/{created['id']}/schedule",
+            json={"plannedDate": "2099-09-07"},
+        )
+        assert scheduled_response.status_code == 200
+        scheduled = scheduled_response.json()
+        assert scheduled["title"] == "Threshold builder v2"
+        assert scheduled["prescription"] == created["prescription"]
+
+        delete_response = client.delete(f"/api/workout-templates/{created['id']}")
+        assert delete_response.status_code == 204
+        assert all(
+            template["id"] != created["id"]
+            for template in client.get("/api/workout-templates").json()
+        )
+        still_scheduled = client.get(f"/api/planned-workouts/{scheduled['id']}")
+        assert still_scheduled.status_code == 200
+        assert still_scheduled.json()["prescription"] == created["prescription"]
 
 
 def test_migrated_prescription_baseline_does_not_break_week_reads() -> None:

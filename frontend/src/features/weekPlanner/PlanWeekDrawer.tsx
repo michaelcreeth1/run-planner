@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Library, Plus, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
@@ -8,13 +8,15 @@ import type {
   TrainingPlan,
   TrainingWeek,
   WeekGoalCategory,
-  Workout
+  Workout,
+  WorkoutTemplate
 } from "../../types/domain";
 import { addDays, todayDateString } from "../../lib/dates";
 import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import { completedSessionCount } from "../../lib/weekMetrics";
 import { useModalDialog } from "../../hooks/useModalDialog";
+import { fetchJson } from "../../lib/api";
 import type { AlignmentItem } from "../../types/domain";
 import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
 import { buildPlanRules, evaluateRulesForWeek } from "../goals/ruleEvaluation";
@@ -29,7 +31,8 @@ import {
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
   sortDraftWorkouts,
-  sumDraftRunDistance
+  sumDraftRunDistance,
+  workoutDraftFromTemplate
 } from "./planWeekDrafts";
 
 const DEFAULT_SHARED_RULES = buildPlanRules({ defaultGoals: [], plan: null });
@@ -56,6 +59,10 @@ export function PlanWeekDrawer({
   weekStack: Record<string, TrainingWeek>;
 }) {
   const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
+  const [libraryDate, setLibraryDate] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
@@ -270,6 +277,44 @@ export function PlanWeekDrawer({
     });
   }
 
+  async function openWorkoutLibrary(dateValue: string) {
+    setLibraryDate(dateValue);
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    try {
+      setTemplates(await fetchJson<WorkoutTemplate[]>("/api/workout-templates"));
+    } catch {
+      setTemplatesError("Could not load your workout library.");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
+
+  function addTemplate(dateValue: string, template: WorkoutTemplate) {
+    updateDraft((current) => {
+      const workouts = current.workouts.filter(
+        (workout) => workout.plannedDate !== dateValue || effectiveWorkoutSport(workout) !== "rest"
+      );
+      const insertionIndex = workouts.reduce(
+        (lastIndex, workout, index) => (workout.plannedDate === dateValue ? index + 1 : lastIndex),
+        0
+      );
+      const index = insertionIndex > 0
+        ? insertionIndex
+        : workouts.findIndex((workout) => workout.plannedDate > dateValue);
+      const target = index >= 0 ? index : workouts.length;
+      return {
+        ...current,
+        workouts: [
+          ...workouts.slice(0, target),
+          workoutDraftFromTemplate(template, dateValue),
+          ...workouts.slice(target)
+        ]
+      };
+    });
+    setLibraryDate(null);
+  }
+
   function updateTargetToSchedule(category: WeekGoalCategory) {
     updateDraft((current) => {
       const scheduleValue = goalValueFromSchedule(current, category);
@@ -396,6 +441,33 @@ export function PlanWeekDrawer({
                 {completedSessions} completed session{completedSessions === 1 ? "" : "s"} stay fixed. Adjust only today and the remaining days.
               </p>
             ) : null}
+            {libraryDate ? (
+              <div className="workout-library-picker">
+                <div className="workout-library-picker__header">
+                  <div>
+                    <strong>Choose a workout for {formatWeekday(libraryDate)}</strong>
+                    <span>Scheduling creates an independent copy.</span>
+                  </div>
+                  <button aria-label="Close workout library" type="button" onClick={() => setLibraryDate(null)}><X size={16} /></button>
+                </div>
+                {templates.length ? (
+                  <div className="workout-library-picker__list">
+                    {templates.map((template) => (
+                      <button key={template.id} type="button" onClick={() => addTemplate(libraryDate, template)}>
+                        <span><strong>{template.name}</strong><small>{template.workoutType.replaceAll("_", " ")}</small></span>
+                        <Plus size={16} />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p>{templatesLoading ? "Loading workout library…" : templatesError ?? "Your workout library is empty. Add workouts from the Workouts page."}</p>
+                )}
+                <button className="workout-library-picker__blank" type="button" onClick={() => {
+                  addWorkout(libraryDate);
+                  setLibraryDate(null);
+                }}>Add a blank session instead</button>
+              </div>
+            ) : null}
             <div className="schedule-draft-column-labels" aria-hidden="true">
               <span />
               <div>
@@ -421,15 +493,26 @@ export function PlanWeekDrawer({
                   <div className="schedule-draft-day" key={dateValue}>
                     <div className="schedule-day-heading">
                       <strong>{formatWeekday(dateValue)}</strong>
-                      <button
-                        aria-label={`Add session to ${formatWeekday(dateValue)}`}
-                        className="schedule-day-add"
-                        title={`Add session to ${formatWeekday(dateValue)}`}
-                        type="button"
-                        onClick={() => addWorkout(dateValue)}
-                      >
-                        <Plus size={14} />
-                      </button>
+                      <div className="schedule-day-actions">
+                        <button
+                          aria-label={`Choose workout for ${formatWeekday(dateValue)}`}
+                          className="schedule-day-add"
+                          title={`Choose from workout library for ${formatWeekday(dateValue)}`}
+                          type="button"
+                          onClick={() => void openWorkoutLibrary(dateValue)}
+                        >
+                          <Library size={14} />
+                        </button>
+                        <button
+                          aria-label={`Add session to ${formatWeekday(dateValue)}`}
+                          className="schedule-day-add schedule-day-add--blank"
+                          title={`Add a blank session to ${formatWeekday(dateValue)}`}
+                          type="button"
+                          onClick={() => addWorkout(dateValue)}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
                     </div>
                     <div className="schedule-draft-sessions">
                       {visibleDayWorkouts.length ? (

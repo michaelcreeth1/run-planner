@@ -35,6 +35,12 @@ describe("app navigation", () => {
     expect(appRoutePath(route)).toBe("/plan/plan-123");
   });
 
+  it("round-trips the workout library route", () => {
+    const route = parseAppRoute("/workouts", "", fallbackWeek);
+    expect(route).toMatchObject({ tab: "workouts" });
+    expect(appRoutePath(route)).toBe("/workouts");
+  });
+
   it("keeps the selected plan while moving through goals", () => {
     const route = parseAppRoute("/plan/plan-123/goals", "", fallbackWeek);
     expect(route).toMatchObject({ tab: "plan", planId: "plan-123", planningSection: "goals" });

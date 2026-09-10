@@ -63,7 +63,7 @@ export type PrescriptionTarget = {
 
 export type PrescriptionStep = {
   kind: "step";
-  id?: string;
+  id?: string | null;
   role: "warmup" | "work" | "recovery" | "cooldown" | "other";
   extent: "distance" | "duration" | "open";
   distanceMeters?: number | null;
@@ -76,7 +76,7 @@ export type PrescriptionStep = {
 
 export type PrescriptionRepeatGroup = {
   kind: "repeat";
-  id?: string;
+  id?: string | null;
   repetitions: number;
   steps: PrescriptionBlock[];
   recoveryAfterFinal: boolean;
@@ -102,6 +102,20 @@ export type WorkoutPrescriptionRevision = {
   prescription: WorkoutPrescription;
   calculatedTotals: PrescriptionTotals;
   createdAt: string;
+};
+
+export type WorkoutTemplate = {
+  id: string;
+  athleteAccountId: string;
+  name: string;
+  workoutType: Workout["workoutType"];
+  tags: string[];
+  prescription: WorkoutPrescription;
+  purpose: string;
+  instructions: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type WeekGoalCategory = "mileage" | "sessions" | "long_run" | "quality" | "recovery" | "strength" | "custom";

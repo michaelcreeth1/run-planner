@@ -1,6 +1,6 @@
 import { parseDate, startOfWeek } from "./dates";
 
-export type AppTab = "week" | "plan" | "progress" | "settings";
+export type AppTab = "week" | "plan" | "workouts" | "progress" | "settings";
 export type PlanningSection = "overview" | "goals";
 export type ProgressSection = "trends" | "activities";
 
@@ -40,6 +40,9 @@ export function parseAppRoute(pathname: string, search: string, fallbackWeekStar
   if (/^\/plan\/?$/.test(pathname)) {
     return baseRoute({ tab: "plan", weekStart });
   }
+  if (/^\/workouts\/?$/.test(pathname)) {
+    return baseRoute({ tab: "workouts", weekStart });
+  }
   if (/^\/progress\/activities\/?$/.test(pathname)) {
     return baseRoute({ tab: "progress", weekStart, progressSection: "activities" });
   }
@@ -61,6 +64,9 @@ export function appRoutePath(route: AppRoute) {
       return route.planId ? `/plan/${encodeURIComponent(route.planId)}/goals` : "/plan/goals";
     }
     return route.planId ? `/plan/${encodeURIComponent(route.planId)}` : "/plan";
+  }
+  if (route.tab === "workouts") {
+    return "/workouts";
   }
   if (route.tab === "progress") {
     return route.progressSection === "activities" ? "/progress/activities" : "/progress";

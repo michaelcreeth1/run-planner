@@ -1098,6 +1098,12 @@ def update_template(
     return template
 
 
+def delete_template(db: Session, template_id: str, athlete_account_id: str) -> None:
+    template = get_template(db, template_id, athlete_account_id)
+    db.delete(template)
+    db.commit()
+
+
 def schedule_template(
     db: Session,
     template_id: str,
