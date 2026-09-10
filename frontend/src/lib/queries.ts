@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "./api";
-import type { GoalMetricDefinition, GoalRace, RecurringGoal, TrainingPlan, TrainingPlanSummary, WorkoutTemplate } from "../types/domain";
+import type { GoalMetricDefinition, GoalRace, RecurringGoal, TrainingPaceEstimate, TrainingPlan, TrainingPlanSummary, WorkoutTemplate } from "../types/domain";
 
 export const queryKeys = {
   profile: (profileId: string) => ["profile", profileId] as const,
@@ -9,6 +9,7 @@ export const queryKeys = {
   goalRaces: (profileId: string) => [...queryKeys.profile(profileId), "goal-races"] as const,
   defaultGoals: (profileId: string) => [...queryKeys.profile(profileId), "default-goals"] as const,
   workoutTemplates: (profileId: string) => [...queryKeys.profile(profileId), "workout-templates"] as const,
+  trainingPaceEstimate: (profileId: string) => [...queryKeys.profile(profileId), "training-pace-estimate"] as const,
   goalMetrics: ["goal-metrics"] as const
 };
 
@@ -54,6 +55,14 @@ export function useWorkoutTemplatesQuery(profileId: string | null) {
   return useQuery({
     queryKey: queryKeys.workoutTemplates(profileId ?? "anonymous"),
     queryFn: () => fetchJson<WorkoutTemplate[]>("/api/workout-templates"),
+    enabled: Boolean(profileId)
+  });
+}
+
+export function useTrainingPaceEstimateQuery(profileId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.trainingPaceEstimate(profileId ?? "anonymous"),
+    queryFn: () => fetchJson<TrainingPaceEstimate>("/api/training-pace-estimate"),
     enabled: Boolean(profileId)
   });
 }

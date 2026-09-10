@@ -140,6 +140,11 @@ function useAuthenticatedAppHandlers(onCreateWorkout = vi.fn()) {
       })
     ),
     http.get(apiUrl("/api/activities"), () => HttpResponse.json([])),
+    http.get(apiUrl("/api/training-pace-estimate"), () => HttpResponse.json({
+      easyPaceSecondsPerMile: 600,
+      source: "default",
+      sampleSize: 0
+    })),
     http.get(apiUrl("/api/analytics/planning"), () => HttpResponse.json({})),
     http.get(apiUrl("/api/default-goals"), () => HttpResponse.json([])),
     http.get(apiUrl("/api/goal-metrics"), () => HttpResponse.json([])),
@@ -330,6 +335,7 @@ describe("App authentication states", () => {
     expect(screen.getByRole("heading", { name: "Threshold builder" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Edit Threshold builder" }));
+    expect(screen.queryByText("Use a short, searchable name.")).not.toBeInTheDocument();
     const title = screen.getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Cruise intervals");
@@ -1004,6 +1010,33 @@ describe("App mutation handling", () => {
     expect(screen.getByRole("heading", { name: "Edit workout" })).toBeVisible();
     expect(screen.getByLabelText("Title")).toHaveValue("Updated easy five");
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("saves an existing scheduled workout to the workout library", async () => {
+    const user = userEvent.setup();
+    const onSaveToLibrary = vi.fn();
+    const workout = useWeekWithWorkout();
+    server.use(
+      http.post(apiUrl("/api/workout-templates"), async ({ request }) => {
+        onSaveToLibrary(await request.json());
+        return HttpResponse.json({ id: "template-from-workout" }, { status: 201 });
+      })
+    );
+    render(<App />);
+    await signIn(user);
+
+    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
+    expect(screen.getByRole("button", { name: "Save to workout library" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save to workout library" }));
+
+    await waitFor(() => expect(onSaveToLibrary).toHaveBeenCalledWith(expect.objectContaining({
+      name: "Easy five",
+      workoutType: "easy",
+      purpose: "Aerobic support"
+    })));
+    expect(onSaveToLibrary.mock.calls[0][0]).not.toHaveProperty("expectedVersion");
+    expect(screen.getByRole("heading", { name: "Edit workout" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Saved to workout library" })).toBeDisabled();
   });
 
   it("guards duplicate workout actions and reports a failed duplicate", async () => {

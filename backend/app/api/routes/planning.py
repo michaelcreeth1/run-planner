@@ -22,6 +22,7 @@ from app.schemas.planning import (
     RecurringGoalRead,
     RecurringGoalSpec,
     ScheduleTemplateRequest,
+    TrainingPaceEstimate,
     TrainingTimelineRead,
     TrainingWeekPatch,
     TrainingWeekRead,
@@ -42,9 +43,21 @@ CurrentProfile = Annotated[AthleteAccount, Depends(require_current_profile)]
 
 
 @router.post("/prescriptions/preview", response_model=PrescriptionTotals)
-def preview_prescription(payload: WorkoutPrescription, profile: CurrentProfile) -> dict:
-    del profile
-    return planning.prescription_totals(payload)
+def preview_prescription(
+    payload: WorkoutPrescription,
+    db: DbSession,
+    profile: CurrentProfile,
+) -> dict:
+    pace = planning.training_pace_estimate(db, profile.id)
+    return planning.prescription_totals(
+        payload,
+        easy_pace_seconds_per_mile=pace["easy_pace_seconds_per_mile"],
+    )
+
+
+@router.get("/training-pace-estimate", response_model=TrainingPaceEstimate)
+def get_training_pace_estimate(db: DbSession, profile: CurrentProfile) -> dict:
+    return planning.training_pace_estimate(db, profile.id)
 
 
 @router.get("/goal-metrics")

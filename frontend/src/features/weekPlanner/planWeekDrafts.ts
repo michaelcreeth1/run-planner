@@ -242,12 +242,16 @@ export function newWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
 
 export function workoutDraftFromTemplate(
   template: WorkoutTemplate,
-  plannedDate: string
+  plannedDate: string,
+  easyPaceSecondsPerMile = 600
 ): PlanWeekWorkoutDraft {
   const matchingType =
     sessionTypes.find((option) => option.workoutType === template.workoutType) ??
     sessionTypes.find((option) => option.value === "run:other")!;
-  const totals = prescriptionTotals(template.prescription);
+  const totals = prescriptionTotals(template.prescription, {
+    easyPaceSecondsPerMile,
+    workoutType: template.workoutType
+  });
   return {
     ...defaultForm(plannedDate),
     draftId: draftId("workout"),
@@ -256,10 +260,11 @@ export function workoutDraftFromTemplate(
     workoutType: matchingType.workoutType,
     intensityCategory: matchingType.intensityCategory,
     plannedDistance:
-      matchingType.sport === "run" && totals.distance
-        ? String(roundToTenth(totals.distance / 1609.344))
+      matchingType.sport === "run" && totals.estimatedDistance
+        ? String(roundToTenth(totals.estimatedDistance / 1609.344))
         : "",
-    plannedDuration: totals.duration ? formatDurationSeconds(totals.duration) : "",
+    plannedDuration:
+      totals.estimatedDuration ? formatDurationSeconds(totals.estimatedDuration) : "",
     purpose: template.purpose,
     instructions: template.instructions,
     prescription: structuredClone(template.prescription)

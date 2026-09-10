@@ -5,6 +5,7 @@ import type {
   PlanWeekDraft,
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
+  TrainingPaceEstimate,
   TrainingPlan,
   TrainingWeek,
   WeekGoalCategory,
@@ -14,6 +15,7 @@ import type {
 import { addDays, todayDateString } from "../../lib/dates";
 import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
+import { prescriptionTotals } from "../../lib/prescriptions";
 import { completedSessionCount } from "../../lib/weekMetrics";
 import { useModalDialog } from "../../hooks/useModalDialog";
 import { fetchJson } from "../../lib/api";
@@ -61,6 +63,7 @@ export function PlanWeekDrawer({
   const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
   const [libraryDate, setLibraryDate] = useState<string | null>(null);
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [trainingPaceEstimate, setTrainingPaceEstimate] = useState<TrainingPaceEstimate | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
@@ -282,7 +285,12 @@ export function PlanWeekDrawer({
     setTemplatesLoading(true);
     setTemplatesError(null);
     try {
-      setTemplates(await fetchJson<WorkoutTemplate[]>("/api/workout-templates"));
+      const [loadedTemplates, paceEstimate] = await Promise.all([
+        fetchJson<WorkoutTemplate[]>("/api/workout-templates"),
+        fetchJson<TrainingPaceEstimate>("/api/training-pace-estimate")
+      ]);
+      setTemplates(loadedTemplates);
+      setTrainingPaceEstimate(paceEstimate);
     } catch {
       setTemplatesError("Could not load your workout library.");
     } finally {
@@ -307,7 +315,11 @@ export function PlanWeekDrawer({
         ...current,
         workouts: [
           ...workouts.slice(0, target),
-          workoutDraftFromTemplate(template, dateValue),
+          workoutDraftFromTemplate(
+            template,
+            dateValue,
+            trainingPaceEstimate?.easyPaceSecondsPerMile
+          ),
           ...workouts.slice(target)
         ]
       };
@@ -452,12 +464,21 @@ export function PlanWeekDrawer({
                 </div>
                 {templates.length ? (
                   <div className="workout-library-picker__list">
-                    {templates.map((template) => (
-                      <button key={template.id} type="button" onClick={() => addTemplate(libraryDate, template)}>
-                        <span><strong>{template.name}</strong><small>{template.workoutType.replaceAll("_", " ")}</small></span>
-                        <Plus size={16} />
-                      </button>
-                    ))}
+                    {templates.map((template) => {
+                      const totals = prescriptionTotals(template.prescription, {
+                        easyPaceSecondsPerMile: trainingPaceEstimate?.easyPaceSecondsPerMile,
+                        workoutType: template.workoutType
+                      });
+                      return (
+                        <button key={template.id} type="button" onClick={() => addTemplate(libraryDate, template)}>
+                          <span>
+                            <strong>{template.name}</strong>
+                            <small>{template.workoutType.replaceAll("_", " ")} · ~{formatNumber(totals.estimatedDistance / 1609.344)} mi</small>
+                          </span>
+                          <Plus size={16} />
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p>{templatesLoading ? "Loading workout library…" : templatesError ?? "Your workout library is empty. Add workouts from the Workouts page."}</p>

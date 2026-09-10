@@ -1,29 +1,36 @@
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Copy, Plus, Repeat2, Save, Trash2, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Library, Plus, Repeat2, Save, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useModalDialog } from "../../hooks/useModalDialog";
-import type { PrescriptionBlock, PrescriptionStep, WorkoutForm } from "../../types/domain";
+import type { PrescriptionBlock, PrescriptionStep, TrainingPaceEstimate, WorkoutForm } from "../../types/domain";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
-import { recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
+import { isStructuredPrescription, prescriptionTotals } from "../../lib/prescriptions";
+import { formatDurationSeconds, formatPaceSeconds, recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
 
 export function WorkoutEditor({
   editor,
   error,
   isSaving,
+  isSavingToLibrary = false,
   mode = "scheduled",
+  trainingPaceEstimate,
   templateTags = [],
   setTemplateTags,
   setEditor,
+  onSaveToLibrary,
   onSubmit,
   onClose
 }: {
   editor: WorkoutForm;
   error: string | null;
   isSaving: boolean;
+  isSavingToLibrary?: boolean;
   mode?: "scheduled" | "template";
+  trainingPaceEstimate?: TrainingPaceEstimate;
   templateTags?: string[];
   setTemplateTags?: (tags: string[]) => void;
   setEditor: (editor: WorkoutForm) => void;
+  onSaveToLibrary?: () => Promise<boolean>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
@@ -31,10 +38,27 @@ export function WorkoutEditor({
   const drawerRef = useRef<HTMLElement | null>(null);
   const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
   const [structureOpen, setStructureOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(mode === "template");
+  const [savedToLibrary, setSavedToLibrary] = useState(false);
   const [tagInput, setTagInput] = useState(() => templateTags.join(", "));
+  const isBusy = isSaving || isSavingToLibrary;
+  const hasStructuredPrescription = isStructuredPrescription(editor.prescription);
+  const derivedTotals = hasStructuredPrescription && editor.prescription
+    ? prescriptionTotals(editor.prescription, {
+      easyPaceSecondsPerMile: trainingPaceEstimate?.easyPaceSecondsPerMile,
+      workoutType: editor.workoutType
+    })
+    : null;
+  const paceSampleDescription = trainingPaceEstimate?.sampleSize
+    ? `${trainingPaceEstimate.sampleSize} recent ${trainingPaceEstimate.source === "recent_runs" ? "non-workout " : "easy "}run${trainingPaceEstimate.sampleSize === 1 ? "" : "s"}`
+    : null;
+
+  useEffect(() => {
+    setSavedToLibrary(false);
+  }, [editor]);
 
   function handleClose() {
-    if (isSaving) {
+    if (isBusy) {
       return;
     }
     if (JSON.stringify(editor) !== initialEditorSnapshotRef.current && !window.confirm("Discard unsaved workout changes?")) {
@@ -44,6 +68,13 @@ export function WorkoutEditor({
   }
 
   useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
+
+  async function saveToLibrary() {
+    if (!onSaveToLibrary || isBusy) return;
+    if (await onSaveToLibrary()) {
+      setSavedToLibrary(true);
+    }
+  }
 
   function setMetric(field: WorkoutMetricField, value: string) {
     setEditor(recalculateWorkoutMetrics({ ...editor, [field]: value }, field));
@@ -165,7 +196,7 @@ export function WorkoutEditor({
 
   function structureSummary(blocks: PrescriptionBlock[]) {
     const { steps, repeats } = countStructure(blocks);
-    return `${steps} ${steps === 1 ? "step" : "steps"}${repeats ? ` · ${repeats} repeat ${repeats === 1 ? "group" : "groups"}` : ""}`;
+    return `${steps} ${steps === 1 ? "segment" : "segments"}${repeats ? ` · ${repeats} repeat ${repeats === 1 ? "set" : "sets"}` : ""}`;
   }
 
   function countStructure(blocks: PrescriptionBlock[]): { steps: number; repeats: number } {
@@ -215,28 +246,28 @@ export function WorkoutEditor({
             return (
               <article className="workout-step" key={block.id ?? `step-${number}`}>
                 <header className="workout-step__header">
-                  <strong>Step {number}</strong>
+                  <strong>Segment {number}</strong>
                   <div className="workout-step__tools">
-                    <button aria-label={`Move step ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
-                    <button aria-label={`Move step ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
-                    <button aria-label={`Duplicate step ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
-                    <button className="workout-step__remove" aria-label={`Remove step ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
+                    <button aria-label={`Move segment ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
+                    <button aria-label={`Move segment ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
+                    <button aria-label={`Duplicate segment ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
+                    <button className="workout-step__remove" aria-label={`Remove segment ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
                   </div>
                 </header>
                 <div className="workout-step__fields">
-                  <label><span>Role</span><select aria-label={`Step ${number} role`} value={block.role} onChange={(event) => updateStep(path, { role: event.target.value as PrescriptionStep["role"] })}>
+                  <label><span>Role</span><select aria-label={`Segment ${number} role`} value={block.role} onChange={(event) => updateStep(path, { role: event.target.value as PrescriptionStep["role"] })}>
                     <option value="warmup">Warm-up</option><option value="work">Work</option><option value="recovery">Recovery</option><option value="cooldown">Cool-down</option><option value="other">Other</option>
                   </select></label>
-                  <label><span>Extent</span><select aria-label={`Step ${number} extent`} value={block.extent} onChange={(event) => setStepExtent(path, block, event.target.value as PrescriptionStep["extent"])}>
+                  <label><span>Extent</span><select aria-label={`Segment ${number} extent`} value={block.extent} onChange={(event) => setStepExtent(path, block, event.target.value as PrescriptionStep["extent"])}>
                     <option value="distance">Distance</option><option value="duration">Duration</option><option value="open">Open-ended</option>
                   </select></label>
                   {block.extent === "open" ? <p className="workout-step__open">No fixed distance or duration.</p> : <label className="workout-step__amount"><span>Amount</span><span className="workout-step__amount-fields">
-                    <input aria-label={`Step ${number} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(path, block, event.target.value)} />
-                    <select aria-label={`Step ${number} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => updateStep(path, { displayUnit: event.target.value as PrescriptionStep["displayUnit"] })}>
+                    <input aria-label={`Segment ${number} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(path, block, event.target.value)} />
+                    <select aria-label={`Segment ${number} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => updateStep(path, { displayUnit: event.target.value as PrescriptionStep["displayUnit"] })}>
                       {block.extent === "distance" ? <><option value="mi">mi</option><option value="km">km</option><option value="m">m</option></> : <><option value="min">min</option><option value="sec">sec</option></>}
                     </select>
                   </span></label>}
-                  <label className="workout-step__guidance"><span>Target or guidance</span><input aria-label={`Step ${number} guidance`} placeholder="Easy effort, threshold pace, HR ceiling…" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(path, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} /></label>
+                  <label className="workout-step__guidance"><span>Target or guidance</span><input aria-label={`Segment ${number} guidance`} placeholder="Easy effort, threshold pace, HR ceiling…" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(path, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} /></label>
                 </div>
               </article>
             );
@@ -246,28 +277,36 @@ export function WorkoutEditor({
             <article className="workout-repeat" key={block.id ?? `repeat-${number}`}>
               <header className="workout-repeat__header">
                 <span className="workout-repeat__title">
-                  <span className="workout-repeat__badge"><Repeat2 size={16} />{block.repetitions}×</span>
-                  <strong>Repeat group {number}</strong>
+                  <label className="workout-repeat__badge">
+                    <Repeat2 aria-hidden="true" size={16} />
+                    <input
+                      aria-label={`Repeat set ${number} repetitions`}
+                      min="1"
+                      max="100"
+                      type="number"
+                      value={block.repetitions}
+                      onChange={(event) => updateBlockAtPath(path, (item) => item.kind === "repeat" ? { ...item, repetitions: Math.max(1, Number(event.target.value)) } : item)}
+                    />
+                    <span aria-hidden="true">×</span>
+                  </label>
+                  <strong>Repeat set {number}</strong>
                 </span>
                 <div className="workout-step__tools">
-                  <button aria-label={`Move repeat group ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
-                  <button aria-label={`Move repeat group ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
-                  <button aria-label={`Duplicate repeat group ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
-                  <button className="workout-step__remove" aria-label={`Remove repeat group ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
+                  <button aria-label={`Move repeat set ${number} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(path, -1)}><ArrowUp size={16} /></button>
+                  <button aria-label={`Move repeat set ${number} later`} disabled={index === blocks.length - 1} type="button" onClick={() => moveBlock(path, 1)}><ArrowDown size={16} /></button>
+                  <button aria-label={`Duplicate repeat set ${number}`} type="button" onClick={() => duplicateBlock(path)}><Copy size={16} /></button>
+                  <button className="workout-step__remove" aria-label={`Remove repeat set ${number}`} type="button" onClick={() => removeBlock(path)}><Trash2 size={16} /></button>
                 </div>
               </header>
-              <div className="workout-repeat__settings">
-                <label><span>Repetitions</span><input aria-label={`Repeat group ${number} repetitions`} min="1" max="100" type="number" value={block.repetitions} onChange={(event) => updateBlockAtPath(path, (item) => item.kind === "repeat" ? { ...item, repetitions: Math.max(1, Number(event.target.value)) } : item)} /></label>
-              </div>
               <div className="workout-repeat__sequence">
                 <div className="workout-repeat__sequence-heading">
-                  <strong>Repeated sequence</strong>
-                  <span>{block.steps.length} direct {block.steps.length === 1 ? "block" : "blocks"}</span>
+                  <strong>Repeat these</strong>
+                  <span>{block.steps.length} {block.steps.length === 1 ? "part" : "parts"}</span>
                 </div>
                 {renderBlocks(block.steps, path)}
                 <div className="workout-repeat__actions">
-                  <button type="button" onClick={() => addBlock(path, newStep())}><Plus size={16} /> Add step inside group</button>
-                  <button type="button" onClick={() => addBlock(path, newRepeatGroup())}><Repeat2 size={16} /> Add nested repeat group</button>
+                  <button type="button" onClick={() => addBlock(path, newStep())}><Plus size={16} /> Add segment</button>
+                  <button type="button" onClick={() => addBlock(path, newRepeatGroup())}><Repeat2 size={16} /> Add repeat set inside</button>
                 </div>
               </div>
             </article>
@@ -277,16 +316,96 @@ export function WorkoutEditor({
     );
   }
 
+  const workoutDetails = (
+    <div className="workout-details__content">
+      {mode === "scheduled" && !hasStructuredPrescription ? (
+        <>
+          <label className="workout-details__pace">
+            <span>Pace (/mi)</span>
+            <input
+              pattern="[0-9]+(:[0-5][0-9])?"
+              placeholder="8:30"
+              title="Enter pace as minutes:seconds per mile"
+              value={editor.plannedPace}
+              onChange={(event) => setMetric("plannedPace", event.target.value)}
+            />
+          </label>
+          <p className="field-help">You can plan by pace instead: enter any two of miles, time, and pace.</p>
+        </>
+      ) : null}
+      <section className={`workout-structure${structureOpen ? " workout-structure--open" : ""}`} aria-label="Workout structure">
+        <div className="workout-structure__heading">
+          <div>
+            <h3>Workout structure</h3>
+            <p>Add warm-ups, work intervals, recoveries, and repeat sets.</p>
+          </div>
+          {editor.prescription ? (
+            <button className="workout-structure__toggle" type="button" aria-expanded={structureOpen} onClick={() => setStructureOpen((open) => !open)}>
+              {structureOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              {structureOpen ? "Hide" : "Edit"}
+            </button>
+          ) : (
+            <button className="workout-structure__toggle" type="button" onClick={() => {
+              setEditor({ ...editor, prescription: { blocks: [newStep("warmup")] } });
+              setStructureOpen(true);
+            }}>
+              <Plus size={16} /> Add intervals
+            </button>
+          )}
+        </div>
+        {editor.prescription && !structureOpen ? (
+          <p className="workout-structure__summary">{structureSummary(editor.prescription.blocks)}</p>
+        ) : null}
+        {editor.prescription && structureOpen ? (
+          <div className="workout-structure__editor">
+            {renderBlocks(editor.prescription.blocks)}
+            <div className="workout-structure__actions">
+              <button type="button" onClick={() => addBlock([], newStep())}><Plus size={16} /> Add segment</button>
+              <button type="button" onClick={() => addBlock([], newRepeatGroup())}><Repeat2 size={16} /> Add repeat set</button>
+              <button className="workout-structure__clear" type="button" onClick={() => {
+                setEditor({ ...editor, prescription: null });
+                setStructureOpen(false);
+              }}>Use simple workout</button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+      <label>
+        <span>Purpose</span>
+        <input
+          value={editor.purpose}
+          onChange={(event) => setEditor({ ...editor, purpose: event.target.value })}
+        />
+      </label>
+      <label>
+        <span>Instructions</span>
+        <textarea
+          rows={4}
+          value={editor.instructions}
+          onChange={(event) => setEditor({ ...editor, instructions: event.target.value })}
+        />
+      </label>
+      {mode === "scheduled" ? <label>
+        <span>Notes</span>
+        <textarea
+          rows={3}
+          value={editor.notes}
+          onChange={(event) => setEditor({ ...editor, notes: event.target.value })}
+        />
+      </label> : null}
+    </div>
+  );
+
   return (
     <div className="editor-backdrop">
       <aside aria-label="Workout editor" aria-modal="true" className="editor-panel workout-editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
         <header>
           <h2>{editor.id ? `Edit ${mode === "template" ? "library workout" : "workout"}` : `New ${mode === "template" ? "library workout" : "workout"}`}</h2>
-          <button type="button" title="Close" disabled={isSaving} onClick={handleClose}>
+          <button type="button" title="Close" disabled={isBusy} onClick={handleClose}>
             <X size={18} />
           </button>
         </header>
-        <form aria-busy={isSaving} onSubmit={onSubmit}>
+        <form aria-busy={isBusy} onSubmit={onSubmit}>
           {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
           <div className="workout-editor-basics">
             {mode === "scheduled" ? <label>
@@ -305,7 +424,6 @@ export function WorkoutEditor({
                 value={editor.title}
                 onChange={(event) => setEditor({ ...editor, title: event.target.value })}
               />
-              <small className="field-help">{mode === "template" ? "Use a short, searchable name." : `Optional — defaults to ${selectedSessionType.label}.`}</small>
             </label>
             <label>
               <span>Session type</span>
@@ -352,102 +470,92 @@ export function WorkoutEditor({
               </label>
             ) : null}
           </div>
-          <div className="form-grid form-grid--three workout-metrics-grid">
-            <label>
-              <span>Miles</span>
-              <input
-                min="0"
-                step="0.01"
-                type="number"
-                value={editor.plannedDistance}
-                onChange={(event) => setMetric("plannedDistance", event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Time (H:MM:SS)</span>
-              <input
-                inputMode="numeric"
-                pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]"
-                placeholder="0:45:00"
-                title="Enter time as hours:minutes:seconds"
-                value={editor.plannedDuration}
-                onChange={(event) => setMetric("plannedDuration", event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Pace (/mi)</span>
-              <input
-                pattern="[0-9]+(:[0-5][0-9])?"
-                placeholder="8:30"
-                title="Enter pace as minutes:seconds per mile"
-                value={editor.plannedPace}
-                onChange={(event) => setMetric("plannedPace", event.target.value)}
-              />
-            </label>
-          </div>
-          <p className="field-help">Enter any two; the third is calculated automatically. Time uses H:MM:SS.</p>
-          <section className={`workout-structure${structureOpen ? " workout-structure--open" : ""}`} aria-label="Structured workout">
-            <div className="workout-structure__heading">
-              <div>
-                <h3>Workout structure</h3>
-                <p>Optional steps for intervals, progressions, and other prescribed sessions.</p>
-              </div>
-              {editor.prescription ? (
-                <button className="workout-structure__toggle" type="button" aria-expanded={structureOpen} onClick={() => setStructureOpen((open) => !open)}>
-                  {structureOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  {structureOpen ? "Hide" : "Edit"}
-                </button>
-              ) : (
-                <button className="workout-structure__toggle" type="button" onClick={() => {
-                  setEditor({ ...editor, prescription: { blocks: [newStep("warmup")] } });
-                  setStructureOpen(true);
-                }}>
-                  <Plus size={16} /> Add structure
-                </button>
-              )}
-            </div>
-            {editor.prescription && !structureOpen ? (
-              <p className="workout-structure__summary">{structureSummary(editor.prescription.blocks)}</p>
-            ) : null}
-            {editor.prescription && structureOpen ? (
-              <div className="workout-structure__editor">
-                {renderBlocks(editor.prescription.blocks)}
-                <div className="workout-structure__actions">
-                  <button type="button" onClick={() => addBlock([], newStep())}><Plus size={16} /> Add top-level step</button>
-                  <button type="button" onClick={() => addBlock([], newRepeatGroup())}><Repeat2 size={16} /> Add top-level repeat group</button>
-                  <button className="workout-structure__clear" type="button" onClick={() => {
-                    setEditor({ ...editor, prescription: null });
-                    setStructureOpen(false);
-                  }}>Use simple workout</button>
+          {derivedTotals ? (
+            <section className="workout-derived-totals" aria-label="Totals from workout structure">
+              <header>
+                <strong>Estimated workout totals</strong>
+                <span>Calculated from every segment.</span>
+              </header>
+              <div className="workout-derived-totals__grid">
+                <div className="workout-derived-total">
+                  <span>Distance</span>
+                  <strong>{derivedTotals.distanceComplete ? "" : "~"}{Math.round((derivedTotals.estimatedDistance / 1609.344) * 100) / 100} mi</strong>
+                  <small>{derivedTotals.distanceComplete ? "Exact from structure" : "Estimated"}</small>
+                </div>
+                <div className="workout-derived-total">
+                  <span>Time</span>
+                  <strong>{derivedTotals.durationComplete ? "" : "~"}{formatDurationSeconds(derivedTotals.estimatedDuration)}</strong>
+                  <small>{derivedTotals.durationComplete ? "Exact from structure" : "Estimated"}</small>
                 </div>
               </div>
-            ) : null}
-          </section>
-          <label>
-            <span>Purpose</span>
-            <input
-              value={editor.purpose}
-              onChange={(event) => setEditor({ ...editor, purpose: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>Instructions</span>
-            <textarea
-              rows={4}
-              value={editor.instructions}
-              onChange={(event) => setEditor({ ...editor, instructions: event.target.value })}
-            />
-          </label>
-          {mode === "scheduled" ? <label>
-            <span>Notes</span>
-            <textarea
-              rows={3}
-              value={editor.notes}
-              onChange={(event) => setEditor({ ...editor, notes: event.target.value })}
-            />
-          </label> : null}
+              <p>
+                Uses {formatPaceSeconds(trainingPaceEstimate?.easyPaceSecondsPerMile ?? 600)}/mi for easy running
+                {paceSampleDescription ? ` based on ${paceSampleDescription}` : ""}.
+                {derivedTotals.hasOpenEndedExtent ? " Open-ended segments use a role-based duration." : ""}
+              </p>
+            </section>
+          ) : (
+            <>
+              <div className={`form-grid workout-metrics-grid${mode === "template" ? " form-grid--three" : " workout-metrics-grid--simple"}`}>
+                <label>
+                  <span>Miles</span>
+                  <input
+                    min="0"
+                    step="0.01"
+                    type="number"
+                    value={editor.plannedDistance}
+                    onChange={(event) => setMetric("plannedDistance", event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Time (H:MM:SS)</span>
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]"
+                    placeholder="0:45:00"
+                    title="Enter time as hours:minutes:seconds"
+                    value={editor.plannedDuration}
+                    onChange={(event) => setMetric("plannedDuration", event.target.value)}
+                  />
+                </label>
+                {mode === "template" ? <label>
+                  <span>Pace (/mi)</span>
+                  <input
+                    pattern="[0-9]+(:[0-5][0-9])?"
+                    placeholder="8:30"
+                    title="Enter pace as minutes:seconds per mile"
+                    value={editor.plannedPace}
+                    onChange={(event) => setMetric("plannedPace", event.target.value)}
+                  />
+                </label> : null}
+              </div>
+              {mode === "scheduled" ? (
+                <p className="workout-metrics-summary">
+                  {editor.plannedPace ? <>Calculated pace <strong>{editor.plannedPace}/mi</strong></> : "Add miles and time to calculate pace."}
+                </p>
+              ) : <p className="field-help">Enter any two; the third is calculated automatically. Time uses H:MM:SS.</p>}
+            </>
+          )}
+          {mode === "scheduled" ? (
+            <section className={`workout-details${detailsOpen ? " workout-details--open" : ""}`}>
+              <button className="workout-details__toggle" type="button" aria-expanded={detailsOpen} onClick={() => setDetailsOpen((open) => !open)}>
+                <span>
+                  <strong>More options</strong>
+                  <small>{hasStructuredPrescription ? "Intervals, purpose, instructions, and notes" : "Pace targets, intervals, purpose, instructions, and notes"}</small>
+                </span>
+                {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+              {detailsOpen ? workoutDetails : null}
+            </section>
+          ) : workoutDetails}
           <div className="editor-actions">
-            <button className="primary" disabled={isSaving} type="submit">
+            {mode === "scheduled" && editor.id && onSaveToLibrary ? (
+              <button className="secondary" disabled={isBusy || savedToLibrary} type="button" onClick={saveToLibrary}>
+                {savedToLibrary ? <Check size={17} /> : <Library size={17} />}
+                <span>{isSavingToLibrary ? "Saving to library…" : savedToLibrary ? "Saved to workout library" : "Save to workout library"}</span>
+              </button>
+            ) : null}
+            <button className="primary" disabled={isBusy} type="submit">
               <Save size={17} />
               <span>{isSaving ? "Saving…" : mode === "template" ? "Save to library" : "Save"}</span>
             </button>

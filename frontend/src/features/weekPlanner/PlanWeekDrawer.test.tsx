@@ -270,11 +270,19 @@ describe("PlanWeekDrawer", () => {
     server.use(
       http.get(new URL("/api/workout-templates", window.location.origin).toString(), () =>
         HttpResponse.json([template])
+      ),
+      http.get(new URL("/api/training-pace-estimate", window.location.origin).toString(), () =>
+        HttpResponse.json({
+          easyPaceSecondsPerMile: 600,
+          source: "default",
+          sampleSize: 0
+        })
       )
     );
     render(<PlannerHarness onSave={onSave} />);
 
     await user.click(screen.getByRole("button", { name: "Choose workout for Tue" }));
+    expect(await screen.findByText("threshold · ~3.1 mi")).toBeVisible();
     await user.click(await screen.findByRole("button", { name: /5K threshold builder/i }));
 
     expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("5K threshold builder");

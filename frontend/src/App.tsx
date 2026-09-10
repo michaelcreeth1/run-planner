@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
 import { AppHeader } from "./components/AppHeader";
 import { LoginView } from "./components/LoginView";
@@ -38,7 +38,8 @@ import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "
 import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
 import { appRoutePath, parseAppRoute } from "./lib/navigation";
 import type { AppRoute, AppTab, PlanningSection, ProgressSection } from "./lib/navigation";
-import { selectPrimaryPlan, useDefaultGoalsQuery, useGoalMetricsQuery, usePlanQuery, usePlansQuery } from "./lib/queries";
+import { workoutTemplatePayload } from "./lib/prescriptions";
+import { queryKeys, selectPrimaryPlan, useDefaultGoalsQuery, useGoalMetricsQuery, usePlanQuery, usePlansQuery, useTrainingPaceEstimateQuery } from "./lib/queries";
 import { ProfileProvider } from "./lib/profile";
 import type {
   AnalyticsPlanning,
@@ -95,6 +96,7 @@ function getInitialTheme(): Theme {
 function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const fallbackWeekStart = startOfWeek(new Date());
   const route = useMemo(
     () => parseAppRoute(location.pathname, location.search, fallbackWeekStart),
@@ -126,6 +128,7 @@ function AppShell() {
   const [analyticsFutureWeeks, setAnalyticsFutureWeeks] = useState(4);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
   const [isSavingWorkout, setIsSavingWorkout] = useState(false);
+  const [isSavingWorkoutToLibrary, setIsSavingWorkoutToLibrary] = useState(false);
   const [workoutSaveError, setWorkoutSaveError] = useState<string | null>(null);
   const [goalEditor, setGoalEditor] = useState<WeekGoalForm | null>(null);
   const [isSavingGoal, setIsSavingGoal] = useState(false);
@@ -187,6 +190,9 @@ function AppShell() {
   const activePlan = activePlanQuery.data ?? null;
   const defaultGoalsQuery = useDefaultGoalsQuery(session?.activeAthleteAccountId ?? null);
   const goalMetricsQuery = useGoalMetricsQuery(Boolean(session?.authenticated));
+  const trainingPaceEstimateQuery = useTrainingPaceEstimateQuery(
+    session?.authenticated ? session.activeAthleteAccountId : null
+  );
   const sharedPlanRules = useMemo(
     () => buildPlanRules({ defaultGoals: defaultGoalsQuery.data ?? [], plan: activePlan }),
     [activePlan, defaultGoalsQuery.data]
@@ -228,6 +234,7 @@ function AppShell() {
     setLastSyncJob(null);
     setEditor(null);
     setIsSavingWorkout(false);
+    setIsSavingWorkoutToLibrary(false);
     setWorkoutSaveError(null);
     setGoalEditor(null);
     setIsSavingGoal(false);
@@ -651,11 +658,13 @@ function AppShell() {
 
   function openCreate(plannedDate: string) {
     setWorkoutSaveError(null);
+    setIsSavingWorkoutToLibrary(false);
     setEditor(defaultForm(plannedDate));
   }
 
   function openEdit(workout: Workout) {
     setWorkoutSaveError(null);
+    setIsSavingWorkoutToLibrary(false);
     setEditor({
       id: workout.id,
       plannedDate: workout.plannedDate,
@@ -891,6 +900,53 @@ function AppShell() {
       finishMutation(mutationKey);
       if (isCurrent) {
         setIsSavingWorkout(false);
+      }
+    }
+  }
+
+  async function saveWorkoutToLibrary(): Promise<boolean> {
+    if (!editor?.id || blockStaleWrite("saving a workout to the library")) {
+      return false;
+    }
+    const mutationKey = "save-workout-to-library";
+    if (!startMutation(mutationKey)) {
+      return false;
+    }
+
+    const request = beginDataRequest();
+    setIsSavingWorkoutToLibrary(true);
+    setWorkoutSaveError(null);
+    try {
+      const payload = workoutTemplatePayload(editor, []);
+      delete payload.expectedVersion;
+      await fetchJson("/api/workout-templates", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return false;
+      }
+      if (session?.activeAthleteAccountId) {
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.workoutTemplates(session.activeAthleteAccountId)
+        });
+      }
+      setApiError(null);
+      return true;
+    } catch (error) {
+      if (request.isCurrent()) {
+        const presentation = toApiErrorPresentation(error, "Could not save workout to the library.");
+        setWorkoutSaveError(presentation.detail);
+        setApiError(presentation);
+      }
+      return false;
+    } finally {
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingWorkoutToLibrary(false);
       }
     }
   }
@@ -1166,6 +1222,11 @@ function AppShell() {
       loadActivities();
       loadStravaStatus();
       loadTrainingTimeline();
+      if (session?.activeAthleteAccountId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.trainingPaceEstimate(session.activeAthleteAccountId)
+        });
+      }
       setApiError(null);
     } catch (error) {
       if (request.isCurrent()) {
@@ -1389,10 +1450,14 @@ function AppShell() {
             editor={editor}
             error={workoutSaveError}
             isSaving={isSavingWorkout}
+            isSavingToLibrary={isSavingWorkoutToLibrary}
+            trainingPaceEstimate={trainingPaceEstimateQuery.data}
             setEditor={setEditor}
+            onSaveToLibrary={editor.id ? saveWorkoutToLibrary : undefined}
             onSubmit={saveWorkout}
             onClose={() => {
               setEditor(null);
+              setIsSavingWorkoutToLibrary(false);
               setWorkoutSaveError(null);
             }}
           />

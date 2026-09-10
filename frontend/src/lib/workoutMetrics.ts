@@ -81,7 +81,7 @@ function positiveNumber(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function formatPaceSeconds(value: number) {
+export function formatPaceSeconds(value: number) {
   const rounded = Math.round(value);
   const minutes = Math.floor(rounded / 60);
   const seconds = String(rounded % 60).padStart(2, "0");

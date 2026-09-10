@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -10,12 +10,14 @@ function EditorHarness({
   error = null,
   isSaving = false,
   initialEditor,
+  mode = "scheduled",
   onSave,
   onClose
 }: {
   error?: string | null;
   isSaving?: boolean;
   initialEditor?: WorkoutForm;
+  mode?: "scheduled" | "template";
   onSave: (form: WorkoutForm) => void;
   onClose: () => void;
 }) {
@@ -25,6 +27,7 @@ function EditorHarness({
       editor={editor}
       error={error}
       isSaving={isSaving}
+      mode={mode}
       setEditor={setEditor}
       onClose={onClose}
       onSubmit={(event) => {
@@ -45,6 +48,7 @@ describe("WorkoutEditor", () => {
     await user.selectOptions(screen.getByLabelText("Session type"), "run:tempo");
     await user.type(screen.getByLabelText("Miles"), "7.5");
     await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:55:00");
+    await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Purpose"), "Threshold development");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -92,6 +96,12 @@ describe("WorkoutEditor", () => {
     expect(onSave).toHaveBeenCalledOnce();
   });
 
+  it("does not add helper clutter beneath the workout name", () => {
+    render(<EditorHarness mode="template" onSave={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("Use a short, searchable name.")).not.toBeInTheDocument();
+  });
+
   it("calculates pace from miles and time", async () => {
     const user = userEvent.setup();
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
@@ -99,6 +109,9 @@ describe("WorkoutEditor", () => {
     await user.type(screen.getByLabelText("Miles"), "6");
     await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:48:00");
 
+    expect(screen.getByText("8:00/mi")).toBeVisible();
+    expect(screen.queryByLabelText("Pace (/mi)")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More options/ }));
     expect(screen.getByLabelText("Pace (/mi)")).toHaveValue("8:00");
   });
 
@@ -107,6 +120,7 @@ describe("WorkoutEditor", () => {
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Miles"), "5");
+    await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Pace (/mi)"), "8:30");
 
     expect(screen.getByLabelText("Time (H:MM:SS)")).toHaveValue("0:42:30");
@@ -117,6 +131,7 @@ describe("WorkoutEditor", () => {
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:45:00");
+    await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Pace (/mi)"), "9:00");
 
     expect(screen.getByLabelText("Miles")).toHaveValue(5);
@@ -177,12 +192,16 @@ describe("WorkoutEditor", () => {
       />
     );
 
-    expect(screen.getByText("1 step")).toBeVisible();
-    expect(screen.queryByLabelText("Step 1 role")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 segment")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Segment 1 role")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /More options/ }));
+
+    expect(screen.getByText("1 segment")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(screen.getByLabelText("Step 1 role")).toBeVisible();
+    expect(screen.getByLabelText("Segment 1 role")).toBeVisible();
     expect(screen.getByRole("button", { name: "Use simple workout" })).toBeVisible();
   });
 
@@ -228,17 +247,29 @@ describe("WorkoutEditor", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Workout editor" })).toHaveClass("workout-editor-panel");
+    expect(screen.queryByLabelText("Miles")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Time (H:MM:SS)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Pace (/mi)")).not.toBeInTheDocument();
+    const totals = screen.getByRole("region", { name: "Totals from workout structure" });
+    expect(within(totals).getByText("~3.09 mi")).toBeVisible();
+    expect(within(totals).getByText("~0:28:22")).toBeVisible();
+    expect(within(totals).getAllByText("Estimated")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(screen.getByText("Repeated sequence")).toBeVisible();
-    expect(screen.getByLabelText("Step 1.1 role")).toHaveValue("work");
-    expect(screen.getByLabelText("Step 1.2 role")).toHaveValue("recovery");
+    expect(screen.getByText("Repeat these")).toBeVisible();
+    const repetitions = screen.getByLabelText("Repeat set 1 repetitions");
+    expect(repetitions).toHaveValue(4);
+    expect(repetitions.closest(".workout-repeat__badge")).not.toBeNull();
+    expect(screen.queryByText("Repetitions")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Segment 1.1 role")).toHaveValue("work");
+    expect(screen.getByLabelText("Segment 1.2 role")).toHaveValue("recovery");
     expect(screen.queryByText("Include recovery after final repetition")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Add nested repeat group" }));
-    expect(screen.getByLabelText("Repeat group 1.3 repetitions")).toHaveValue(5);
-    expect(screen.getByLabelText("Step 1.3.1 role")).toHaveValue("work");
-    await user.selectOptions(screen.getByLabelText("Step 1.3.1 role"), "cooldown");
+    await user.click(screen.getByRole("button", { name: "Add repeat set inside" }));
+    expect(screen.getByLabelText("Repeat set 1.3 repetitions")).toHaveValue(5);
+    expect(screen.getByLabelText("Segment 1.3.1 role")).toHaveValue("work");
+    await user.selectOptions(screen.getByLabelText("Segment 1.3.1 role"), "cooldown");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({

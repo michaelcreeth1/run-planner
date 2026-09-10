@@ -183,6 +183,9 @@ class WorkoutPrescription(ApiModel):
 class PrescriptionTotals(ApiModel):
     known_distance_meters: float | None = None
     known_duration_seconds: int | None = None
+    estimated_distance_meters: float | None = None
+    estimated_duration_seconds: int | None = None
+    easy_pace_seconds_per_mile: int | None = None
     has_open_ended_extent: bool = False
     # Migration-baseline revisions created before calculated totals existed
     # only have a summary.  Treat their totals as incomplete rather than
@@ -190,6 +193,12 @@ class PrescriptionTotals(ApiModel):
     distance_complete: bool = False
     duration_complete: bool = False
     summary: str = "Totals unavailable for this migrated prescription"
+
+
+class TrainingPaceEstimate(ApiModel):
+    easy_pace_seconds_per_mile: int
+    source: Literal["matched_easy_runs", "named_easy_runs", "recent_runs", "default"]
+    sample_size: int = 0
 
 
 class WorkoutPrescriptionRevisionRead(ApiModel):

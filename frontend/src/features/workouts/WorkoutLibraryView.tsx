@@ -9,16 +9,17 @@ import { todayDateString } from "../../lib/dates";
 import { defaultForm } from "../../lib/forms";
 import { formatNumber } from "../../lib/formatters";
 import { prescriptionTotals, templateToWorkoutForm, workoutTemplatePayload } from "../../lib/prescriptions";
-import { queryKeys, useWorkoutTemplatesQuery } from "../../lib/queries";
+import { queryKeys, useTrainingPaceEstimateQuery, useWorkoutTemplatesQuery } from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
 import { formatDurationSeconds } from "../../lib/workoutMetrics";
-import type { WorkoutForm, WorkoutTemplate } from "../../types/domain";
+import type { TrainingPaceEstimate, WorkoutForm, WorkoutTemplate } from "../../types/domain";
 import { WorkoutEditor } from "./WorkoutEditor";
 
 export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }) {
   const profileId = useProfileId();
   const queryClient = useQueryClient();
   const templatesQuery = useWorkoutTemplatesQuery(profileId);
+  const trainingPaceEstimateQuery = useTrainingPaceEstimateQuery(profileId);
   const templates = useMemo(() => templatesQuery.data ?? [], [templatesQuery.data]);
   const [search, setSearch] = useState("");
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
@@ -135,6 +136,7 @@ export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }
           <WorkoutTemplateCard
             key={template.id}
             template={template}
+            trainingPaceEstimate={trainingPaceEstimateQuery.data}
             onDelete={() => deleteTemplate(template)}
             onDuplicate={() => duplicateTemplate(template)}
             onEdit={() => openEdit(template)}
@@ -149,6 +151,7 @@ export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }
           error={error}
           isSaving={isSaving}
           mode="template"
+          trainingPaceEstimate={trainingPaceEstimateQuery.data}
           setEditor={setEditor}
           templateTags={editorTags}
           setTemplateTags={setEditorTags}
@@ -165,15 +168,20 @@ function WorkoutTemplateCard({
   onDuplicate,
   onEdit,
   template,
+  trainingPaceEstimate,
   writesBlocked
 }: {
   onDelete: () => void;
   onDuplicate: () => void;
   onEdit: () => void;
   template: WorkoutTemplate;
+  trainingPaceEstimate?: TrainingPaceEstimate;
   writesBlocked: boolean;
 }) {
-  const totals = prescriptionTotals(template.prescription);
+  const totals = prescriptionTotals(template.prescription, {
+    easyPaceSecondsPerMile: trainingPaceEstimate?.easyPaceSecondsPerMile,
+    workoutType: template.workoutType
+  });
   return (
     <article className="workout-template-card">
       <div className="workout-template-card__icon"><Dumbbell size={18} /></div>
@@ -188,9 +196,9 @@ function WorkoutTemplateCard({
         </div>
         {template.purpose ? <p>{template.purpose}</p> : null}
         <div className="workout-template-card__meta">
-          {totals.distance ? <span>{formatNumber(totals.distance / 1609.344)} mi known</span> : null}
-          {totals.duration ? <span>{formatDurationSeconds(totals.duration)}</span> : null}
-          <span>{template.prescription.blocks.length} block{template.prescription.blocks.length === 1 ? "" : "s"}</span>
+          <span>{totals.distanceComplete ? "" : "~"}{formatNumber(totals.estimatedDistance / 1609.344)} mi</span>
+          <span>{totals.durationComplete ? "" : "~"}{formatDurationSeconds(totals.estimatedDuration)}</span>
+          <span>{template.prescription.blocks.length} workout {template.prescription.blocks.length === 1 ? "section" : "sections"}</span>
         </div>
         {template.tags.length ? <div className="workout-template-tags">{template.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
       </div>

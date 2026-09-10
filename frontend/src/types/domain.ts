@@ -90,10 +90,19 @@ export type WorkoutPrescription = { blocks: PrescriptionBlock[] };
 export type PrescriptionTotals = {
   knownDistanceMeters: number | null;
   knownDurationSeconds: number | null;
+  estimatedDistanceMeters: number | null;
+  estimatedDurationSeconds: number | null;
+  easyPaceSecondsPerMile: number | null;
   hasOpenEndedExtent: boolean;
   distanceComplete: boolean;
   durationComplete: boolean;
   summary: string;
+};
+
+export type TrainingPaceEstimate = {
+  easyPaceSecondsPerMile: number;
+  source: "matched_easy_runs" | "named_easy_runs" | "recent_runs" | "default";
+  sampleSize: number;
 };
 
 export type WorkoutPrescriptionRevision = {

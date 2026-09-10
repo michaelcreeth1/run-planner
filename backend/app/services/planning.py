@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
+from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
@@ -91,41 +92,201 @@ WEEK_PURPOSE_IDS = frozenset(
     }
 )
 PAST_WEEK_READ_ONLY_DETAIL = "Past weeks are read-only. Complete a review instead."
+DEFAULT_EASY_PACE_SECONDS_PER_MILE = 600
+EASY_WORKOUT_TYPES = {"easy", "recovery", "long_run", "medium_long"}
+WORK_PACE_FACTORS = {
+    "tempo": 0.9,
+    "threshold": 0.85,
+    "interval": 0.75,
+    "hill": 0.82,
+    "race": 0.78,
+    "time_trial": 0.78,
+    "progression": 0.9,
+    "strides": 0.72,
+}
 
 
-def prescription_totals(prescription: WorkoutPrescription | dict) -> dict:
-    """Calculate only totals the prescription can honestly establish.
+def training_pace_estimate(db: Session, athlete_account_id: str) -> dict:
+    """Estimate current easy pace from the best available completed-run evidence."""
 
-    Time-based and open-ended steps do not invent distance.  A repeat's final
-    recovery is controlled explicitly instead of relying on a convention.
-    """
+    def valid_paces(activities: list[StravaActivity]) -> list[float]:
+        paces = []
+        for activity in activities:
+            if not activity.moving_time or activity.distance < 800:
+                continue
+            pace = activity.moving_time * 1609.344 / activity.distance
+            if 240 <= pace <= 1200:
+                paces.append(pace)
+        return paces
+
+    matched_activities = list(
+        db.scalars(
+            select(StravaActivity)
+            .join(
+                PerformedSessionRecording,
+                PerformedSessionRecording.strava_activity_id == StravaActivity.id,
+            )
+            .join(
+                PerformedSession,
+                PerformedSession.id == PerformedSessionRecording.performed_session_id,
+            )
+            .join(PlannedWorkout, PlannedWorkout.id == PerformedSession.planned_workout_id)
+            .where(
+                StravaActivity.athlete_account_id == athlete_account_id,
+                StravaActivity.deleted_at.is_(None),
+                StravaActivity.sport_type.in_(("Run", "VirtualRun")),
+                PlannedWorkout.workout_type.in_(EASY_WORKOUT_TYPES),
+            )
+            .order_by(StravaActivity.start_date_local.desc())
+            .limit(100)
+        )
+    )
+    paces = valid_paces(matched_activities)
+    if len(paces) >= 5:
+        return {
+            "easy_pace_seconds_per_mile": round(median(paces)),
+            "source": "matched_easy_runs",
+            "sample_size": len(paces),
+        }
+
+    recent_activities = list(
+        db.scalars(
+            select(StravaActivity)
+            .where(
+                StravaActivity.athlete_account_id == athlete_account_id,
+                StravaActivity.deleted_at.is_(None),
+                StravaActivity.sport_type.in_(("Run", "VirtualRun")),
+            )
+            .order_by(StravaActivity.start_date_local.desc())
+            .limit(100)
+        )
+    )
+    hard_name_markers = (
+        "threshold",
+        "tempo",
+        "interval",
+        "progression",
+        "race",
+        "time trial",
+        "fartlek",
+        "track",
+        "hill",
+        "strides",
+        " lt",
+        "lt ",
+    )
+    easy_name_markers = ("easy", "recovery", "aerobic", "base")
+    named_easy = [
+        activity
+        for activity in recent_activities
+        if any(marker in activity.name.lower() for marker in easy_name_markers)
+        and not any(marker in activity.name.lower() for marker in hard_name_markers)
+    ]
+    paces = valid_paces(named_easy)
+    if len(paces) >= 5:
+        return {
+            "easy_pace_seconds_per_mile": round(median(paces)),
+            "source": "named_easy_runs",
+            "sample_size": len(paces),
+        }
+
+    likely_easy = [
+        activity
+        for activity in recent_activities
+        if not any(marker in activity.name.lower() for marker in hard_name_markers)
+    ]
+    paces = sorted(valid_paces(likely_easy))
+    if paces:
+        # Most unlabelled running is easy. A median over a broad sample is
+        # stable without letting one fast workout or unusually slow run win.
+        pace = median(paces)
+        return {
+            "easy_pace_seconds_per_mile": round(pace),
+            "source": "recent_runs",
+            "sample_size": len(paces),
+        }
+
+    paces = valid_paces(recent_activities)
+    if paces:
+        return {
+            "easy_pace_seconds_per_mile": round(median(paces)),
+            "source": "recent_runs",
+            "sample_size": len(paces),
+        }
+
+    return {
+        "easy_pace_seconds_per_mile": DEFAULT_EASY_PACE_SECONDS_PER_MILE,
+        "source": "default",
+        "sample_size": 0,
+    }
+
+
+def prescription_totals(
+    prescription: WorkoutPrescription | dict,
+    *,
+    easy_pace_seconds_per_mile: int = DEFAULT_EASY_PACE_SECONDS_PER_MILE,
+    workout_type: str = "other",
+) -> dict:
+    """Calculate exact portions and useful planning estimates for a prescription."""
     document = (
         prescription.model_dump(by_alias=False, exclude_none=True)
         if isinstance(prescription, WorkoutPrescription)
         else prescription
     )
 
-    def blocks_totals(blocks: list[dict], multiplier: int = 1) -> tuple[float, int, bool, bool]:
+    def step_pace(block: dict) -> float:
+        target = block.get("primary_target") or {}
+        if target.get("kind") == "pace":
+            target_values = [
+                value
+                for value in (target.get("value"), target.get("min_value"), target.get("max_value"))
+                if value
+            ]
+            if target_values:
+                pace = sum(target_values) / len(target_values)
+                # Canonical prescription pace targets are seconds per metre.
+                return pace * 1609.344 if pace < 10 else pace
+        if block.get("role") != "work":
+            return easy_pace_seconds_per_mile
+        return easy_pace_seconds_per_mile * WORK_PACE_FACTORS.get(workout_type, 0.9)
+
+    def blocks_totals(blocks: list[dict], multiplier: int = 1) -> dict:
         distance = 0.0
         duration = 0
+        estimated_distance = 0.0
+        estimated_duration = 0.0
         distance_complete = True
         duration_complete = True
         for block in blocks:
             if block["kind"] == "step":
+                pace = step_pace(block)
                 if block["extent"] == "distance":
-                    distance += block["distance_meters"] * multiplier
+                    step_distance = block["distance_meters"] * multiplier
+                    distance += step_distance
+                    estimated_distance += step_distance
+                    estimated_duration += (step_distance / 1609.344) * pace
                     duration_complete = False
                 elif block["extent"] == "duration":
-                    duration += block["duration_seconds"] * multiplier
+                    step_duration = block["duration_seconds"] * multiplier
+                    duration += step_duration
+                    estimated_duration += step_duration
+                    estimated_distance += (step_duration / pace) * 1609.344
                     distance_complete = False
                 else:
+                    assumed_seconds = {
+                        "warmup": 600,
+                        "recovery": 120,
+                        "cooldown": 600,
+                        "work": 300,
+                        "other": 600,
+                    }.get(block.get("role", "other"), 600) * multiplier
+                    estimated_duration += assumed_seconds
+                    estimated_distance += (assumed_seconds / pace) * 1609.344
                     distance_complete = False
                     duration_complete = False
                 continue
             repetitions = block["repetitions"]
-            child_distance, child_duration, child_dist_complete, child_time_complete = (
-                blocks_totals(block["steps"], repetitions * multiplier)
-            )
+            child = blocks_totals(block["steps"], repetitions * multiplier)
             # A recovery nested in a group is "between repetitions" by
             # default.  Do not count a fifth recovery in 5 x work unless the
             # author explicitly asks for it.
@@ -136,18 +297,30 @@ def prescription_totals(prescription: WorkoutPrescription | dict) -> dict:
                     if child["kind"] == "step" and child.get("role") == "recovery"
                 ]
                 if recovery_blocks:
-                    final_distance, final_duration, _, _ = blocks_totals(
-                        recovery_blocks, multiplier
-                    )
-                    child_distance -= final_distance
-                    child_duration -= final_duration
-            distance += child_distance
-            duration += child_duration
-            distance_complete = distance_complete and child_dist_complete
-            duration_complete = duration_complete and child_time_complete
-        return distance, duration, distance_complete, duration_complete
+                    final_recovery = blocks_totals(recovery_blocks, multiplier)
+                    for field in (
+                        "distance",
+                        "duration",
+                        "estimated_distance",
+                        "estimated_duration",
+                    ):
+                        child[field] -= final_recovery[field]
+            distance += child["distance"]
+            duration += child["duration"]
+            estimated_distance += child["estimated_distance"]
+            estimated_duration += child["estimated_duration"]
+            distance_complete = distance_complete and child["distance_complete"]
+            duration_complete = duration_complete and child["duration_complete"]
+        return {
+            "distance": distance,
+            "duration": duration,
+            "estimated_distance": estimated_distance,
+            "estimated_duration": estimated_duration,
+            "distance_complete": distance_complete,
+            "duration_complete": duration_complete,
+        }
 
-    distance, duration, distance_complete, duration_complete = blocks_totals(document["blocks"])
+    totals = blocks_totals(document["blocks"])
 
     def has_open_extent(blocks: list[dict]) -> bool:
         return any(
@@ -159,17 +332,60 @@ def prescription_totals(prescription: WorkoutPrescription | dict) -> dict:
 
     has_open = has_open_extent(document["blocks"])
     return {
-        "known_distance_meters": round(distance, 2) if distance else None,
-        "known_duration_seconds": duration or None,
+        "known_distance_meters": round(totals["distance"], 2) if totals["distance"] else None,
+        "known_duration_seconds": round(totals["duration"]) if totals["duration"] else None,
+        "estimated_distance_meters": round(totals["estimated_distance"], 2),
+        "estimated_duration_seconds": round(totals["estimated_duration"]),
+        "easy_pace_seconds_per_mile": easy_pace_seconds_per_mile,
         "has_open_ended_extent": has_open,
-        "distance_complete": distance_complete,
-        "duration_complete": duration_complete,
-        "summary": "Exact totals"
-        if distance_complete and duration_complete
-        else "Open-ended extent; totals are incomplete"
-        if has_open
-        else "Mixed time and distance extents; no distance estimate was assumed",
+        "distance_complete": totals["distance_complete"],
+        "duration_complete": totals["duration_complete"],
+        "summary": f"Estimated using {easy_pace_seconds_per_mile // 60}:"
+        f"{easy_pace_seconds_per_mile % 60:02d}/mi easy pace",
     }
+
+
+def is_structured_prescription(prescription: WorkoutPrescription | dict) -> bool:
+    """Distinguish an authored structure from a migrated simple-workout baseline."""
+    document = (
+        prescription.model_dump(by_alias=False, exclude_none=True)
+        if isinstance(prescription, WorkoutPrescription)
+        else prescription
+    )
+    blocks = document["blocks"]
+    if len(blocks) != 1:
+        return bool(blocks)
+    only_part = blocks[0]
+    return not (
+        only_part["kind"] == "step"
+        and only_part.get("role", "other") == "other"
+        and not only_part.get("primary_target")
+        and not only_part.get("supporting_targets")
+        and not only_part.get("notes")
+    )
+
+
+def apply_prescription_summary(
+    workout_data: dict,
+    prescription: WorkoutPrescription,
+    *,
+    easy_pace_seconds_per_mile: int,
+    workout_type: str,
+) -> dict | None:
+    """Make authored structure authoritative over legacy workout summary fields."""
+    if not is_structured_prescription(prescription):
+        return None
+    totals = prescription_totals(
+        prescription,
+        easy_pace_seconds_per_mile=easy_pace_seconds_per_mile,
+        workout_type=workout_type,
+    )
+    workout_data["planned_distance"] = totals["estimated_distance_meters"] / 1609.344
+    workout_data["planned_duration"] = totals["estimated_duration_seconds"]
+    workout_data["planned_pace"] = round(
+        totals["estimated_duration_seconds"] / workout_data["planned_distance"]
+    )
+    return totals
 
 
 def legacy_prescription(workout_data: dict) -> WorkoutPrescription:
@@ -198,7 +414,12 @@ def legacy_prescription(workout_data: dict) -> WorkoutPrescription:
 
 
 def add_prescription_revision(
-    db: Session, workout: PlannedWorkout, prescription: WorkoutPrescription | None
+    db: Session,
+    workout: PlannedWorkout,
+    prescription: WorkoutPrescription | None,
+    *,
+    easy_pace_seconds_per_mile: int = DEFAULT_EASY_PACE_SECONDS_PER_MILE,
+    workout_type: str | None = None,
 ) -> WorkoutPrescriptionRevision:
     document = prescription or legacy_prescription(
         {"planned_distance": workout.planned_distance, "planned_duration": workout.planned_duration}
@@ -210,7 +431,11 @@ def add_prescription_revision(
         planned_workout_id=workout.id,
         revision_number=prior_revision + 1,
         prescription_json=document.model_dump(by_alias=False, exclude_none=True),
-        calculated_totals_json=prescription_totals(document),
+        calculated_totals_json=prescription_totals(
+            document,
+            easy_pace_seconds_per_mile=easy_pace_seconds_per_mile,
+            workout_type=workout_type or workout.workout_type,
+        ),
     )
     db.add(revision)
     db.flush()
@@ -848,6 +1073,14 @@ def create_workout(
     week = get_or_create_mutable_week(db, payload.planned_date, active_athlete_id)
     data = payload.model_dump(exclude={"prescription"})
     prescription = payload.prescription
+    pace_estimate = training_pace_estimate(db, active_athlete_id)
+    if prescription is not None:
+        apply_prescription_summary(
+            data,
+            prescription,
+            easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+            workout_type=payload.workout_type,
+        )
     workout = PlannedWorkout(
         athlete_account_id=active_athlete_id,
         training_week_id=week.id,
@@ -855,7 +1088,12 @@ def create_workout(
     )
     db.add(workout)
     db.flush()
-    add_prescription_revision(db, workout, prescription)
+    add_prescription_revision(
+        db,
+        workout,
+        prescription,
+        easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+    )
     db.add(WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date))
     db.commit()
     db.refresh(workout)
@@ -912,6 +1150,7 @@ def update_workout(
     ensure_week_is_mutable(get_week_by_id(db, original_week_id, workout.athlete_account_id))
     updates = payload.model_dump(exclude_unset=True)
     expected_version = updates.pop("expected_version", None)
+    prescription_was_supplied = "prescription" in updates
     prescription = updates.pop("prescription", None)
     if prescription is not None:
         prescription = WorkoutPrescription.model_validate(prescription)
@@ -935,15 +1174,24 @@ def update_workout(
     if new_week is not None:
         workout.training_week_id = new_week.id
 
-    if prescription is not None:
-        add_prescription_revision(db, workout, prescription)
-        totals = prescription_totals(prescription)
-        # Keep legacy summary fields useful to existing boards without
-        # rescaling or mutating the structured steps.
-        if totals["distance_complete"]:
-            workout.planned_distance = (totals["known_distance_meters"] or 0) / 1609.344
-        if totals["duration_complete"]:
-            workout.planned_duration = totals["known_duration_seconds"]
+    if prescription_was_supplied:
+        pace_estimate = training_pace_estimate(db, workout.athlete_account_id)
+        add_prescription_revision(
+            db,
+            workout,
+            prescription,
+            easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+        )
+        if prescription is not None:
+            summary_fields: dict = {}
+            apply_prescription_summary(
+                summary_fields,
+                prescription,
+                easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+                workout_type=workout.workout_type,
+            )
+            for field, value in summary_fields.items():
+                setattr(workout, field, value)
     if "planned_date" in updates:
         db.add(
             WorkoutScheduleEvent(
@@ -998,7 +1246,13 @@ def duplicate_workout(
         if source.current_prescription is not None
         else None
     )
-    add_prescription_revision(db, clone, source_document)
+    pace_estimate = training_pace_estimate(db, source.athlete_account_id)
+    add_prescription_revision(
+        db,
+        clone,
+        source_document,
+        easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+    )
     db.add(WorkoutScheduleEvent(planned_workout_id=clone.id, scheduled_date=clone.planned_date))
     db.commit()
     db.refresh(clone)
@@ -1113,19 +1367,12 @@ def schedule_template(
 ) -> PlannedWorkout:
     template = get_template(db, template_id, athlete_account_id)
     prescription = WorkoutPrescription.model_validate(template.prescription_json)
-    totals = prescription_totals(prescription)
     workout = create_workout(
         db,
         PlannedWorkoutCreate(
             planned_date=planned_date,
             title=title or template.name,
             workout_type=template.workout_type,
-            planned_distance=(totals["known_distance_meters"] or 0) / 1609.344
-            if totals["distance_complete"]
-            else None,
-            planned_duration=totals["known_duration_seconds"]
-            if totals["duration_complete"]
-            else None,
             purpose=template.default_purpose,
             instructions=template.default_instructions,
             prescription=prescription,
@@ -1440,8 +1687,16 @@ def save_week_plan(
     week.goals.clear()
     db.flush()
 
+    pace_estimate = training_pace_estimate(db, week.athlete_account_id)
     for workout_payload in payload.workouts:
         workout_data = workout_payload.model_dump(exclude={"prescription"})
+        if workout_payload.prescription is not None:
+            apply_prescription_summary(
+                workout_data,
+                workout_payload.prescription,
+                easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+                workout_type=workout_payload.workout_type,
+            )
         workout = PlannedWorkout(
             athlete_account_id=week.athlete_account_id,
             training_week_id=week.id,
@@ -1449,7 +1704,12 @@ def save_week_plan(
         )
         db.add(workout)
         db.flush()
-        add_prescription_revision(db, workout, workout_payload.prescription)
+        add_prescription_revision(
+            db,
+            workout,
+            workout_payload.prescription,
+            easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+        )
         db.add(
             WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date)
         )

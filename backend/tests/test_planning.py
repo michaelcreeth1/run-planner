@@ -102,6 +102,9 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
             "title": "Threshold repetitions",
             "workoutType": "threshold",
             "intensityCategory": "workout",
+            "plannedDistance": 99,
+            "plannedDuration": 9999,
+            "plannedPace": 123,
             "prescription": {
                 "blocks": [
                     {
@@ -138,6 +141,15 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
         response = client.post("/api/planned-workouts", json=payload)
         assert response.status_code == 201, response.json()
         workout = response.json()
+        totals = workout["currentPrescriptionRevision"]["calculatedTotals"]
+        assert workout["plannedDistance"] == pytest.approx(
+            totals["estimatedDistanceMeters"] / 1609.344
+        )
+        assert workout["plannedDuration"] == totals["estimatedDurationSeconds"]
+        assert workout["plannedPace"] == round(
+            workout["plannedDuration"] / workout["plannedDistance"]
+        )
+        assert totals["easyPaceSecondsPerMile"] == 600
         assert workout["currentPrescriptionRevision"]["revisionNumber"] == 1
         assert (
             workout["currentPrescriptionRevision"]["calculatedTotals"]["knownDurationSeconds"]
@@ -150,12 +162,106 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
             f"/api/planned-workouts/{workout['id']}",
             json={
                 "purpose": "Lactate threshold",
+                "plannedDistance": 88,
+                "plannedDuration": 8888,
+                "plannedPace": 456,
                 "prescription": payload["prescription"],
                 "expectedVersion": workout["version"],
             },
         )
         assert revision.status_code == 200
-        assert revision.json()["currentPrescriptionRevision"]["revisionNumber"] == 2
+        revised_workout = revision.json()
+        assert revised_workout["plannedDistance"] == pytest.approx(workout["plannedDistance"])
+        assert revised_workout["plannedDuration"] == workout["plannedDuration"]
+        assert revised_workout["plannedPace"] == workout["plannedPace"]
+        assert revised_workout["currentPrescriptionRevision"]["revisionNumber"] == 2
+
+
+def test_structured_prescription_uses_exact_derived_distance() -> None:
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        response = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": week["weekStartDate"],
+                "title": "Distance repetitions",
+                "plannedDistance": 99,
+                "plannedDuration": 9999,
+                "plannedPace": 123,
+                "prescription": {
+                    "blocks": [
+                        {
+                            "kind": "step",
+                            "role": "warmup",
+                            "extent": "distance",
+                            "distanceMeters": 1609.344,
+                            "displayUnit": "mi",
+                        },
+                        {
+                            "kind": "repeat",
+                            "repetitions": 4,
+                            "steps": [
+                                {
+                                    "kind": "step",
+                                    "role": "work",
+                                    "extent": "distance",
+                                    "distanceMeters": 400,
+                                    "displayUnit": "m",
+                                }
+                            ],
+                        },
+                    ]
+                },
+            },
+        )
+
+        assert response.status_code == 201, response.json()
+        workout = response.json()
+        assert workout["plannedDistance"] == pytest.approx(1 + (1600 / 1609.344), abs=0.00001)
+        assert workout["plannedDuration"] == 1137
+        assert workout["plannedPace"] == 570
+
+
+def test_training_pace_estimate_ignores_one_fast_progression_run() -> None:
+    with TestClient(app) as client:
+        login(client)
+        session = client.get("/api/auth/session/status").json()
+        athlete_id = session["activeAthleteAccountId"]
+        with SessionLocal() as db:
+            samples = [
+                ("Progression Long Run", 467),
+                ("Morning Run", 510),
+                ("Morning Run", 520),
+                ("Morning Run", 530),
+                ("Morning Run", 540),
+                ("Morning Run", 550),
+            ]
+            for index, (name, pace) in enumerate(samples, start=1):
+                distance = 5 * 1609.344
+                db.add(
+                    StravaActivity(
+                        strava_activity_id=f"easy-pace-{index}",
+                        athlete_account_id=athlete_id,
+                        name=name,
+                        sport_type="Run",
+                        start_date=datetime(2026, 7, index, 13, 0, 0),
+                        start_date_local=datetime(2026, 7, index, 7, 0, 0),
+                        distance=distance,
+                        moving_time=5 * pace,
+                        raw_payload_json={},
+                    )
+                )
+            db.commit()
+
+        response = client.get("/api/training-pace-estimate")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "easyPaceSecondsPerMile": 530,
+            "source": "recent_runs",
+            "sampleSize": 5,
+        }
 
 
 def test_nested_repeat_groups_round_trip_and_calculate_totals() -> None:
@@ -266,6 +372,8 @@ def test_workout_library_crud_and_scheduling_preserve_independent_copy() -> None
         scheduled = scheduled_response.json()
         assert scheduled["title"] == "Threshold builder v2"
         assert scheduled["prescription"] == created["prescription"]
+        assert scheduled["plannedDistance"] == pytest.approx(2 + (1200 / 510))
+        assert scheduled["plannedDuration"] == 2400
 
         delete_response = client.delete(f"/api/workout-templates/{created['id']}")
         assert delete_response.status_code == 204
@@ -302,6 +410,9 @@ def test_migrated_prescription_baseline_does_not_break_week_reads() -> None:
         assert migrated["currentPrescriptionRevision"]["calculatedTotals"] == {
             "knownDistanceMeters": None,
             "knownDurationSeconds": None,
+            "estimatedDistanceMeters": None,
+            "estimatedDurationSeconds": None,
+            "easyPaceSecondsPerMile": None,
             "hasOpenEndedExtent": False,
             "distanceComplete": False,
             "durationComplete": False,
