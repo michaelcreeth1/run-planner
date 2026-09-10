@@ -184,9 +184,12 @@ class PrescriptionTotals(ApiModel):
     known_distance_meters: float | None = None
     known_duration_seconds: int | None = None
     has_open_ended_extent: bool = False
-    distance_complete: bool
-    duration_complete: bool
-    summary: str
+    # Migration-baseline revisions created before calculated totals existed
+    # only have a summary.  Treat their totals as incomplete rather than
+    # failing every week response during response serialization.
+    distance_complete: bool = False
+    duration_complete: bool = False
+    summary: str = "Totals unavailable for this migrated prescription"
 
 
 class WorkoutPrescriptionRevisionRead(ApiModel):

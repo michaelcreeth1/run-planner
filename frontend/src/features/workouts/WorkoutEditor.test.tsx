@@ -9,15 +9,17 @@ import { WorkoutEditor } from "./WorkoutEditor";
 function EditorHarness({
   error = null,
   isSaving = false,
+  initialEditor,
   onSave,
   onClose
 }: {
   error?: string | null;
   isSaving?: boolean;
+  initialEditor?: WorkoutForm;
   onSave: (form: WorkoutForm) => void;
   onClose: () => void;
 }) {
-  const [editor, setEditor] = useState(() => defaultForm("2026-07-13"));
+  const [editor, setEditor] = useState(() => initialEditor ?? defaultForm("2026-07-13"));
   return (
     <WorkoutEditor
       editor={editor}
@@ -145,5 +147,42 @@ describe("WorkoutEditor", () => {
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
     expect(screen.getByTitle("Close")).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Workout save failed.");
+  });
+
+  it("keeps a migrated one-step prescription compact until the runner edits it", async () => {
+    const user = userEvent.setup();
+    render(
+      <EditorHarness
+        initialEditor={{
+          ...defaultForm("2026-07-13"),
+          id: "workout-1",
+          title: "Easy 10",
+          plannedDistance: "10",
+          prescription: {
+            blocks: [
+              {
+                kind: "step",
+                role: "other",
+                extent: "distance",
+                distanceMeters: 16093.44,
+                displayUnit: "mi",
+                supportingTargets: [],
+                notes: ""
+              }
+            ]
+          }
+        }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("1 step")).toBeVisible();
+    expect(screen.queryByLabelText("Step 1 role")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByLabelText("Step 1 role")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Use simple workout" })).toBeVisible();
   });
 });

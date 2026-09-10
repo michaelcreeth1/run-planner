@@ -1,5 +1,5 @@
-import { Save, X } from "lucide-react";
-import { useRef } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Copy, Plus, Repeat2, Save, Trash2, X } from "lucide-react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useModalDialog } from "../../hooks/useModalDialog";
 import type { PrescriptionBlock, PrescriptionStep, WorkoutForm } from "../../types/domain";
@@ -24,6 +24,7 @@ export function WorkoutEditor({
   const selectedSessionType = sessionTypeForWorkout(editor);
   const drawerRef = useRef<HTMLElement | null>(null);
   const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
+  const [structureOpen, setStructureOpen] = useState(false);
 
   function handleClose() {
     if (isSaving) {
@@ -69,6 +70,23 @@ export function WorkoutEditor({
       [next[index], next[target]] = [next[target], next[index]];
       return next;
     });
+  }
+
+  function duplicateBlock(index: number) {
+    updateBlocks((blocks) => [
+      ...blocks.slice(0, index + 1),
+      structuredClone(blocks[index]),
+      ...blocks.slice(index + 1)
+    ]);
+  }
+
+  function structureSummary(blocks: PrescriptionBlock[]) {
+    const steps = blocks.reduce(
+      (total, block) => total + (block.kind === "repeat" ? block.steps.length : 1),
+      0
+    );
+    const repeats = blocks.filter((block) => block.kind === "repeat").length;
+    return `${steps} ${steps === 1 ? "step" : "steps"}${repeats ? ` · ${repeats} repeat ${repeats === 1 ? "group" : "groups"}` : ""}`;
   }
 
   function displayValue(step: PrescriptionStep) {
@@ -189,56 +207,73 @@ export function WorkoutEditor({
             </label>
           </div>
           <p className="field-help">Enter any two; the third is calculated automatically. Time uses H:MM:SS.</p>
-          <section className="workout-structure" aria-label="Structured workout">
+          <section className={`workout-structure${structureOpen ? " workout-structure--open" : ""}`} aria-label="Structured workout">
             <div className="workout-structure__heading">
               <div>
-                <span>Workout structure</span>
-                <small className="field-help">Optional structured steps preserve intent without replacing your notes.</small>
+                <h3>Workout structure</h3>
+                <p>Optional steps for intervals, progressions, and other prescribed sessions.</p>
               </div>
-              {editor.prescription ? null : (
-                <button type="button" onClick={() => setEditor({ ...editor, prescription: { blocks: [newStep("warmup")] } })}>
-                  Add structure
+              {editor.prescription ? (
+                <button className="workout-structure__toggle" type="button" aria-expanded={structureOpen} onClick={() => setStructureOpen((open) => !open)}>
+                  {structureOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  {structureOpen ? "Hide" : "Edit"}
+                </button>
+              ) : (
+                <button className="workout-structure__toggle" type="button" onClick={() => {
+                  setEditor({ ...editor, prescription: { blocks: [newStep("warmup")] } });
+                  setStructureOpen(true);
+                }}>
+                  <Plus size={16} /> Add structure
                 </button>
               )}
             </div>
-            {editor.prescription ? (
+            {editor.prescription && !structureOpen ? (
+              <p className="workout-structure__summary">{structureSummary(editor.prescription.blocks)}</p>
+            ) : null}
+            {editor.prescription && structureOpen ? (
               <div className="workout-structure__blocks">
                 {editor.prescription.blocks.map((block, index) => block.kind === "step" ? (
-                  <div className="workout-step" key={block.id ?? `step-${index}`}>
-                    <div className="workout-step__tools">
-                      <button aria-label={`Move step ${index + 1} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(index, -1)}>↑</button>
-                      <button aria-label={`Move step ${index + 1} later`} disabled={index === editor.prescription!.blocks.length - 1} type="button" onClick={() => moveBlock(index, 1)}>↓</button>
-                      <button aria-label={`Remove step ${index + 1}`} type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}>Remove</button>
+                  <article className="workout-step" key={block.id ?? `step-${index}`}>
+                    <header className="workout-step__header">
+                      <strong>Step {index + 1}</strong>
+                      <div className="workout-step__tools">
+                        <button aria-label={`Move step ${index + 1} earlier`} disabled={index === 0} type="button" onClick={() => moveBlock(index, -1)}><ArrowUp size={16} /></button>
+                        <button aria-label={`Move step ${index + 1} later`} disabled={index === editor.prescription!.blocks.length - 1} type="button" onClick={() => moveBlock(index, 1)}><ArrowDown size={16} /></button>
+                        <button aria-label={`Duplicate step ${index + 1}`} type="button" onClick={() => duplicateBlock(index)}><Copy size={16} /></button>
+                        <button className="workout-step__remove" aria-label={`Remove step ${index + 1}`} type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
+                      </div>
+                    </header>
+                    <div className="workout-step__fields">
+                      <label><span>Role</span><select aria-label={`Step ${index + 1} role`} value={block.role} onChange={(event) => updateStep(index, { role: event.target.value as PrescriptionStep["role"] })}>
+                        <option value="warmup">Warm-up</option><option value="work">Work</option><option value="recovery">Recovery</option><option value="cooldown">Cool-down</option><option value="other">Other</option>
+                      </select></label>
+                      <label><span>Extent</span><select aria-label={`Step ${index + 1} extent`} value={block.extent} onChange={(event) => setStepExtent(index, block, event.target.value as PrescriptionStep["extent"])}>
+                        <option value="distance">Distance</option><option value="duration">Duration</option><option value="open">Open-ended</option>
+                      </select></label>
+                      {block.extent === "open" ? <p className="workout-step__open">No fixed distance or duration.</p> : <label className="workout-step__amount"><span>Amount</span><span className="workout-step__amount-fields">
+                        <input aria-label={`Step ${index + 1} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(index, block, event.target.value)} />
+                        <select aria-label={`Step ${index + 1} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => updateStep(index, { displayUnit: event.target.value as PrescriptionStep["displayUnit"] })}>
+                          {block.extent === "distance" ? <><option value="mi">mi</option><option value="km">km</option><option value="m">m</option></> : <><option value="min">min</option><option value="sec">sec</option></>}
+                        </select>
+                      </span></label>}
+                      <label className="workout-step__guidance"><span>Target or guidance</span><input aria-label={`Step ${index + 1} guidance`} placeholder="Easy effort, threshold pace, HR ceiling…" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(index, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} /></label>
                     </div>
-                    <select aria-label={`Step ${index + 1} role`} value={block.role} onChange={(event) => updateStep(index, { role: event.target.value as PrescriptionStep["role"] })}>
-                      <option value="warmup">Warm-up</option><option value="work">Work</option><option value="recovery">Recovery</option><option value="cooldown">Cool-down</option><option value="other">Other</option>
-                    </select>
-                    <select aria-label={`Step ${index + 1} extent`} value={block.extent} onChange={(event) => setStepExtent(index, block, event.target.value as PrescriptionStep["extent"])}>
-                      <option value="distance">Distance</option><option value="duration">Duration</option><option value="open">Open-ended</option>
-                    </select>
-                    {block.extent === "open" ? <span className="field-help">No fixed extent</span> : <>
-                      <input aria-label={`Step ${index + 1} amount`} min="0" step="0.1" type="number" value={displayValue(block)} onChange={(event) => setStepValue(index, block, event.target.value)} />
-                      <select aria-label={`Step ${index + 1} unit`} value={block.displayUnit ?? "mi"} onChange={(event) => {
-                        const unit = event.target.value as PrescriptionStep["displayUnit"];
-                        updateStep(index, { displayUnit: unit });
-                      }}>
-                        {block.extent === "distance" ? <><option value="mi">mi</option><option value="km">km</option><option value="m">m</option></> : <><option value="min">min</option><option value="sec">sec</option></>}
-                      </select>
-                    </>}
-                    <input aria-label={`Step ${index + 1} guidance`} placeholder="Target or guidance" value={block.primaryTarget?.guidance ?? ""} onChange={(event) => updateStep(index, { primaryTarget: event.target.value ? { kind: "guidance", guidance: event.target.value } : null })} />
-                  </div>
+                  </article>
                 ) : (
-                  <div className="workout-repeat" key={block.id ?? `repeat-${index}`}>
-                    <strong>Repeat group</strong>
+                  <article className="workout-repeat" key={block.id ?? `repeat-${index}`}>
+                    <header><span className="workout-repeat__title"><Repeat2 size={16} /><strong>Repeat group</strong></span><button className="workout-step__remove" aria-label={`Remove repeat group ${index + 1}`} type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}><Trash2 size={16} /></button></header>
                     <label><span>Repetitions</span><input aria-label={`Repeat group ${index + 1} repetitions`} min="1" type="number" value={block.repetitions} onChange={(event) => updateBlocks((blocks) => blocks.map((item, current) => current === index && item.kind === "repeat" ? { ...item, repetitions: Math.max(1, Number(event.target.value)) } : item))} /></label>
                     <label className="checkbox-label"><input checked={block.recoveryAfterFinal} type="checkbox" onChange={(event) => updateBlocks((blocks) => blocks.map((item, current) => current === index && item.kind === "repeat" ? { ...item, recoveryAfterFinal: event.target.checked } : item))} /> Include recovery after final repetition</label>
-                    <p className="field-help">{block.steps.length} step{block.steps.length === 1 ? "" : "s"} per repetition. Edit nested steps after saving is supported by the prescription API.</p>
-                    <button type="button" onClick={() => updateBlocks((blocks) => blocks.filter((_, current) => current !== index))}>Remove group</button>
-                  </div>
+                    <p>{block.steps.length} step{block.steps.length === 1 ? "" : "s"} per repetition</p>
+                  </article>
                 ))}
                 <div className="workout-structure__actions">
-                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, newStep()])}>Add step</button>
-                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, { kind: "repeat", repetitions: 5, recoveryAfterFinal: false, notes: "", steps: [newStep("work"), { ...newStep("recovery"), extent: "duration", distanceMeters: null, durationSeconds: 120, displayUnit: "min" }] }])}>Add repeat group</button>
+                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, newStep()])}><Plus size={16} /> Add step</button>
+                  <button type="button" onClick={() => updateBlocks((blocks) => [...blocks, { kind: "repeat", repetitions: 5, recoveryAfterFinal: false, notes: "", steps: [newStep("work"), { ...newStep("recovery"), extent: "duration", distanceMeters: null, durationSeconds: 120, displayUnit: "min" }] }])}><Repeat2 size={16} /> Add repeat group</button>
+                  <button className="workout-structure__clear" type="button" onClick={() => {
+                    setEditor({ ...editor, prescription: null });
+                    setStructureOpen(false);
+                  }}>Use simple workout</button>
                 </div>
               </div>
             ) : null}

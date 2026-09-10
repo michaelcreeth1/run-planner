@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
-from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek
+from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek, WorkoutPrescriptionRevision
 from app.schemas.planning import (
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
@@ -156,6 +156,37 @@ def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
         )
         assert revision.status_code == 200
         assert revision.json()["currentPrescriptionRevision"]["revisionNumber"] == 2
+
+
+def test_migrated_prescription_baseline_does_not_break_week_reads() -> None:
+    """Older migration baselines only stored a human-readable totals summary."""
+    with TestClient(app) as client:
+        login(client)
+        week = client.get("/api/weeks/current").json()
+        created = client.post(
+            "/api/planned-workouts",
+            json={"plannedDate": week["weekStartDate"], "title": "Migrated easy run"},
+        ).json()
+        with SessionLocal() as db:
+            revision = db.get(
+                WorkoutPrescriptionRevision,
+                created["currentPrescriptionRevision"]["id"],
+            )
+            assert revision is not None
+            revision.calculated_totals_json = {"summary": "Migrated simple workout"}
+            db.commit()
+
+        response = client.get(f"/api/weeks/{week['weekStartDate']}")
+        assert response.status_code == 200
+        migrated = next(item for item in response.json()["workouts"] if item["id"] == created["id"])
+        assert migrated["currentPrescriptionRevision"]["calculatedTotals"] == {
+            "knownDistanceMeters": None,
+            "knownDurationSeconds": None,
+            "hasOpenEndedExtent": False,
+            "distanceComplete": False,
+            "durationComplete": False,
+            "summary": "Migrated simple workout",
+        }
 
 
 def test_authenticated_users_are_isolated() -> None:
