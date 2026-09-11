@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ActualActivity,
   Mesocycle,
+  PerformedSession,
   PlanWeekSummary,
   RecurringGoal,
   TrainingPlan,
@@ -467,6 +468,18 @@ function pastWeekWithActuals(activities: ActualActivity[], overrides: Partial<Tr
 }
 
 describe("historical weeks evaluated from actuals", () => {
+  it("does not treat a legacy manual-only session as performed work", () => {
+    const week = pastWeekWithActuals([], {
+      workouts: [makeWorkout({ plannedDate: "2026-06-02" })],
+      performedSessions: [makePerformedSession({ recordings: [] })]
+    });
+
+    const evaluation = evaluateRule(restRule, { week }, TODAY);
+
+    expect(evaluation.reason).toContain("planned");
+    expect(evaluation.reason).not.toContain("taken");
+  });
+
   it("counts rest days from activity dates", () => {
     const week = pastWeekWithActuals(
       ["2026-06-01", "2026-06-02", "2026-06-04", "2026-06-05", "2026-06-07"].map((date) =>
@@ -530,6 +543,31 @@ describe("historical weeks evaluated from actuals", () => {
     expect(evaluation.reason).toContain("planned");
   });
 });
+
+function makePerformedSession(overrides: Partial<PerformedSession> = {}): PerformedSession {
+  return {
+    id: "session-1",
+    athleteAccountId: "athlete-1",
+    occurredAt: "2026-06-02T07:00:00",
+    sport: "run",
+    recordings: [{ stravaActivityId: "activity-1", contributesToTotals: true }],
+    manualDistanceMeters: null,
+    manualDurationSeconds: null,
+    plannedWorkoutId: null,
+    prescriptionRevisionId: null,
+    association: "unmatched",
+    matchProvenance: null,
+    outcome: "unresolved",
+    intensityCategory: "easy",
+    evidence: "activity_summary",
+    assessmentNote: "",
+    evidenceChanged: false,
+    version: 1,
+    totalDistanceMeters: 8046.72,
+    totalDurationSeconds: 2700,
+    ...overrides
+  };
+}
 
 describe("summarizeRuleMatrix", () => {
   it("counts each week once with fail taking precedence", () => {

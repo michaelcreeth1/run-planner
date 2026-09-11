@@ -5,7 +5,13 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.planning import AthleteAccount, PlannedWorkout, TrainingWeek, WeekGoal
+from app.models.planning import (
+    AthleteAccount,
+    PerformedSession,
+    PlannedWorkout,
+    TrainingWeek,
+    WeekGoal,
+)
 from app.models.strava import StravaActivity
 from app.services import planning, weekly_metrics
 
@@ -35,6 +41,7 @@ def planning_analytics(
 
     workouts_by_week = workouts_in_range(db, athlete_account_id, start, end)
     activities_by_week = activities_in_range(db, athlete_account_id, start, end)
+    sessions_by_week = sessions_in_range(db, athlete_account_id, start, end)
     weeks_by_start = metadata_weeks_in_range(db, athlete_account_id, start, end)
 
     summaries = [
@@ -44,6 +51,7 @@ def planning_analytics(
             activities_by_week.get(week_start, []),
             today,
             weeks_by_start.get(week_start),
+            sessions_by_week.get(week_start, []),
         )
         for week_start in week_starts
     ]
@@ -125,18 +133,42 @@ def metadata_weeks_in_range(
     return {week.week_start_date: week for week in weeks}
 
 
+def sessions_in_range(
+    db: Session, athlete_account_id: str, start: date, end: date
+) -> dict[date, list[PerformedSession]]:
+    start_at = datetime.combine(start, time.min)
+    end_at = datetime.combine(end + timedelta(days=1), time.min)
+    sessions = db.scalars(
+        select(PerformedSession)
+        .where(
+            PerformedSession.athlete_account_id == athlete_account_id,
+            PerformedSession.occurred_at >= start_at,
+            PerformedSession.occurred_at < end_at,
+        )
+        .options(selectinload(PerformedSession.recordings))
+        .order_by(PerformedSession.occurred_at)
+    ).all()
+    grouped: dict[date, list[PerformedSession]] = defaultdict(list)
+    for session in sessions:
+        grouped[planning.week_start_for(session.occurred_at.date())].append(session)
+    return grouped
+
+
 def summarize_week(
     week_start: date,
     workouts: list[PlannedWorkout],
     activities: list[StravaActivity],
     today: date,
     metadata_week: TrainingWeek | None = None,
+    sessions: list[PerformedSession] | None = None,
 ) -> dict:
     week_end = planning.week_end_for(week_start)
     week_state = (
         "future" if today < week_start else "past" if today > week_end else "current"
     )
-    metrics = weekly_metrics.calculate_weekly_metrics(workouts, activities, today=today)
+    metrics = weekly_metrics.calculate_weekly_metrics(
+        workouts, activities, today=today, sessions=sessions or []
+    )
     mileage = metrics["weekly_run_distance"]
     hard_days = metrics["hard_training_day_count"]
     rest_days = metrics["rest_day_count"]
@@ -146,9 +178,7 @@ def summarize_week(
     planned_mileage = mileage.planned
     actual_mileage = mileage.actual
     long_run_percentage = long_run_share.planned
-    comparison_mileage = (
-        actual_mileage if week_state == "past" else planned_mileage or actual_mileage
-    )
+    comparison_mileage = mileage.value_for(week_state)
 
     return {
         "week_start_date": week_start,
@@ -173,7 +203,7 @@ def summarize_week(
         ),
         "recovery_risk": risk_for_recovery(int(rest_days.planned)),
         "has_plan": bool(workouts),
-        "has_actuals": bool(activities),
+        "has_actuals": bool(activities or sessions),
     }
 
 

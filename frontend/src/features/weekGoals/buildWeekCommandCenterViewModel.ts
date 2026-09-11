@@ -1,7 +1,7 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
 import { weekPurposes } from "../../lib/options";
-import { completedSessionCount, isCompletedWorkout } from "../../lib/weekMetrics";
+import { completedSessionCount } from "../../lib/weekMetrics";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -199,7 +199,7 @@ function isUnplannedWeek(week: TrainingWeek) {
 }
 
 function hasWeekWork(week: TrainingWeek) {
-  return week.plannedMileage > 0 || week.actualMileage > 0 || week.workouts.length > 0 || week.actualActivities.length > 0;
+  return week.plannedMileage > 0 || week.actualMileage > 0 || week.workouts.length > 0 || week.actualActivities.length > 0 || (week.performedSessions?.some((session) => session.recordings.length > 0) ?? false);
 }
 
 function buildGoalCard(
@@ -385,19 +385,19 @@ function buildCompactStats(
     ];
   }
 
-	  if (mode === "execution") {
-	    const actual = mileage?.actualValue ?? completedMileage(week);
-	    const projected = mileage?.projectedValue ?? actual;
-	    return [
-	      {
-	        label: "Mileage",
-	        value: `${formatNumber(projected)} mi projected`,
-	        detail: `${formatNumber(actual)} mi completed`,
-	        severity: mileage?.severity
-	      },
+  if (mode === "execution") {
+    const actual = mileage?.actualValue ?? completedMileage(week);
+    const projected = mileage?.projectedValue ?? Math.max(actual, week.plannedMileage);
+    return [
+      {
+        label: "Mileage",
+        value: `${formatNumber(actual)} / ${formatNumber(projected)} mi`,
+        detail: "done / projected",
+        severity: mileage?.severity
+      },
       {
         label: "Quality",
-        value: quality?.statusLabel ?? `${plannedHardDayCount(week)} hard planned`,
+        value: quality?.statusLabel ?? `${plannedHardDayCount(week)} hard`,
         detail: quality?.explanation,
         severity: quality?.severity
       },
@@ -440,7 +440,9 @@ function buildCompactStats(
     },
     {
       label: "Recovery",
-      value: recovery?.primaryValue ?? (week.actualActivities.length ? formatRestDays(actualRestDays(week), "completed") : "Not planned"),
+      value:
+        recovery?.primaryValue ??
+        (hasRecordedTraining(week) ? formatRestDays(actualRestDays(week), "completed") : "Not planned"),
       detail: recovery ? `${recovery.statusLabel}: ${recovery.explanation}` : undefined,
       severity: recovery?.severity,
       outcome: reviewOutcomeForGoal(recovery)
@@ -588,7 +590,7 @@ function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string
 function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[] {
   if (mode === "execution") {
     return week.workouts.length > 0
-      ? [{ id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }]
+      ? [{ id: "adjust_rest", label: "Adjust week", variant: "primary", icon: "calendar" }]
       : [{ id: "plan_week", label: "Plan week", variant: "primary", icon: "calendar" }];
   }
 
@@ -906,12 +908,21 @@ function userFacingExplanation(value: string | undefined | null, goal: WeekGoal)
 
 function deriveLongRun(week: TrainingWeek, mode: WeekMode, today: string) {
   const actual = longestActualRun(week);
-  const completedPlanned = longestPlannedRun(week, isCompletedWorkout);
+  const resolvedWorkoutIds = new Set(
+    (week.performedSessions ?? [])
+      .filter(
+        (session) =>
+          session.recordings.length > 0 &&
+          session.plannedWorkoutId &&
+          session.outcome !== "unresolved"
+      )
+      .map((session) => session.plannedWorkoutId)
+  );
   const plannedUpcoming = longestPlannedRun(
     week,
-    (workout) => !isCompletedWorkout(workout) && workout.plannedDate >= today
+    (workout) => !resolvedWorkoutIds.has(workout.id) && workout.plannedDate >= today
   );
-  const plannedAny = longestPlannedRun(week, (workout) => !isCompletedWorkout(workout));
+  const plannedAny = longestPlannedRun(week, () => true);
 
   if (mode === "review") {
     return actual.distance > 0 ? actual : { ...actual, summary: "No long run", detail: "No completed long run found." };
@@ -920,24 +931,46 @@ function deriveLongRun(week: TrainingWeek, mode: WeekMode, today: string) {
     if (actual.distance > 0) {
       return actual;
     }
-    if (completedPlanned.distance > 0) {
-      return { ...completedPlanned, detail: `Completed: ${completedPlanned.detail}` };
-    }
     return plannedUpcoming.distance > 0 ? plannedUpcoming : plannedAny;
   }
   return plannedAny;
 }
 
 function longestActualRun(week: TrainingWeek) {
-  const activity = week.actualActivities
-    .filter((item) => isRunSport(item.sportType))
-    .sort((a, b) => b.distanceMiles - a.distanceMiles)[0];
+  const sessions = week.performedSessions ?? [];
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
+  const workoutsById = new Map(week.workouts.map((workout) => [workout.id, workout]));
+  const candidates = [
+    ...sessions
+      .filter(
+        (session) =>
+          session.sport === "run" &&
+          session.recordings.length > 0 &&
+          !["skipped", "missed"].includes(session.outcome) &&
+          (session.totalDistanceMeters ?? 0) > 0
+      )
+      .map((session) => ({
+        distance: (session.totalDistanceMeters ?? 0) / 1609.344,
+        name: workoutsById.get(session.plannedWorkoutId ?? "")?.title ?? "Completed run",
+        activityDate: session.occurredAt.slice(0, 10)
+      })),
+    ...week.actualActivities
+      .filter((activity) => !groupedActivityIds.has(activity.id) && isRunSport(activity.sportType))
+      .map((activity) => ({
+        distance: activity.distanceMiles,
+        name: activity.name,
+        activityDate: activity.activityDate
+      }))
+  ].sort((a, b) => b.distance - a.distance);
+  const activity = candidates[0];
   if (!activity) {
     return { distance: 0, summary: "No long run", detail: "No completed long run found." };
   }
   return {
-    distance: activity.distanceMiles,
-    summary: `${formatNumber(activity.distanceMiles)} mi`,
+    distance: activity.distance,
+    summary: `${formatNumber(activity.distance)} mi`,
     detail: `${activity.name} on ${formatWeekday(activity.activityDate)}.`
   };
 }
@@ -989,7 +1022,7 @@ function actualValueForCategory(category: WeekGoal["category"], week: TrainingWe
     return completedSessionCount(week);
   }
   if (category === "strength") {
-    return week.actualActivities.filter((activity) => /strength|mobility|workout/i.test(activity.sportType + activity.name)).length;
+    return actualStrengthSessionCount(week);
   }
   return 0;
 }
@@ -999,20 +1032,7 @@ function plannedSessionCount(week: TrainingWeek) {
 }
 
 function completedMileage(week: TrainingWeek) {
-  const runActivityDates = new Set(
-    week.actualActivities
-      .filter((activity) => isRunSport(activity.sportType))
-      .map((activity) => activity.activityDate)
-  );
-  const manualMiles = week.workouts
-    .filter(
-      (workout) =>
-        workout.sport === "run" &&
-        isCompletedWorkout(workout) &&
-        !runActivityDates.has(workout.plannedDate)
-    )
-    .reduce((total, workout) => total + (workout.plannedDistance ?? 0), 0);
-  return week.actualMileage + manualMiles;
+  return week.actualMileage;
 }
 
 function plannedHardDayCount(week: TrainingWeek) {
@@ -1020,11 +1040,47 @@ function plannedHardDayCount(week: TrainingWeek) {
 }
 
 function actualHardDayCount(week: TrainingWeek) {
+  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  if (sessions.length === 0) {
+    return new Set(
+      week.actualActivities
+        .filter((activity) => /tempo|threshold|interval|hill|race|workout|reps|repeat|fartlek/i.test(activity.name))
+        .map((activity) => activity.activityDate)
+    ).size;
+  }
+  const workoutsById = new Map(week.workouts.map((workout) => [workout.id, workout]));
   return new Set(
-    week.actualActivities
-      .filter((activity) => /tempo|threshold|interval|hill|race|workout|reps|repeat|fartlek/i.test(activity.name))
-      .map((activity) => activity.activityDate)
+    sessions
+      .filter((session) => {
+        if (session.recordings.length === 0) return false;
+        if (["skipped", "missed"].includes(session.outcome)) return false;
+        if (session.intensityCategory === "workout" || session.intensityCategory === "race") return true;
+        const workout = workoutsById.get(session.plannedWorkoutId ?? "");
+        return Boolean(
+          workout &&
+          ["as_planned", "moved"].includes(session.outcome) &&
+          isQualityWorkout(workout)
+        );
+      })
+      .map((session) => session.occurredAt.slice(0, 10))
   ).size;
+}
+
+function actualStrengthSessionCount(week: TrainingWeek) {
+  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  if (sessions.length === 0) {
+    return week.actualActivities.filter((activity) =>
+      /strength|mobility|workout/i.test(activity.sportType + activity.name)
+    ).length;
+  }
+  return sessions.filter(
+    (session) =>
+      session.recordings.length > 0 &&
+      !["skipped", "missed"].includes(session.outcome) &&
+      (session.sport === "strength" ||
+        session.sport === "mobility" ||
+        session.intensityCategory === "strength")
+  ).length;
 }
 
 function plannedRestDays(week: TrainingWeek) {
@@ -1049,7 +1105,34 @@ function plannedRestDayDates(week: TrainingWeek) {
 }
 
 function actualRestDays(week: TrainingWeek) {
-  return 7 - new Set(week.actualActivities.map((activity) => activity.activityDate)).size;
+  return 7 - new Set(actualTrainingDates(week)).size;
+}
+
+function actualTrainingDates(week: TrainingWeek) {
+  const sessions = week.performedSessions ?? [];
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
+  const sessionDates = sessions
+    .filter(
+      (session) =>
+        ["run", "strength", "mobility"].includes(session.sport) &&
+        session.recordings.length > 0 &&
+        !["skipped", "missed"].includes(session.outcome)
+    )
+    .map((session) => session.occurredAt.slice(0, 10));
+  const ungroupedActivityDates = week.actualActivities
+    .filter(
+      (activity) =>
+        !groupedActivityIds.has(activity.id) &&
+        /run|strength|weight|mobility|workout/i.test(`${activity.sportType} ${activity.name}`)
+    )
+    .map((activity) => activity.activityDate);
+  return [...sessionDates, ...ungroupedActivityDates];
+}
+
+function hasRecordedTraining(week: TrainingWeek) {
+  return actualTrainingDates(week).length > 0;
 }
 
 function formatRestDays(count: number, suffix: "planned" | "completed") {

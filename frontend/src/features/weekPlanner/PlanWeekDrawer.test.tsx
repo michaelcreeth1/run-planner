@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { addDays } from "../../lib/dates";
+import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
 import { server } from "../../test/server";
 import type { PlanWeekDraft, TrainingWeek, WorkoutTemplate } from "../../types/domain";
 import { PlanWeekDrawer } from "./PlanWeekDrawer";
@@ -49,7 +49,45 @@ describe("PlanWeekDrawer", () => {
 
     rerender(<PlanWeekDrawer {...props} draft={{ ...draft, hasExistingPlan: true }} />);
 
-    expect(screen.getByRole("heading", { name: "Adjust rest of week" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Adjust week" })).toBeVisible();
+  });
+
+  it("does not hide a workout completed only by legacy status", () => {
+    const weekStartDate = startOfWeek(new Date());
+    const workoutId = "status-only-workout";
+    const draft = {
+      ...mismatchedDraft(),
+      weekStartDate,
+      weekEndDate: addDays(weekStartDate, 6),
+      weekState: "current" as const,
+      hasExistingPlan: true,
+      workouts: [{
+        ...mismatchedDraft().workouts[0],
+        id: workoutId,
+        plannedDate: todayDateString(),
+        title: "Status-only run",
+        status: "completed_as_planned" as const
+      }]
+    };
+    const sourceWeek = priorTrainingWeek(weekStartDate, 5, "Status-only run");
+    sourceWeek.weekState = "current";
+    sourceWeek.workouts[0] = {
+      ...sourceWeek.workouts[0],
+      id: workoutId,
+      plannedDate: todayDateString(),
+      status: "completed_as_planned"
+    };
+    sourceWeek.performedSessions = [];
+
+    render(
+      <PlannerHarness
+        initialDraft={draft}
+        onSave={vi.fn()}
+        weekStack={{ [weekStartDate]: sourceWeek }}
+      />
+    );
+
+    expect(screen.getByDisplayValue("Status-only run")).toBeVisible();
   });
 
   it("allows a plan to be saved when its schedule does not meet its goals", async () => {

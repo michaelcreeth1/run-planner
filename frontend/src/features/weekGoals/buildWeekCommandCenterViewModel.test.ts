@@ -52,7 +52,7 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(viewModel.purposeTag).toBe("Purpose not set");
     expect(viewModel.purposeTag).not.toBe("Recovery");
     expect(viewModel.actionButtons).toEqual([
-      { id: "adjust_rest", label: "Adjust rest of week", variant: "primary", icon: "calendar" }
+      { id: "adjust_rest", label: "Adjust week", variant: "primary", icon: "calendar" }
     ]);
   });
 
@@ -101,7 +101,7 @@ describe("buildWeekCommandCenterViewModel", () => {
     expect(viewModel.compactStats?.some((stat) => stat.outcome === "missed")).toBe(false);
   });
 
-  it("counts manually completed workout mileage and shows reviewed state", () => {
+  it("does not treat a workout status as completed Strava mileage", () => {
     const workout = makeWorkout({
       workoutType: "long_run",
       title: "Long run",
@@ -126,12 +126,15 @@ describe("buildWeekCommandCenterViewModel", () => {
       })
     });
 
-    expect(current.compactStats?.find((stat) => stat.label === "Mileage")?.detail).toBe("5 mi completed");
-    expect(current.compactStats?.find((stat) => stat.label === "Long run")?.detail).toContain("Completed:");
+    expect(current.compactStats?.find((stat) => stat.label === "Mileage")).toMatchObject({
+      value: "0 / 5 mi",
+      detail: "done / projected"
+    });
+    expect(current.compactStats?.find((stat) => stat.label === "Long run")?.detail).not.toContain("Completed:");
     expect(reviewed.modeLabel).toBe("Reviewed");
   });
 
-  it("counts imported and manually completed sessions without double-counting a matched run", () => {
+  it("counts imported sessions and ignores status-only completions", () => {
     const viewModel = buildWeekCommandCenterViewModel({
       today: "2026-07-15",
       week: makeWeek({
@@ -168,7 +171,7 @@ describe("buildWeekCommandCenterViewModel", () => {
       })
     });
 
-    expect(viewModel.primarySummary).toContain("2 completed");
+    expect(viewModel.primarySummary).toContain("1 completed");
   });
 
   it("offers planning for target-only upcoming weeks and editing once sessions exist", () => {

@@ -96,11 +96,15 @@ POST /api/sync/strava/backfill
 POST /api/sync/strava/incremental
 GET  /api/sync/jobs
 GET  /api/activities
+GET  /api/performed-sessions
+PUT  /api/performed-sessions/{id}/reconciliation
 GET  /api/webhooks/strava
 POST /api/webhooks/strava
 ```
 
-Tokens are encrypted before storage. The sync implementation supports manual backfill, worker-driven reconciliation polling, and Strava webhooks. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. An independent heartbeat plus a database probe backs the Compose worker health check, and transient cycle failures are retried without terminating the worker. In webhook-enabled deployments, use Strava's app-level push subscription for normal activity freshness and stretch the worker poll interval to a slower reconciliation cadence.
+Tokens are encrypted before storage. Every imported activity is attached idempotently to a logical performed session. A single compatible same-day workout can be associated automatically, but quality-purpose fulfillment stays unresolved until its plan match is confirmed. Clear multi-recording sessions are grouped automatically; selecting a plan already linked to another recording merges both sessions. Ambiguous imports remain visibly unmatched. Outcomes are derived internally from the recording and chosen plan, while the user-facing correction is deliberately limited to one **Strava match** dropdown in the session edit flow. Strava recordings are the sole evidence source for performed work; the frontend and API have no manual activity-entry or manual-completion path.
+
+Weekly totals, goals, analytics, and projections consume performed sessions. Resolved outcomes determine which planned workout is removed from the remaining projection; activity dates alone never complete multiple planned workouts. The sync implementation supports manual backfill, worker-driven reconciliation polling, and Strava webhooks. The worker runs once at startup and then every 30 minutes by default, importing the last 14 days of activities to catch delayed uploads and edits. An independent heartbeat plus a database probe backs the Compose worker health check, and transient cycle failures are retried without terminating the worker. In webhook-enabled deployments, use Strava's app-level push subscription for normal activity freshness and stretch the worker poll interval to a slower reconciliation cadence.
 
 The public webhook callback validates Strava's `hub.challenge` request with `STRAVA_WEBHOOK_VERIFY_TOKEN`. Pushed activity events are stored in `strava_webhook_events`, routed by Strava `owner_id` to `athlete_accounts.strava_athlete_id`, and processed after the API response. The worker retries queued or failed webhook events.
 

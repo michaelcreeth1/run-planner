@@ -210,7 +210,7 @@ def test_invalid_legacy_default_goal_remains_readable_for_review() -> None:
         assert legacy_goal["evaluationMode"] == "manual"
 
 
-def test_manual_workout_completion_counts_toward_automatic_goal_metrics(
+def test_status_only_completion_does_not_count_toward_automatic_goal_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with TestClient(app) as client:
@@ -257,9 +257,9 @@ def test_manual_workout_completion_counts_toward_automatic_goal_metrics(
             if item["goalId"] == goal_response.json()["id"]
         )
 
-        assert evaluation["actualValue"] == 10
+        assert evaluation["actualValue"] == 0
         assert evaluation["remainingPlannedValue"] == 0
-        assert evaluation["status"] == "achieved"
+        assert evaluation["status"] == "missed"
 
 
 def test_completing_review_snapshots_actual_weekly_metrics() -> None:

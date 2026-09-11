@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { defaultForm } from "../../lib/forms";
-import type { WorkoutForm } from "../../types/domain";
+import type { PerformedSession, Workout, WorkoutForm } from "../../types/domain";
 import { WorkoutEditor } from "./WorkoutEditor";
 
 function EditorHarness({
@@ -39,6 +39,84 @@ function EditorHarness({
 }
 
 describe("WorkoutEditor", () => {
+  it("reduces an unmatched Strava edit to one plan dropdown", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const session: PerformedSession = {
+      id: "session-1",
+      athleteAccountId: "athlete-1",
+      occurredAt: "2026-07-15T06:00:00",
+      sport: "run",
+      recordings: [{ stravaActivityId: "activity-1", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: null,
+      prescriptionRevisionId: null,
+      association: "unmatched",
+      matchProvenance: null,
+      outcome: "unresolved",
+      intensityCategory: "easy",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 1,
+      totalDistanceMeters: 8046.72,
+      totalDurationSeconds: 2700
+    };
+    const workout: Workout = {
+      id: "workout-1",
+      trainingWeekId: "week-1",
+      athleteAccountId: "athlete-1",
+      plannedDate: "2026-07-15",
+      title: "Easy five",
+      sport: "run",
+      workoutType: "easy",
+      intensityCategory: "easy",
+      plannedDistance: 5,
+      plannedDuration: null,
+      plannedPace: null,
+      plannedElevation: null,
+      plannedTss: null,
+      purpose: "",
+      instructions: "",
+      notes: "",
+      status: "planned"
+    };
+
+    function MatchHarness() {
+      const [plannedWorkoutId, setPlannedWorkoutId] = useState("");
+      return (
+        <WorkoutEditor
+          editor={{ ...defaultForm(workout.plannedDate), id: workout.id }}
+          error={null}
+          isSaving={false}
+          stravaMatch={{ session, plannedWorkoutId }}
+          stravaMatchOnly
+          workouts={[workout]}
+          setEditor={vi.fn()}
+          setStravaMatch={setPlannedWorkoutId}
+          onSaveStravaMatch={onSave}
+          onClose={vi.fn()}
+          onSubmit={(event) => {
+            event.preventDefault();
+          }}
+        />
+      );
+    }
+
+    render(<MatchHarness />);
+
+    expect(screen.getByRole("heading", { name: "Edit Strava match" })).toBeVisible();
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+    expect(screen.queryByText("Outcome")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actual intensity")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Strava match"), workout.id);
+
+    expect(onSave).toHaveBeenCalledWith(workout.id);
+  });
+
   it("edits and submits a complete workout", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();

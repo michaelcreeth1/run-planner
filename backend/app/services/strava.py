@@ -608,7 +608,30 @@ def mark_activity_deleted(db: Session, athlete_account_id: str, strava_activity_
     if not activity:
         return False
     activity.deleted_at = datetime.now(timezone.utc)
+    from app.models.planning import PerformedSession, PerformedSessionRecording
+    from app.services import planning
+
+    recording = db.scalars(
+        select(PerformedSessionRecording).where(
+            PerformedSessionRecording.strava_activity_id == activity.id
+        )
+    ).first()
+    session = db.get(PerformedSession, recording.performed_session_id) if recording else None
+    affected_dates = {activity.start_date_local.date()}
+    affected_week_ids: set[str] = set()
+    if session is not None:
+        session.evidence_changed = True
+        affected_dates.add(session.occurred_at.date())
+        if session.planned_workout is not None:
+            affected_week_ids.add(session.planned_workout.training_week_id)
     db.commit()
+    planning.recalculate_impacted_weeks(
+        db,
+        affected_week_ids,
+        athlete_account_id,
+        refresh_existing_workout_goals=False,
+    )
+    planning.recalculate_weeks_for_dates(db, athlete_account_id, affected_dates)
     return True
 
 
@@ -628,32 +651,50 @@ def upsert_activity(db: Session, athlete_account_id: str, payload: dict[str, Any
         )
         db.add(activity)
 
-    if not created and raw_payload_matches(activity.raw_payload_json, payload):
-        return "unchanged"
+    payload_changed = created or not raw_payload_matches(activity.raw_payload_json, payload)
+    if payload_changed:
+        activity.name = payload.get("name") or "Untitled activity"
+        activity.sport_type = payload.get("sport_type") or payload.get("type") or "Unknown"
+        activity.start_date = parse_strava_datetime(payload["start_date"])
+        activity.start_date_local = parse_strava_datetime(payload["start_date_local"])
+        activity.timezone = payload.get("timezone")
+        activity.distance = float(payload.get("distance") or 0)
+        activity.moving_time = payload.get("moving_time")
+        activity.elapsed_time = payload.get("elapsed_time")
+        activity.total_elevation_gain = payload.get("total_elevation_gain")
+        activity.average_speed = payload.get("average_speed")
+        activity.max_speed = payload.get("max_speed")
+        activity.average_heartrate = payload.get("average_heartrate")
+        activity.max_heartrate = payload.get("max_heartrate")
+        activity.average_cadence = payload.get("average_cadence")
+        activity.average_watts = payload.get("average_watts")
+        activity.perceived_exertion = payload.get("perceived_exertion")
+        activity.private = bool(payload.get("private"))
+        activity.trainer = bool(payload.get("trainer"))
+        activity.commute = bool(payload.get("commute"))
+        activity.manual = bool(payload.get("manual"))
+        activity.raw_payload_json = payload
+    db.flush()
 
-    activity.name = payload.get("name") or "Untitled activity"
-    activity.sport_type = payload.get("sport_type") or payload.get("type") or "Unknown"
-    activity.start_date = parse_strava_datetime(payload["start_date"])
-    activity.start_date_local = parse_strava_datetime(payload["start_date_local"])
-    activity.timezone = payload.get("timezone")
-    activity.distance = float(payload.get("distance") or 0)
-    activity.moving_time = payload.get("moving_time")
-    activity.elapsed_time = payload.get("elapsed_time")
-    activity.total_elevation_gain = payload.get("total_elevation_gain")
-    activity.average_speed = payload.get("average_speed")
-    activity.max_speed = payload.get("max_speed")
-    activity.average_heartrate = payload.get("average_heartrate")
-    activity.max_heartrate = payload.get("max_heartrate")
-    activity.average_cadence = payload.get("average_cadence")
-    activity.average_watts = payload.get("average_watts")
-    activity.perceived_exertion = payload.get("perceived_exertion")
-    activity.private = bool(payload.get("private"))
-    activity.trainer = bool(payload.get("trainer"))
-    activity.commute = bool(payload.get("commute"))
-    activity.manual = bool(payload.get("manual"))
-    activity.raw_payload_json = payload
+    # Local import avoids coupling the Strava module to planning during module load.
+    from app.services import planning
+
+    integration = planning.integrate_imported_activity(
+        db,
+        activity,
+        payload_changed=payload_changed and not created,
+    )
     db.commit()
-    return "created" if created else "updated"
+    for workout_id in integration["workout_ids"]:
+        planning.sync_workout_status_from_sessions(db, workout_id, athlete_account_id)
+    planning.recalculate_impacted_weeks(
+        db,
+        integration["week_ids"],
+        athlete_account_id,
+        refresh_existing_workout_goals=False,
+    )
+    planning.recalculate_weeks_for_dates(db, athlete_account_id, integration["dates"])
+    return "created" if created else "updated" if payload_changed else "unchanged"
 
 
 def raw_payload_matches(

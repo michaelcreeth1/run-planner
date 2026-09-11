@@ -33,7 +33,7 @@ import type { TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 import { fetchJson, toApiErrorPresentation } from "./lib/api";
 import type { ApiErrorPresentation } from "./lib/api";
-import { addDays, parseDate, startOfWeek, todayDateString } from "./lib/dates";
+import { addDays, daysBetween, parseDate, startOfWeek, todayDateString } from "./lib/dates";
 import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload } from "./lib/forms";
 import { formatDurationSeconds, paceInputFromMetrics } from "./lib/workoutMetrics";
 import { appRoutePath, parseAppRoute } from "./lib/navigation";
@@ -45,6 +45,7 @@ import type {
   AnalyticsPlanning,
   ApiVersion,
   LoginForm,
+  PerformedSession,
   PlanWeekDraft,
   SessionStatus,
   StravaActivity,
@@ -72,6 +73,11 @@ const primaryTabs = [
 
 type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
+type StravaMatchDraft = {
+  session: PerformedSession;
+  plannedWorkoutId: string;
+  matchOnly: boolean;
+};
 type WeekScrollSnapshot = {
   anchorWeekStart: string | null;
   anchorTop: number;
@@ -134,6 +140,7 @@ function AppShell() {
   const [isSavingGoal, setIsSavingGoal] = useState(false);
   const [goalSaveError, setGoalSaveError] = useState<string | null>(null);
   const [planWeekDraft, setPlanWeekDraft] = useState<PlanWeekDraft | null>(null);
+  const [stravaMatch, setStravaMatch] = useState<StravaMatchDraft | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
@@ -240,6 +247,7 @@ function AppShell() {
     setIsSavingGoal(false);
     setGoalSaveError(null);
     setPlanWeekDraft(null);
+    setStravaMatch(null);
     setIsSavingPlanWeek(false);
     setPendingPlanWeekStart(null);
     setWeekReviewHandoff(null);
@@ -659,33 +667,44 @@ function AppShell() {
   function openCreate(plannedDate: string) {
     setWorkoutSaveError(null);
     setIsSavingWorkoutToLibrary(false);
+    setStravaMatch(null);
     setEditor(defaultForm(plannedDate));
   }
 
-  function openEdit(workout: Workout) {
+  function openEdit(workout: Workout, performedSession?: PerformedSession | null) {
     setWorkoutSaveError(null);
     setIsSavingWorkoutToLibrary(false);
-    setEditor({
-      id: workout.id,
-      plannedDate: workout.plannedDate,
-      title: workout.title,
-      sport: workout.sport,
-      workoutType: workout.workoutType,
-      intensityCategory: workout.intensityCategory,
-      plannedDistance: workout.plannedDistance?.toString() ?? "",
-      plannedDuration: workout.plannedDuration ? formatDurationSeconds(workout.plannedDuration) : "",
-      plannedPace: paceInputFromMetrics(
-        workout.plannedDuration,
-        workout.plannedDistance,
-        workout.plannedPace
-      ),
-      purpose: workout.purpose,
-      instructions: workout.instructions,
-      notes: workout.notes,
-      status: workout.status,
-      prescription: workout.prescription ?? null,
-      version: workout.version
+    const linkedSession = performedSession ?? allLoadedPerformedSessions(weekStack).find(
+      (candidate) => candidate.plannedWorkoutId === workout.id && candidate.recordings.length > 0
+    ) ?? null;
+    setStravaMatch(linkedSession ? {
+      session: linkedSession,
+      plannedWorkoutId: linkedSession.plannedWorkoutId ?? "",
+      matchOnly: false
+    } : null);
+    setEditor(workoutToForm(workout));
+  }
+
+  function openPerformedSessionEdit(performedSession: PerformedSession) {
+    const workouts = allLoadedWorkouts(weekStack);
+    const linkedWorkout = workouts.find((workout) => workout.id === performedSession.plannedWorkoutId);
+    const hostWorkout = linkedWorkout ?? nearestWorkout(performedSession, workouts);
+    if (!hostWorkout) {
+      setApiError({
+        kind: "response",
+        title: "No planned workouts",
+        detail: "Add a planned workout before matching this Strava activity."
+      });
+      return;
+    }
+    setWorkoutSaveError(null);
+    setIsSavingWorkoutToLibrary(false);
+    setStravaMatch({
+      session: performedSession,
+      plannedWorkoutId: performedSession.plannedWorkoutId ?? "",
+      matchOnly: !linkedWorkout
     });
+    setEditor(workoutToForm(hostWorkout));
   }
 
   function openCreateGoal(targetWeek: TrainingWeek) {
@@ -848,6 +867,55 @@ function AppShell() {
     }
   }
 
+  async function savePerformedSessionMatch(plannedWorkoutId: string) {
+    if (!stravaMatch || blockStaleWrite("saving a Strava match")) {
+      return;
+    }
+    const mutationKey = "strava-match";
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    setIsSavingWorkout(true);
+    setWorkoutSaveError(null);
+    try {
+      await fetchJson<PerformedSession>(
+        `/api/performed-sessions/${stravaMatch.session.id}/reconciliation`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            plannedWorkoutId: plannedWorkoutId || null,
+            expectedVersion: stravaMatch.session.version
+          }),
+          signal: request.signal
+        }
+      );
+      if (!request.isCurrent()) {
+        return;
+      }
+      setEditor(null);
+      setStravaMatch(null);
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      loadActivities();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        const presentation = toApiErrorPresentation(error, "Could not save the Strava match.");
+        setWorkoutSaveError(presentation.detail);
+        setApiError(presentation);
+      }
+    } finally {
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) {
+        setIsSavingWorkout(false);
+      }
+    }
+  }
+
   async function saveWorkout(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor) {
@@ -865,28 +933,47 @@ function AppShell() {
     setIsSavingWorkout(true);
     setWorkoutSaveError(null);
     try {
-      const payload = formToPayload(editor);
-      if (editor.id) {
-        await fetchJson(`/api/planned-workouts/${editor.id}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-          signal: request.signal
-        });
-      } else {
-        await fetchJson("/api/planned-workouts", {
-          method: "POST",
-          body: JSON.stringify(payload),
-          signal: request.signal
-        });
+      if (!stravaMatch?.matchOnly) {
+        const payload = formToPayload(editor);
+        if (editor.id) {
+          await fetchJson(`/api/planned-workouts/${editor.id}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+            signal: request.signal
+          });
+        } else {
+          await fetchJson("/api/planned-workouts", {
+            method: "POST",
+            body: JSON.stringify(payload),
+            signal: request.signal
+          });
+        }
+      }
+      if (stravaMatch) {
+        await fetchJson<PerformedSession>(
+          `/api/performed-sessions/${stravaMatch.session.id}/reconciliation`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              plannedWorkoutId: stravaMatch.plannedWorkoutId || null,
+              expectedVersion: stravaMatch.session.version
+            }),
+            signal: request.signal
+          }
+        );
       }
       if (!request.isCurrent()) {
         return;
       }
       setEditor(null);
+      setStravaMatch(null);
       setWorkoutSaveError(null);
       refreshVisibleWeeks();
       loadTrainingTimeline();
       loadAnalyticsPlanning();
+      if (stravaMatch) {
+        loadActivities();
+      }
       setApiError(null);
     } catch (error) {
       if (request.isCurrent()) {
@@ -1070,52 +1157,6 @@ function AppShell() {
     }
   }
 
-  async function setWorkoutCompletion(workout: Workout, completed: boolean) {
-    if (blockStaleWrite(completed ? "completing a workout" : "reopening a workout")) {
-      return;
-    }
-    const mutationKey = `workout:${workout.id}`;
-    if (!startMutation(mutationKey)) {
-      return;
-    }
-    const request = beginDataRequest();
-    try {
-      const updatedWorkout = await fetchJson<Workout>(`/api/planned-workouts/${workout.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: completed ? "completed_as_planned" : "planned" }),
-        signal: request.signal
-      });
-      if (!request.isCurrent()) {
-        return;
-      }
-      setWeekStack((current) =>
-        Object.fromEntries(
-          Object.entries(current).map(([start, loadedWeek]) => [
-            start,
-            loadedWeek.workouts.some((item) => item.id === updatedWorkout.id)
-              ? {
-                  ...loadedWeek,
-                  workouts: loadedWeek.workouts.map((item) =>
-                    item.id === updatedWorkout.id ? updatedWorkout : item
-                  )
-                }
-              : loadedWeek
-          ])
-        )
-      );
-      refreshVisibleWeeks();
-      loadAnalyticsPlanning();
-      setApiError(null);
-    } catch (error) {
-      if (request.isCurrent()) {
-        setApiError(toApiErrorPresentation(error, "Could not update workout completion."));
-      }
-    } finally {
-      request.finish();
-      finishMutation(mutationKey);
-    }
-  }
-
   async function copyPriorWeek(targetWeek: TrainingWeek) {
     if (blockStaleWrite("copying the prior week")) {
       return;
@@ -1222,10 +1263,15 @@ function AppShell() {
       loadActivities();
       loadStravaStatus();
       loadTrainingTimeline();
+      refreshVisibleWeeks();
+      loadAnalyticsPlanning();
       if (session?.activeAthleteAccountId) {
-        void queryClient.invalidateQueries({
-          queryKey: queryKeys.trainingPaceEstimate(session.activeAthleteAccountId)
-        });
+        const profileId = session.activeAthleteAccountId;
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.trainingPaceEstimate(profileId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.plans(profileId) }),
+          queryClient.invalidateQueries({ queryKey: [...queryKeys.profile(profileId), "plan"] })
+        ]);
       }
       setApiError(null);
     } catch (error) {
@@ -1380,7 +1426,7 @@ function AppShell() {
               weekStarts={visibleWeekStarts}
               onCreate={openCreate}
               onEdit={openEdit}
-              onSetCompletion={setWorkoutCompletion}
+              onEditPerformedSession={openPerformedSessionEdit}
               onDelete={deleteWorkout}
               onDuplicate={duplicateWorkout}
               onCreateGoal={openCreateGoal}
@@ -1451,12 +1497,20 @@ function AppShell() {
             error={workoutSaveError}
             isSaving={isSavingWorkout}
             isSavingToLibrary={isSavingWorkoutToLibrary}
+            stravaMatch={stravaMatch}
+            stravaMatchOnly={stravaMatch?.matchOnly}
             trainingPaceEstimate={trainingPaceEstimateQuery.data}
+            workouts={relevantWorkoutsForStravaMatch(stravaMatch, weekStack)}
             setEditor={setEditor}
+            setStravaMatch={(plannedWorkoutId) => {
+              setStravaMatch((current) => current ? { ...current, plannedWorkoutId } : null);
+            }}
+            onSaveStravaMatch={savePerformedSessionMatch}
             onSaveToLibrary={editor.id ? saveWorkoutToLibrary : undefined}
             onSubmit={saveWorkout}
             onClose={() => {
               setEditor(null);
+              setStravaMatch(null);
               setIsSavingWorkoutToLibrary(false);
               setWorkoutSaveError(null);
             }}
@@ -1492,6 +1546,93 @@ function AppShell() {
       </div>
     </ProfileProvider>
   );
+}
+
+function allLoadedWorkouts(weekStack: Record<string, TrainingWeek>): Workout[] {
+  return Array.from(
+    new Map(
+      Object.values(weekStack)
+        .flatMap((loadedWeek) => loadedWeek.workouts)
+        .filter((workout) => workout.sport !== "rest" && workout.intensityCategory !== "rest")
+        .map((workout) => [workout.id, workout])
+    ).values()
+  ).sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
+}
+
+function allLoadedPerformedSessions(weekStack: Record<string, TrainingWeek>): PerformedSession[] {
+  return Array.from(
+    new Map(
+      Object.values(weekStack)
+        .flatMap((loadedWeek) => loadedWeek.performedSessions ?? [])
+        .map((performedSession) => [performedSession.id, performedSession])
+    ).values()
+  );
+}
+
+function relevantWorkoutsForStravaMatch(
+  stravaMatch: StravaMatchDraft | null,
+  weekStack: Record<string, TrainingWeek>
+): Workout[] {
+  if (!stravaMatch) {
+    return [];
+  }
+  const sessionDate = stravaMatch.session.occurredAt.slice(0, 10);
+  return allLoadedWorkouts(weekStack)
+    .filter(
+      (workout) =>
+        workout.id === stravaMatch.plannedWorkoutId ||
+        Math.abs(daysBetween(sessionDate, workout.plannedDate)) <= 7
+    )
+    .sort((left, right) => {
+      if (left.id === stravaMatch.plannedWorkoutId) return -1;
+      if (right.id === stravaMatch.plannedWorkoutId) return 1;
+      const leftGap = Math.abs(daysBetween(sessionDate, left.plannedDate));
+      const rightGap = Math.abs(daysBetween(sessionDate, right.plannedDate));
+      if (leftGap !== rightGap) return leftGap - rightGap;
+      const leftSportPenalty = left.sport === stravaMatch.session.sport ? 0 : 1;
+      const rightSportPenalty = right.sport === stravaMatch.session.sport ? 0 : 1;
+      if (leftSportPenalty !== rightSportPenalty) return leftSportPenalty - rightSportPenalty;
+      return left.plannedDate.localeCompare(right.plannedDate);
+    })
+    .slice(0, 16);
+}
+
+function nearestWorkout(performedSession: PerformedSession, workouts: Workout[]): Workout | null {
+  const occurredAt = Date.parse(performedSession.occurredAt);
+  return [...workouts].sort((left, right) => {
+    const leftSportPenalty = left.sport === performedSession.sport ? 0 : 1;
+    const rightSportPenalty = right.sport === performedSession.sport ? 0 : 1;
+    if (leftSportPenalty !== rightSportPenalty) {
+      return leftSportPenalty - rightSportPenalty;
+    }
+    const leftGap = Math.abs(Date.parse(`${left.plannedDate}T12:00:00`) - occurredAt);
+    const rightGap = Math.abs(Date.parse(`${right.plannedDate}T12:00:00`) - occurredAt);
+    return leftGap - rightGap;
+  })[0] ?? null;
+}
+
+function workoutToForm(workout: Workout): WorkoutForm {
+  return {
+    id: workout.id,
+    plannedDate: workout.plannedDate,
+    title: workout.title,
+    sport: workout.sport,
+    workoutType: workout.workoutType,
+    intensityCategory: workout.intensityCategory,
+    plannedDistance: workout.plannedDistance?.toString() ?? "",
+    plannedDuration: workout.plannedDuration ? formatDurationSeconds(workout.plannedDuration) : "",
+    plannedPace: paceInputFromMetrics(
+      workout.plannedDuration,
+      workout.plannedDistance,
+      workout.plannedPace
+    ),
+    purpose: workout.purpose,
+    instructions: workout.instructions,
+    notes: workout.notes,
+    status: workout.status,
+    prescription: workout.prescription ?? null,
+    version: workout.version
+  };
 }
 
 function weekRangeAround(weekStart: string) {

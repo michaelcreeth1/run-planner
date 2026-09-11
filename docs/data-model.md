@@ -12,6 +12,7 @@ Implemented:
 - Workout template.
 - Strava OAuth token.
 - Strava activity.
+- Performed session and performed-session recording.
 - Strava webhook event.
 - Sync job.
 
@@ -40,8 +41,16 @@ Remaining implementation order:
    `source='workouts'`; manual edits flip a goal to `source='manual'`, which
    protects it from re-materialization and from scaffold overwrites.
    Precedence: manual > plan > workouts > default.
-2. Workout match.
-3. Daily check-in and weekly summary.
-4. Gear.
+2. Daily check-in and weekly summary.
+3. Gear.
+
+`PerformedSession` is the logical unit of completed work. One session can contain
+one or more Strava recordings, while each recording belongs to only one session.
+Its optional planned-workout association is separate from its outcome. Outcomes
+are `unresolved`, `as_planned`, `modified`, `partial`, `replaced`, `skipped`,
+`missed`, and `moved`. Strava recordings—not workout status or manual metrics—are
+the evidence for completed work and remaining-work projections; raw activity
+dates are retained as evidence but are not completion keys. Legacy nullable manual
+metric columns remain schema-compatible but are not used by the product workflow.
 
 Postgres is now the app database. Use a dedicated `running_planner` database on the shared Postgres instance rather than the default `postgres` database. Raw Strava payloads and webhook event payloads are stored as JSONB in Postgres, while SQLite remains only a legacy source format for migration and lightweight tests.

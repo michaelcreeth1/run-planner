@@ -6,7 +6,7 @@ import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ProfileProvider } from "../../lib/profile";
 import { server } from "../../test/server";
-import type { TrainingWeek, Workout } from "../../types/domain";
+import type { PerformedSession, TrainingWeek, Workout } from "../../types/domain";
 import { WeekView } from "./WeekView";
 
 describe("WeekView workout completion", () => {
@@ -15,7 +15,7 @@ describe("WeekView workout completion", () => {
     const completed = { ...makeWorkout(), status: "completed_as_planned" as const };
     const remaining = { ...makeWorkout(), id: "remaining", title: "Evening mobility" };
     const week = { ...makeWeek(completed), workouts: [completed, remaining] };
-    const props = makeProps(week, vi.fn());
+    const props = makeProps(week);
     server.use(
       http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
       http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
@@ -40,7 +40,7 @@ describe("WeekView workout completion", () => {
     const user = userEvent.setup();
     const workout = makeWorkout();
     const week = makeWeek(workout);
-    const props = makeProps(week, vi.fn());
+    const props = makeProps(week);
     server.use(
       http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
       http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
@@ -67,9 +67,105 @@ describe("WeekView workout completion", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("marks an unmatched workout complete and allows undoing it", async () => {
+  it("shows a compatible unresolved import as awaiting review without a reconciliation action", async () => {
     const user = userEvent.setup();
-    const onSetCompletion = vi.fn();
+    const workout: Workout = {
+      ...makeWorkout(),
+      id: "run-1",
+      plannedDate: "2026-07-14",
+      title: "Easy run",
+      sport: "run",
+      workoutType: "easy",
+      intensityCategory: "easy",
+      plannedDistance: 9
+    };
+    const session: PerformedSession = {
+      id: "session-1",
+      athleteAccountId: "athlete-1",
+      occurredAt: "2026-07-14T07:00:00",
+      sport: "run",
+      recordings: [{ stravaActivityId: "activity-1", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: null,
+      prescriptionRevisionId: null,
+      association: "unmatched",
+      matchProvenance: null,
+      outcome: "unresolved",
+      intensityCategory: "easy",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 1,
+      totalDistanceMeters: 9 * 1609.344,
+      totalDurationSeconds: 4800
+    };
+    const rideSession: PerformedSession = {
+      ...session,
+      id: "ride-session",
+      occurredAt: "2026-07-13T07:00:00",
+      sport: "cross_training",
+      recordings: [{ stravaActivityId: "ride-activity", contributesToTotals: true }],
+      totalDistanceMeters: 1.8 * 1609.344,
+      totalDurationSeconds: 1037
+    };
+    const week: TrainingWeek = {
+      ...makeWeek(workout),
+      workouts: [workout],
+      actualActivities: [
+        {
+          id: "activity-1",
+          stravaActivityId: "strava-1",
+          name: "Morning Run",
+          sportType: "Run",
+          startDateLocal: session.occurredAt,
+          activityDate: "2026-07-14",
+          distance: 9 * 1609.344,
+          distanceMiles: 9,
+          movingTime: 4800,
+          averageHeartrate: null
+        },
+        {
+          id: "ride-activity",
+          stravaActivityId: "strava-ride",
+          name: "Morning Ride",
+          sportType: "Ride",
+          startDateLocal: rideSession.occurredAt,
+          activityDate: "2026-07-13",
+          distance: 1.8 * 1609.344,
+          distanceMiles: 1.8,
+          movingTime: 1037,
+          averageHeartrate: null
+        }
+      ],
+      performedSessions: [session, rideSession]
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} today="2026-07-15" />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const schedule = within(screen.getByRole("region", { name: "Weekly schedule" }));
+    expect(schedule.getByText("Awaiting match")).toBeVisible();
+    expect(schedule.getAllByText("Review match")).toHaveLength(2);
+    expect(schedule.getByText("1.8 mi · 17.3 min")).toBeVisible();
+    expect(schedule.queryByText("9:36/mi")).not.toBeInTheDocument();
+    expect(schedule.queryByText("Missed")).not.toBeInTheDocument();
+    expect(schedule.queryByText("Correct reconciliation")).not.toBeInTheDocument();
+    await user.click(schedule.getByRole("button", { name: "Actions for Morning Run" }));
+    expect(schedule.getByRole("button", { name: "Edit match" })).toBeVisible();
+  });
+
+  it("does not offer manual activity completion", async () => {
+    const user = userEvent.setup();
     const onOpenPlanWeek = vi.fn();
     const workout = makeWorkout();
     const week = makeWeek(workout);
@@ -77,41 +173,21 @@ describe("WeekView workout completion", () => {
       http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
       http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
     );
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { rerender } = render(
-      <QueryClientProvider client={queryClient}>
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(week, onSetCompletion)} onOpenPlanWeek={onOpenPlanWeek} />
+          <WeekView {...makeProps(week)} onOpenPlanWeek={onOpenPlanWeek} />
         </ProfileProvider>
       </QueryClientProvider>
     );
 
     const weekActions = screen.getByLabelText("Week actions");
-    const adjustWeekButton = within(weekActions).getByRole("button", { name: "Adjust rest of week" });
+    const adjustWeekButton = within(weekActions).getByRole("button", { name: "Adjust week" });
     expect(adjustWeekButton).toBeVisible();
     await user.click(adjustWeekButton);
     expect(onOpenPlanWeek).toHaveBeenCalledWith(week);
-
-    await user.click(screen.getByRole("button", { name: "Mark Untracked strength session complete" }));
-
-    expect(onSetCompletion).toHaveBeenCalledWith(workout, true);
-
-    const completedWorkout = { ...workout, status: "completed_as_planned" as const };
-    const completedWeek = makeWeek(completedWorkout);
-    rerender(
-      <QueryClientProvider client={queryClient}>
-        <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(completedWeek, onSetCompletion)} onOpenPlanWeek={onOpenPlanWeek} />
-        </ProfileProvider>
-      </QueryClientProvider>
-    );
-
-    expect(within(screen.getByLabelText("Weekly schedule")).getByText("Completed")).toBeVisible();
-    const undo = screen.getByRole("button", { name: "Mark Untracked strength session incomplete" });
-    expect(undo).toHaveAttribute("aria-pressed", "true");
-    await user.click(undo);
-
-    expect(onSetCompletion).toHaveBeenLastCalledWith(completedWorkout, false);
+    expect(screen.queryByRole("button", { name: /Mark .* complete/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Log completed work/ })).not.toBeInTheDocument();
   });
 
   it("opens week planning from an actually unplanned current week", async () => {
@@ -131,7 +207,7 @@ describe("WeekView workout completion", () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(week, vi.fn())} onOpenPlanWeek={onOpenPlanWeek} />
+          <WeekView {...makeProps(week)} onOpenPlanWeek={onOpenPlanWeek} />
         </ProfileProvider>
       </QueryClientProvider>
     );
@@ -164,7 +240,7 @@ describe("WeekView workout completion", () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ProfileProvider profileId="athlete-1">
-          <WeekView {...makeProps(week, vi.fn())} onSkipReview={onSkipReview} />
+          <WeekView {...makeProps(week)} onSkipReview={onSkipReview} />
         </ProfileProvider>
       </QueryClientProvider>
     );
@@ -192,7 +268,7 @@ describe("WeekView workout completion", () => {
       http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
     );
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const props = makeProps(selectedWeek, vi.fn());
+    const props = makeProps(selectedWeek);
     render(
       <QueryClientProvider client={queryClient}>
         <ProfileProvider profileId="athlete-1">
@@ -232,7 +308,7 @@ describe("WeekView workout completion", () => {
       workouts: [],
       weekState: "future"
     };
-    const props = makeProps(selectedWeek, vi.fn());
+    const props = makeProps(selectedWeek);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ProfileProvider profileId="athlete-1">
@@ -272,7 +348,7 @@ describe("WeekView workout completion", () => {
       weekEndDate: "2026-07-26",
       weekState: "future"
     };
-    const props = makeProps(currentWeek, vi.fn());
+    const props = makeProps(currentWeek);
     const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("app-header")) {
@@ -336,7 +412,7 @@ describe("WeekView workout completion", () => {
       weekEndDate: "2026-07-12",
       weekState: "past" as const
     };
-    const props = makeProps(pastWeek, vi.fn());
+    const props = makeProps(pastWeek);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ProfileProvider profileId="athlete-1">
@@ -353,10 +429,7 @@ describe("WeekView workout completion", () => {
   });
 });
 
-function makeProps(
-  week: TrainingWeek,
-  onSetCompletion: (workout: Workout, completed: boolean) => void
-): ComponentProps<typeof WeekView> {
+function makeProps(week: TrainingWeek): ComponentProps<typeof WeekView> {
   return {
     activePlan: null,
     canLoadNewerWeeks: false,
@@ -385,7 +458,7 @@ function makeProps(
     weekStarts: [week.weekStartDate],
     onCreate: vi.fn(),
     onEdit: vi.fn(),
-    onSetCompletion,
+    onEditPerformedSession: vi.fn(),
     onDelete: vi.fn(),
     onDuplicate: vi.fn(),
     onCreateGoal: vi.fn(),

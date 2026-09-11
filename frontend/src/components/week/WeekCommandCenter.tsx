@@ -81,7 +81,12 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
       {viewModel.compactStats?.length ? (
         <div className={`week-command-stats${showGoalOutcomes ? " week-command-stats--outcomes" : ""}`} aria-label={showGoalOutcomes ? "Past week goal outcomes" : "Week summary"}>
           {viewModel.compactStats.map((stat) => (
-            <WeekCommandStat key={stat.label} showOutcome={showGoalOutcomes} stat={stat} />
+            <WeekCommandStat
+              compact={viewModel.mode === "execution"}
+              key={stat.label}
+              showOutcome={showGoalOutcomes}
+              stat={stat}
+            />
           ))}
         </div>
       ) : null}
@@ -91,9 +96,11 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
 }
 
 function WeekCommandStat({
+  compact,
   showOutcome,
   stat
 }: {
+  compact: boolean;
   showOutcome: boolean;
   stat: CompactWeekStatViewModel;
 }) {
@@ -107,6 +114,10 @@ function WeekCommandStat({
   ]
     .filter(Boolean)
     .join(" ");
+  const showDetail = Boolean(
+    stat.detail &&
+      (!compact || stat.label === "Mileage" || stat.severity === "warning" || stat.severity === "danger")
+  );
 
   return (
     <div className={className} aria-label={outcome ? `${stat.label}: ${stat.value}. ${outcomeLabel}.` : undefined}>
@@ -117,7 +128,7 @@ function WeekCommandStat({
       ) : null}
       <span>{stat.label}</span>
       <strong>{stat.value}</strong>
-      {stat.detail ? <small>{stat.detail}</small> : null}
+      {showDetail ? <small>{stat.detail}</small> : null}
     </div>
   );
 }

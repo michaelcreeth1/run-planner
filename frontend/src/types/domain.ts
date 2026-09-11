@@ -249,7 +249,7 @@ export type PerformedSession = {
   prescriptionRevisionId: string | null;
   association: "unmatched" | "suggested" | "associated";
   matchProvenance: "automatic" | "suggested" | "user_confirmed" | null;
-  outcome: "unresolved" | "as_planned" | "modified" | "partial" | "replaced" | "skipped" | "missed";
+  outcome: "unresolved" | "as_planned" | "modified" | "partial" | "replaced" | "skipped" | "missed" | "moved";
   intensityCategory: Workout["intensityCategory"] | null;
   evidence: "activity_summary" | "recorded_laps" | "user_confirmation" | "insufficient_data";
   assessmentNote: string;

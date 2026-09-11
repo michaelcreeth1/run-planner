@@ -51,18 +51,18 @@ export function WeekChecksCard({
 
   const summary = issueCount
     ? issueCount === 1
-      ? "1 check needs attention"
-      : `${issueCount} checks need attention`
+      ? "1 issue"
+      : `${issueCount} issues`
     : pendingCount
-      ? `${pendingCount} check${pendingCount === 1 ? "" : "s"} pending`
-      : "All checks pass";
+      ? `${pendingCount} pending`
+      : "All pass";
 
   return (
     <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="week-checks-header">
         <span className="week-checks-title">
           <ListChecks size={15} />
-          <strong>Week checks</strong>
+          <strong>Checks</strong>
         </span>
         <span className="week-checks-summary">
           <small>{summary}</small>

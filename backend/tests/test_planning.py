@@ -459,7 +459,7 @@ def test_authenticated_users_are_isolated() -> None:
         assert update_response.status_code == 404
 
 
-def test_workout_can_be_completed_without_a_strava_activity() -> None:
+def test_status_only_completion_does_not_create_strava_work() -> None:
     with TestClient(app) as client:
         login(client)
         week = client.get("/api/weeks/current").json()
@@ -489,6 +489,17 @@ def test_workout_can_be_completed_without_a_strava_activity() -> None:
             item for item in refreshed_week["workouts"] if item["id"] == workout["id"]
         )
         assert completed_workout["status"] == "completed_as_planned"
+        assert refreshed_week["performedSessions"] == []
+
+        derive_response = client.post(f"/api/weeks/{week['id']}/goals/derive")
+        assert derive_response.status_code == 200
+        refreshed_week = client.get(f"/api/weeks/{week['weekStartDate']}").json()
+        session_metric = next(
+            evaluation
+            for evaluation in refreshed_week["goalEvaluations"]
+            if evaluation["metricKey"] == "training_session_count"
+        )
+        assert session_metric["actualValue"] == 0
 
 
 def test_get_week_does_not_create_empty_week() -> None:
@@ -1187,7 +1198,8 @@ def test_current_week_mileage_projection_does_not_double_count_completed_today()
         week_end = planning.week_end_for(week_start)
         future_date = today + timedelta(days=1) if today < week_end else None
         future_miles = 20 if future_date else 0
-        target_miles = 26.2 + future_miles
+        completed_miles = 10
+        target_miles = completed_miles + future_miles
 
         planning.create_workout(
             db,
@@ -1220,18 +1232,19 @@ def test_current_week_mileage_projection_does_not_double_count_completed_today()
                 priority="primary",
             ),
         )
-        db.add(
-            StravaActivity(
-                strava_activity_id="activity-current-mileage",
-                athlete_account_id=athlete.id,
-                name="Today actual",
-                sport_type="Run",
-                start_date=datetime.combine(today, datetime.min.time()),
-                start_date_local=datetime.combine(today, datetime.min.time()),
-                distance=1609.344 * 26.2,
-                raw_payload_json={},
-            )
+        activity = StravaActivity(
+            strava_activity_id="activity-current-mileage",
+            athlete_account_id=athlete.id,
+            name="Today actual",
+            sport_type="Run",
+            start_date=datetime.combine(today, datetime.min.time()),
+            start_date_local=datetime.combine(today, datetime.min.time()),
+            distance=1609.344 * completed_miles,
+            raw_payload_json={},
         )
+        db.add(activity)
+        db.flush()
+        planning.integrate_imported_activity(db, activity, payload_changed=True)
         db.commit()
         week = planning.get_week_by_id(db, week.id)
 
@@ -1243,14 +1256,14 @@ def test_current_week_mileage_projection_does_not_double_count_completed_today()
             if evaluation["goal_id"] == mileage_goal.id
         )
         assert mileage_evaluation["status"] == "on_track"
-        assert mileage_evaluation["actual_value"] == 26.2
+        assert mileage_evaluation["actual_value"] == completed_miles
         assert mileage_evaluation["planned_value"] == 10 + future_miles
         assert mileage_evaluation["remaining_planned_value"] == future_miles
     finally:
         db.close()
 
 
-def test_current_week_quality_goal_counts_run_on_planned_quality_day(
+def test_current_week_quality_goal_does_not_count_easy_run_on_quality_day(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = make_session()
@@ -1303,8 +1316,8 @@ def test_current_week_quality_goal_counts_run_on_planned_quality_day(
             for evaluation in serialized["goal_evaluations"]
             if evaluation["goal_id"] == quality_goal["id"]
         )
-        assert quality_evaluation["status"] == "on_track"
-        assert quality_evaluation["actual_value"] == 1
+        assert quality_evaluation["status"] == "at_risk"
+        assert quality_evaluation["actual_value"] == 0
         assert quality_evaluation["remaining_planned_value"] == 0
     finally:
         db.close()

@@ -123,7 +123,11 @@ export function findPriorUsableWeek(weekStartDate: string, weekStack: Record<str
 }
 
 export function isUsablePriorWeek(week: TrainingWeek) {
-  return week.workouts.length > 0 || week.actualActivities.length > 0;
+  return (
+    week.workouts.length > 0 ||
+    (week.performedSessions?.some((session) => session.recordings.length > 0) ?? false) ||
+    week.actualActivities.length > 0
+  );
 }
 
 export function loadBaselineMileageOrNull(week: TrainingWeek | null | undefined) {
@@ -179,6 +183,34 @@ export function draftWorkoutsFromWeek(sourceWeek: TrainingWeek, targetWeekStartD
       const dayOffset = daysBetween(sourceWeek.weekStartDate, workout.plannedDate);
       return workoutDraftFromWorkout(workout, addDays(targetWeekStartDate, dayOffset));
     });
+  }
+
+  const recordedSessions = (sourceWeek.performedSessions ?? []).filter(
+    (session) => session.recordings.length > 0
+  );
+  if (recordedSessions.length) {
+    const activitiesById = new Map(sourceWeek.actualActivities.map((activity) => [activity.id, activity]));
+    return recordedSessions
+      .filter((session) => !["skipped", "missed"].includes(session.outcome))
+      .map((session) => {
+        const dayOffset = daysBetween(sourceWeek.weekStartDate, session.occurredAt.slice(0, 10));
+        const recordingNames = session.recordings
+          .map((recording) => activitiesById.get(recording.stravaActivityId)?.name)
+          .filter((name): name is string => Boolean(name));
+        const sport = session.sport;
+        const distanceMiles = (session.totalDistanceMeters ?? 0) / 1609.344;
+        return {
+          ...defaultForm(addDays(targetWeekStartDate, dayOffset)),
+          draftId: draftId("workout"),
+          title: recordingNames.join(" + ") || `Strava ${sport.replaceAll("_", " ")}`,
+          sport,
+          workoutType: sport === "strength" ? "strength" : sport === "mobility" ? "mobility" : session.intensityCategory === "workout" ? "tempo" : "easy",
+          intensityCategory: session.intensityCategory ?? (sport === "strength" ? "strength" : "easy"),
+          plannedDistance: sport === "run" && distanceMiles > 0 ? String(roundToTenth(distanceMiles)) : "",
+          plannedDuration: session.totalDurationSeconds ? formatDurationSeconds(session.totalDurationSeconds) : "",
+          purpose: "Seeded from reconciled completed work"
+        };
+      });
   }
 
   return sourceWeek.actualActivities.map((activity) => {

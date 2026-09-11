@@ -4,7 +4,7 @@ from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.goal_metrics import GOAL_METRICS, infer_goal_metric, normalized_goal_thresholds
@@ -24,7 +24,6 @@ from app.models.planning import (
 )
 from app.models.strava import StravaActivity
 from app.schemas.planning import (
-    PerformedSessionCreate,
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
     PlanWeekSave,
@@ -41,6 +40,7 @@ from app.services import weekly_metrics
 
 VIRTUAL_WEEK_ID_PREFIX = "virtual-week:"
 VIRTUAL_GOAL_ID_PREFIX = "virtual-goal:"
+AUTOMATIC_RECORDING_GROUP_WINDOW = timedelta(minutes=45)
 DEFAULT_ATHLETE_GOALS: list[dict] = [
     {
         "metric_key": "rest_day_count",
@@ -1382,37 +1382,6 @@ def schedule_template(
     return workout
 
 
-def _replace_session_recordings(db: Session, session: PerformedSession, recordings: list) -> None:
-    seen: set[str] = set()
-    session.recordings.clear()
-    db.flush()
-    for input_recording in recordings:
-        if input_recording.strava_activity_id in seen:
-            raise HTTPException(
-                status_code=422, detail="A recording can only appear once in a session."
-            )
-        seen.add(input_recording.strava_activity_id)
-        activity = db.get(StravaActivity, input_recording.strava_activity_id)
-        if activity is None or activity.athlete_account_id != session.athlete_account_id:
-            raise HTTPException(status_code=404, detail="Activity not found for this athlete.")
-        existing = db.scalars(
-            select(PerformedSessionRecording).where(
-                PerformedSessionRecording.strava_activity_id == activity.id,
-                PerformedSessionRecording.performed_session_id != session.id,
-            )
-        ).first()
-        if existing is not None:
-            raise HTTPException(
-                status_code=409, detail="This recording already belongs to another session."
-            )
-        session.recordings.append(
-            PerformedSessionRecording(
-                strava_activity_id=activity.id,
-                contributes_to_totals=input_recording.contributes_to_totals,
-            )
-        )
-
-
 def session_totals(db: Session, session: PerformedSession) -> tuple[float | None, int | None]:
     activity_ids = [
         recording.strava_activity_id
@@ -1420,16 +1389,19 @@ def session_totals(db: Session, session: PerformedSession) -> tuple[float | None
         if recording.contributes_to_totals
     ]
     activities = (
-        list(db.scalars(select(StravaActivity).where(StravaActivity.id.in_(activity_ids))))
+        list(
+            db.scalars(
+                select(StravaActivity).where(
+                    StravaActivity.id.in_(activity_ids),
+                    StravaActivity.deleted_at.is_(None),
+                )
+            )
+        )
         if activity_ids
         else []
     )
-    distance = sum(activity.distance for activity in activities) + (
-        session.manual_distance_meters or 0
-    )
-    duration = sum(activity.moving_time or 0 for activity in activities) + (
-        session.manual_duration_seconds or 0
-    )
+    distance = sum(activity.distance for activity in activities)
+    duration = sum(activity.moving_time or 0 for activity in activities)
     return (distance or None, duration or None)
 
 
@@ -1464,29 +1436,6 @@ def serialize_performed_session(db: Session, session: PerformedSession) -> dict:
     }
 
 
-def create_performed_session(
-    db: Session, payload: PerformedSessionCreate, athlete_account_id: str
-) -> PerformedSession:
-    session = PerformedSession(
-        athlete_account_id=athlete_account_id,
-        occurred_at=payload.occurred_at,
-        sport=payload.sport,
-        manual_distance_meters=payload.manual_distance_meters,
-        manual_duration_seconds=payload.manual_duration_seconds,
-    )
-    if payload.planned_workout_id:
-        workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
-        session.planned_workout_id = workout.id
-        session.prescription_revision_id = workout.current_prescription_revision_id
-        session.association = "associated"
-        session.match_provenance = "user_confirmed"
-    db.add(session)
-    db.flush()
-    _replace_session_recordings(db, session, payload.recordings)
-    db.commit()
-    return get_performed_session(db, session.id, athlete_account_id)
-
-
 def get_performed_session(
     db: Session, session_id: str, athlete_account_id: str
 ) -> PerformedSession:
@@ -1514,34 +1463,425 @@ def list_performed_sessions(db: Session, athlete_account_id: str) -> list[Perfor
     )
 
 
+def integrate_imported_activity(
+    db: Session,
+    activity: StravaActivity,
+    *,
+    payload_changed: bool,
+) -> dict[str, set]:
+    """Give every imported recording one logical session and a conservative match."""
+    recording = db.scalars(
+        select(PerformedSessionRecording).where(
+            PerformedSessionRecording.strava_activity_id == activity.id
+        )
+    ).first()
+    affected_dates = {activity.start_date_local.date()}
+    affected_week_ids: set[str] = set()
+    affected_workout_ids: set[str] = set()
+    inferred_sport = session_sport_for_activity(activity)
+    inferred_intensity = session_intensity_for_activity(activity)
+
+    if recording is not None:
+        session = db.get(PerformedSession, recording.performed_session_id)
+        if session is None:
+            db.delete(recording)
+            db.flush()
+        else:
+            affected_dates.add(session.occurred_at.date())
+            if session.planned_workout_id:
+                affected_workout_ids.add(session.planned_workout_id)
+                if session.planned_workout is not None:
+                    affected_week_ids.add(session.planned_workout.training_week_id)
+            if payload_changed:
+                if session.outcome == "unresolved":
+                    session.intensity_category = inferred_intensity
+                else:
+                    session.evidence_changed = True
+                if (
+                    len(session.recordings) == 1
+                    and not session.manual_distance_meters
+                    and not session.manual_duration_seconds
+                ):
+                    session.occurred_at = activity.start_date_local
+                    session.sport = inferred_sport
+            if session.association == "unmatched" and session.outcome == "unresolved":
+                candidate = automatic_match_candidate(db, activity, inferred_sport)
+                if candidate is not None:
+                    apply_automatic_match(session, candidate)
+                    affected_week_ids.add(candidate.training_week_id)
+                    affected_workout_ids.add(candidate.id)
+            db.add(session)
+            return {
+                "dates": affected_dates,
+                "week_ids": affected_week_ids,
+                "workout_ids": affected_workout_ids,
+            }
+
+    grouped = automatic_recording_group_candidate(db, activity, inferred_sport)
+    if grouped is not None:
+        session, candidate = grouped
+        db.add(
+            PerformedSessionRecording(
+                performed_session_id=session.id,
+                strava_activity_id=activity.id,
+                contributes_to_totals=True,
+            )
+        )
+        session.occurred_at = min(session.occurred_at, activity.start_date_local)
+        if inferred_intensity in {"workout", "race"}:
+            session.intensity_category = inferred_intensity
+        if session.planned_workout_id is None:
+            apply_automatic_match(session, candidate)
+        session.version += 1
+        affected_dates.add(session.occurred_at.date())
+        affected_week_ids.add(candidate.training_week_id)
+        affected_workout_ids.add(candidate.id)
+        db.add(session)
+        return {
+            "dates": affected_dates,
+            "week_ids": affected_week_ids,
+            "workout_ids": affected_workout_ids,
+        }
+
+    session = PerformedSession(
+        athlete_account_id=activity.athlete_account_id,
+        occurred_at=activity.start_date_local,
+        sport=inferred_sport,
+        intensity_category=inferred_intensity,
+        evidence="activity_summary",
+    )
+    db.add(session)
+    db.flush()
+    db.add(
+        PerformedSessionRecording(
+            performed_session_id=session.id,
+            strava_activity_id=activity.id,
+            contributes_to_totals=True,
+        )
+    )
+
+    candidate = automatic_match_candidate(db, activity, inferred_sport)
+    if candidate is not None:
+        apply_automatic_match(session, candidate)
+        affected_week_ids.add(candidate.training_week_id)
+        affected_workout_ids.add(candidate.id)
+    return {
+        "dates": affected_dates,
+        "week_ids": affected_week_ids,
+        "workout_ids": affected_workout_ids,
+    }
+
+
+def automatic_recording_group_candidate(
+    db: Session, activity: StravaActivity, session_sport: str
+) -> tuple[PerformedSession, PlannedWorkout] | None:
+    """Group only when nearby run recordings jointly fit one unambiguous plan."""
+    if session_sport != "run":
+        return None
+
+    activity_date = activity.start_date_local.date()
+    day_start = datetime.combine(activity_date, time.min)
+    day_end = day_start + timedelta(days=1)
+    sessions = list(
+        db.scalars(
+            select(PerformedSession)
+            .where(
+                PerformedSession.athlete_account_id == activity.athlete_account_id,
+                PerformedSession.occurred_at >= day_start,
+                PerformedSession.occurred_at < day_end,
+                PerformedSession.sport == session_sport,
+                or_(
+                    PerformedSession.match_provenance.is_(None),
+                    PerformedSession.match_provenance == "automatic",
+                ),
+                PerformedSession.outcome.in_(("unresolved", "as_planned")),
+            )
+            .options(selectinload(PerformedSession.recordings))
+        )
+    )
+    if not sessions:
+        return None
+
+    planned_workouts = list(
+        db.scalars(
+            select(PlannedWorkout)
+            .where(
+                PlannedWorkout.athlete_account_id == activity.athlete_account_id,
+                PlannedWorkout.planned_date == activity_date,
+                PlannedWorkout.sport == session_sport,
+                PlannedWorkout.status.in_(("planned", "moved", "completed_as_planned")),
+            )
+            .order_by(PlannedWorkout.created_at)
+        )
+    )
+    associated_workout_ids = set(
+        db.scalars(
+            select(PerformedSession.planned_workout_id).where(
+                PerformedSession.athlete_account_id == activity.athlete_account_id,
+                PerformedSession.association == "associated",
+                PerformedSession.planned_workout_id.is_not(None),
+            )
+        )
+    )
+    available_workouts = [
+        workout for workout in planned_workouts if workout.id not in associated_workout_ids
+    ]
+
+    candidates: list[tuple[PerformedSession, PlannedWorkout]] = []
+    for session in sessions:
+        recording_ids = [recording.strava_activity_id for recording in session.recordings]
+        if not recording_ids:
+            continue
+        recorded_activities = list(
+            db.scalars(select(StravaActivity).where(StravaActivity.id.in_(recording_ids)))
+        )
+        if not any(recordings_are_nearby(existing, activity) for existing in recorded_activities):
+            continue
+        contributing_ids = {
+            recording.strava_activity_id
+            for recording in session.recordings
+            if recording.contributes_to_totals
+        }
+        combined_distance = activity.distance + sum(
+            existing.distance
+            for existing in recorded_activities
+            if existing.id in contributing_ids
+        )
+        if session.planned_workout_id:
+            workout = next(
+                (
+                    planned
+                    for planned in planned_workouts
+                    if planned.id == session.planned_workout_id
+                ),
+                None,
+            )
+            if workout is not None and recording_group_matches_workout(
+                combined_distance, workout
+            ):
+                candidates.append((session, workout))
+            continue
+        if len(available_workouts) == 1 and recording_group_matches_workout(
+            combined_distance, available_workouts[0]
+        ):
+            candidates.append((session, available_workouts[0]))
+
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def recordings_are_nearby(left: StravaActivity, right: StravaActivity) -> bool:
+    left_end = left.start_date_local + timedelta(
+        seconds=left.moving_time or left.elapsed_time or 0
+    )
+    right_end = right.start_date_local + timedelta(
+        seconds=right.moving_time or right.elapsed_time or 0
+    )
+    gap = max(
+        timedelta(0),
+        left.start_date_local - right_end,
+        right.start_date_local - left_end,
+    )
+    return gap <= AUTOMATIC_RECORDING_GROUP_WINDOW
+
+
+def recording_group_matches_workout(
+    distance_meters: float, workout: PlannedWorkout
+) -> bool:
+    if workout.planned_distance is None:
+        return False
+    actual_miles = distance_meters / 1609.344
+    tolerance = max(0.5, workout.planned_distance * 0.2)
+    return abs(actual_miles - workout.planned_distance) <= tolerance
+
+
+def apply_automatic_match(session: PerformedSession, candidate: PlannedWorkout) -> None:
+    session.planned_workout_id = candidate.id
+    session.prescription_revision_id = candidate.current_prescription_revision_id
+    session.association = "associated"
+    session.match_provenance = "automatic"
+    if not weekly_metrics.is_quality_workout(candidate):
+        if session.intensity_category in {"workout", "race"}:
+            session.outcome = "modified"
+        else:
+            session.outcome = "as_planned"
+            session.intensity_category = candidate.intensity_category
+
+
+def automatic_match_candidate(
+    db: Session, activity: StravaActivity, session_sport: str
+) -> PlannedWorkout | None:
+    activity_date = activity.start_date_local.date()
+    candidates = list(
+        db.scalars(
+            select(PlannedWorkout)
+            .where(
+                PlannedWorkout.athlete_account_id == activity.athlete_account_id,
+                PlannedWorkout.planned_date == activity_date,
+                PlannedWorkout.sport != "rest",
+                PlannedWorkout.status.in_(("planned", "moved")),
+            )
+            .order_by(PlannedWorkout.created_at)
+        )
+    )
+    available: list[PlannedWorkout] = []
+    for workout in candidates:
+        if workout.sport != session_sport:
+            continue
+        already_matched = db.scalars(
+            select(PerformedSession.id).where(
+                PerformedSession.athlete_account_id == activity.athlete_account_id,
+                PerformedSession.planned_workout_id == workout.id,
+                PerformedSession.association == "associated",
+            )
+        ).first()
+        if already_matched is None:
+            available.append(workout)
+    if len(available) != 1:
+        return None
+    candidate = available[0]
+    if session_sport != "run" or candidate.planned_distance is None:
+        return candidate
+    actual_miles = activity.distance / 1609.344
+    tolerance = max(0.5, candidate.planned_distance * 0.2)
+    return candidate if abs(actual_miles - candidate.planned_distance) <= tolerance else None
+
+
+def session_sport_for_activity(activity: StravaActivity) -> str:
+    sport = weekly_metrics.normalized_sport(activity.sport_type)
+    if sport in weekly_metrics.RUN_SPORTS:
+        return "run"
+    if weekly_metrics.is_strength_activity(activity):
+        return "strength"
+    if sport in {"ride", "virtualride", "swim", "elliptical", "rowing"}:
+        return "cross_training"
+    return "other"
+
+
+def session_intensity_for_activity(activity: StravaActivity) -> str:
+    if weekly_metrics.is_strength_activity(activity):
+        return "strength"
+    if weekly_metrics.is_quality_activity(activity):
+        return "workout"
+    if weekly_metrics.is_run_activity(activity):
+        return "easy"
+    return "moderate"
+
+
 def reconcile_session(
     db: Session, session_id: str, payload: ReconciliationUpdate, athlete_account_id: str
 ) -> PerformedSession:
     session = get_performed_session(db, session_id, athlete_account_id)
+    affected_dates = {session.occurred_at.date()}
+    affected_week_ids: set[str] = set()
+    affected_workout_ids: set[str] = set()
+    if session.planned_workout is not None:
+        affected_week_ids.add(session.planned_workout.training_week_id)
+    if session.planned_workout_id is not None:
+        affected_workout_ids.add(session.planned_workout_id)
     if payload.expected_version is not None and payload.expected_version != session.version:
         raise HTTPException(
             status_code=409, detail="This session changed in another editor. Reload before saving."
         )
-    if payload.recordings is not None:
-        _replace_session_recordings(db, session, payload.recordings)
+    matched_workout: PlannedWorkout | None = None
     if payload.planned_workout_id is None:
         session.planned_workout_id = None
         session.prescription_revision_id = None
         session.association = "unmatched"
-        session.match_provenance = None
+        session.match_provenance = "user_confirmed"
+        session.outcome = "unresolved"
     else:
-        workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
-        session.planned_workout_id = workout.id
-        session.prescription_revision_id = workout.current_prescription_revision_id
-        session.association = payload.association
-        session.match_provenance = payload.match_provenance
-    session.outcome = payload.outcome
-    session.intensity_category = payload.intensity_category
-    session.evidence = payload.evidence
-    session.assessment_note = payload.assessment_note
+        matched_workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
+        conflicting_session = db.scalars(
+            select(PerformedSession)
+            .where(
+                PerformedSession.athlete_account_id == athlete_account_id,
+                PerformedSession.planned_workout_id == matched_workout.id,
+                PerformedSession.association == "associated",
+                PerformedSession.id != session.id,
+            )
+            .options(selectinload(PerformedSession.recordings))
+        ).first()
+        if conflicting_session is not None:
+            affected_dates.add(conflicting_session.occurred_at.date())
+            session.occurred_at = min(session.occurred_at, conflicting_session.occurred_at)
+            if conflicting_session.intensity_category in {"workout", "race"}:
+                session.intensity_category = conflicting_session.intensity_category
+            for recording in list(conflicting_session.recordings):
+                recording.performed_session = session
+            db.flush()
+            db.delete(conflicting_session)
+        session.planned_workout_id = matched_workout.id
+        session.prescription_revision_id = matched_workout.current_prescription_revision_id
+        session.association = "associated"
+        session.match_provenance = "user_confirmed"
+        purpose_mismatch = (
+            weekly_metrics.is_quality_workout(matched_workout)
+            and session.intensity_category not in {"workout", "race"}
+        )
+        if session.sport != matched_workout.sport or purpose_mismatch:
+            session.outcome = "replaced"
+        elif session.occurred_at.date() != matched_workout.planned_date:
+            session.outcome = "moved"
+        else:
+            session.outcome = "as_planned"
+        if session.outcome in {"as_planned", "moved"}:
+            session.intensity_category = matched_workout.intensity_category
+        affected_week_ids.add(matched_workout.training_week_id)
+        affected_workout_ids.add(matched_workout.id)
+    session.evidence = "user_confirmation"
+    session.evidence_changed = False
     session.version += 1
     db.commit()
+    for workout_id in affected_workout_ids:
+        sync_workout_status_from_sessions(db, workout_id, athlete_account_id)
+    recalculate_impacted_weeks(
+        db,
+        affected_week_ids,
+        athlete_account_id,
+        refresh_existing_workout_goals=False,
+    )
+    recalculate_weeks_for_dates(db, athlete_account_id, affected_dates)
     return get_performed_session(db, session.id, athlete_account_id)
+
+
+SESSION_OUTCOME_WORKOUT_STATUS = {
+    "as_planned": "completed_as_planned",
+    "modified": "completed_modified",
+    "partial": "partial",
+    "replaced": "replaced",
+    "skipped": "skipped_intentionally",
+    "missed": "missed",
+    "moved": "completed_modified",
+}
+
+
+def sync_workout_status_from_sessions(
+    db: Session, workout_id: str, athlete_account_id: str
+) -> None:
+    workout = db.scalars(
+        select(PlannedWorkout).where(
+            PlannedWorkout.id == workout_id,
+            PlannedWorkout.athlete_account_id == athlete_account_id,
+        )
+    ).first()
+    if workout is None:
+        return
+    matched_session = db.scalars(
+        select(PerformedSession)
+        .where(
+            PerformedSession.athlete_account_id == athlete_account_id,
+            PerformedSession.planned_workout_id == workout_id,
+            PerformedSession.association == "associated",
+            PerformedSession.outcome.in_(tuple(SESSION_OUTCOME_WORKOUT_STATUS)),
+        )
+        .order_by(PerformedSession.updated_at.desc())
+    ).first()
+    if matched_session is not None:
+        workout.status = SESSION_OUTCOME_WORKOUT_STATUS[matched_session.outcome]
+    elif workout.status in set(SESSION_OUTCOME_WORKOUT_STATUS.values()):
+        workout.status = "planned"
+    db.add(workout)
+    db.commit()
 
 
 def match_suggestions(db: Session, session_id: str, athlete_account_id: str) -> list[dict]:
@@ -1557,8 +1897,8 @@ def match_suggestions(db: Session, session_id: str, athlete_account_id: str) -> 
             select(PlannedWorkout)
             .where(
                 PlannedWorkout.athlete_account_id == athlete_account_id,
-                PlannedWorkout.planned_date >= session_date - timedelta(days=1),
-                PlannedWorkout.planned_date <= session_date + timedelta(days=1),
+                PlannedWorkout.planned_date >= session_date - timedelta(days=7),
+                PlannedWorkout.planned_date <= session_date + timedelta(days=7),
             )
             .order_by(PlannedWorkout.planned_date, PlannedWorkout.created_at)
         )
@@ -1586,8 +1926,10 @@ def match_suggestions(db: Session, session_id: str, athlete_account_id: str) -> 
         if workout.planned_date == session_date:
             reason = "Same day and compatible sport. Review to confirm the intended workout."
         else:
-            direction = "previous" if workout.planned_date < session_date else "next"
-            reason = f"Compatible {direction}-day workout. Review before associating it."
+            reason = (
+                f"Compatible workout planned for {workout.planned_date.isoformat()}. "
+                "Review before marking it moved."
+            )
         suggestions.append(
             {
                 "planned_workout_id": workout.id,
@@ -1768,6 +2110,7 @@ def complete_week_review(
         list(week.workouts),
         actual_activities,
         today=today_for_timezone(week.athlete.timezone if week.athlete else None),
+        sessions=performed_sessions_for_week(db, week),
     )
     existing = {
         (snapshot.metric_key, snapshot.basis): snapshot
@@ -1899,13 +2242,35 @@ def recalculate_impacted_weeks(
     db: Session,
     week_ids: set[str],
     athlete_account_id: str | None = None,
+    *,
+    refresh_existing_workout_goals: bool = True,
 ) -> None:
     for week_id in week_ids:
         recalculate_week(
             db,
             get_week_by_id(db, week_id, athlete_account_id),
-            refresh_existing_workout_goals=True,
+            refresh_existing_workout_goals=refresh_existing_workout_goals,
         )
+
+
+def recalculate_weeks_for_dates(
+    db: Session,
+    athlete_account_id: str,
+    dates: set[date],
+) -> None:
+    if not dates:
+        return
+    week_starts = {week_start_for(value) for value in dates}
+    weeks = list(
+        db.scalars(
+            select(TrainingWeek).where(
+                TrainingWeek.athlete_account_id == athlete_account_id,
+                TrainingWeek.week_start_date.in_(tuple(week_starts)),
+            )
+        )
+    )
+    for week in weeks:
+        recalculate_week(db, week, refresh_existing_workout_goals=False)
 
 
 def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]:
@@ -2120,6 +2485,8 @@ def week_totals(
     )
     actual_time = sum(activity.moving_time or 0 for activity in ungrouped_activities)
     for session in sessions:
+        if session.outcome in {"skipped", "missed"}:
+            continue
         distance, duration = session_totals_for_activities(session, activities)
         if session.sport == "run":
             actual_meters += distance or 0
@@ -2141,12 +2508,8 @@ def session_totals_for_activities(
         for recording in session.recordings
         if recording.contributes_to_totals and recording.strava_activity_id in by_id
     ]
-    distance = sum(activity.distance for activity in recordings) + (
-        session.manual_distance_meters or 0
-    )
-    duration = sum(activity.moving_time or 0 for activity in recordings) + (
-        session.manual_duration_seconds or 0
-    )
+    distance = sum(activity.distance for activity in recordings)
+    duration = sum(activity.moving_time or 0 for activity in recordings)
     return distance or None, duration or None
 
 

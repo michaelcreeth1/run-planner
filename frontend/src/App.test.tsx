@@ -1012,6 +1012,151 @@ describe("App mutation handling", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
+  it("edits a Strava association with one dropdown and a match-only request", async () => {
+    const user = userEvent.setup();
+    const workout = currentWorkout();
+    const performedSession = {
+      id: "session-1",
+      athleteAccountId: "profile-1",
+      occurredAt: `${workout.plannedDate}T07:00:00`,
+      sport: "run",
+      recordings: [{ stravaActivityId: "activity-1", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: workout.id,
+      prescriptionRevisionId: null,
+      association: "associated",
+      matchProvenance: "automatic",
+      outcome: "as_planned",
+      intensityCategory: "easy",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 3,
+      totalDistanceMeters: 8046.72,
+      totalDurationSeconds: 2700
+    };
+    let matchPayload: unknown = null;
+    useAuthenticatedAppHandlers();
+    server.use(
+      http.get(apiUrl("/api/weeks/:weekStartDate"), ({ params }) => {
+        const start = String(params.weekStartDate);
+        return HttpResponse.json({
+          ...emptyWeek(start),
+          workouts: start === workout.plannedDate ? [workout] : [],
+          performedSessions: start === workout.plannedDate ? [performedSession] : [],
+          actualActivities: start === workout.plannedDate ? [{
+            id: "activity-1",
+            stravaActivityId: "strava-1",
+            name: "Morning Run",
+            sportType: "Run",
+            startDateLocal: performedSession.occurredAt,
+            activityDate: workout.plannedDate,
+            distance: 8046.72,
+            distanceMiles: 5,
+            movingTime: 2700,
+            averageHeartrate: null
+          }] : []
+        });
+      }),
+      http.patch(apiUrl(`/api/planned-workouts/${workout.id}`), () => HttpResponse.json(workout)),
+      http.put(apiUrl(`/api/performed-sessions/${performedSession.id}/reconciliation`), async ({ request }) => {
+        matchPayload = await request.json();
+        return HttpResponse.json(performedSession);
+      })
+    );
+    render(<App />);
+    await signIn(user);
+
+    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
+    expect(screen.getByLabelText("Strava match")).toHaveValue(workout.id);
+    expect(screen.queryByText("Outcome")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actual intensity")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(matchPayload).toEqual({
+      plannedWorkoutId: workout.id,
+      expectedVersion: 3
+    }));
+  });
+
+  it("saves an unmatched Strava activity as soon as a plan is selected", async () => {
+    const user = userEvent.setup();
+    const workout = currentWorkout();
+    const performedSession = {
+      id: "unmatched-session",
+      athleteAccountId: "profile-1",
+      occurredAt: `${workout.plannedDate}T07:00:00`,
+      sport: "run",
+      recordings: [{ stravaActivityId: "unmatched-activity", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: null,
+      prescriptionRevisionId: null,
+      association: "unmatched",
+      matchProvenance: null,
+      outcome: "unresolved",
+      intensityCategory: "easy",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 2,
+      totalDistanceMeters: 8046.72,
+      totalDurationSeconds: 2700
+    };
+    let matchPayload: unknown = null;
+    useAuthenticatedAppHandlers();
+    server.use(
+      http.get(apiUrl("/api/weeks/:weekStartDate"), ({ params }) => {
+        const start = String(params.weekStartDate);
+        return HttpResponse.json({
+          ...emptyWeek(start),
+          workouts: start === workout.plannedDate ? [workout] : [],
+          performedSessions: start === workout.plannedDate ? [performedSession] : [],
+          actualActivities: start === workout.plannedDate ? [{
+            id: "unmatched-activity",
+            stravaActivityId: "strava-unmatched",
+            name: "Monday Run",
+            sportType: "Run",
+            startDateLocal: performedSession.occurredAt,
+            activityDate: workout.plannedDate,
+            distance: 8046.72,
+            distanceMiles: 5,
+            movingTime: 2700,
+            averageHeartrate: null
+          }] : []
+        });
+      }),
+      http.put(apiUrl(`/api/performed-sessions/${performedSession.id}/reconciliation`), async ({ request }) => {
+        matchPayload = await request.json();
+        return HttpResponse.json({
+          ...performedSession,
+          plannedWorkoutId: workout.id,
+          association: "associated",
+          matchProvenance: "user_confirmed",
+          outcome: "as_planned",
+          version: 3
+        });
+      })
+    );
+    render(<App />);
+    await signIn(user);
+
+    await user.click(await screen.findByRole("button", { name: "Actions for Monday Run" }));
+    await user.click(screen.getByRole("button", { name: "Edit match" }));
+    expect(screen.getByRole("heading", { name: "Edit Strava match" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Strava match"), workout.id);
+
+    await waitFor(() => expect(matchPayload).toEqual({
+      plannedWorkoutId: workout.id,
+      expectedVersion: 2
+    }));
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Edit Strava match" })).not.toBeInTheDocument();
+    });
+  });
+
   it("saves an existing scheduled workout to the workout library", async () => {
     const user = userEvent.setup();
     const onSaveToLibrary = vi.fn();

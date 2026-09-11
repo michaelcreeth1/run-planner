@@ -4,6 +4,7 @@ export function isCompletelyEmptyWeek(week: TrainingWeek) {
   return (
     week.workouts.length === 0 &&
     week.actualActivities.length === 0 &&
+    !(week.performedSessions?.some((session) => session.recordings.length > 0) ?? false) &&
     week.actualMileage === 0 &&
     week.goals.length === 0 &&
     week.notes.trim().length === 0 &&

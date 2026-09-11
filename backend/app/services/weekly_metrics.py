@@ -28,9 +28,16 @@ QUALITY_KEYWORDS = (
     "repeat",
     "fartlek",
 )
-CALCULATOR_VERSION = 1
-
-
+CALCULATOR_VERSION = 2
+RESOLVED_SESSION_OUTCOMES = {
+    "as_planned",
+    "modified",
+    "partial",
+    "replaced",
+    "skipped",
+    "missed",
+    "moved",
+}
 @dataclass(frozen=True)
 class SessionOccurrence:
     """Activity-shaped, one-per-session value used by every weekly metric."""
@@ -41,6 +48,9 @@ class SessionOccurrence:
     distance: float
     moving_time: int | None
     name: str
+    planned_workout_id: str | None
+    outcome: str
+    intensity_category: str | None
 
 
 @dataclass(frozen=True)
@@ -69,34 +79,38 @@ def calculate_weekly_metrics(
     today: date,
     sessions: list[object] | None = None,
 ) -> dict[GoalMetricKey, WeeklyMetricMeasurement]:
-    activities = effective_training_occurrences(activities, sessions or [])
+    sessions = [
+        session for session in sessions or [] if getattr(session, "recordings", [])
+    ]
+    activities = effective_training_occurrences(activities, sessions)
+    workouts_by_id = {workout.id: workout for workout in workouts}
+    resolved_workout_ids = {
+        session.planned_workout_id
+        for session in sessions
+        if getattr(session, "association", None) == "associated"
+        and getattr(session, "planned_workout_id", None)
+        and getattr(session, "outcome", "unresolved") in RESOLVED_SESSION_OUTCOMES
+    }
     run_workouts = [workout for workout in workouts if workout.sport == "run"]
     run_activities = [activity for activity in activities if is_run_activity(activity)]
     training_workouts = [workout for workout in workouts if workout.sport != "rest"]
     training_activities = [activity for activity in activities if is_training_activity(activity)]
     quality_workouts = [workout for workout in workouts if is_quality_workout(workout)]
-    quality_activities = [activity for activity in activities if is_quality_activity(activity)]
+    quality_activities = [
+        activity
+        for activity in activities
+        if is_quality_occurrence(activity, workouts_by_id)
+    ]
     strength_workouts = [workout for workout in workouts if is_strength_workout(workout)]
     strength_activities = [activity for activity in activities if is_strength_activity(activity)]
 
-    completed_run_dates = {activity.start_date_local.date() for activity in run_activities}
     actual_training_dates = {activity.start_date_local.date() for activity in training_activities}
-    manually_completed_training_workouts = [
-        workout
-        for workout in training_workouts
-        if is_manually_completed_workout(workout)
-        and workout.planned_date not in actual_training_dates
-    ]
-    actual_training_dates |= {
-        workout.planned_date for workout in manually_completed_training_workouts
-    }
     planned_training_dates = {workout.planned_date for workout in training_workouts}
     remaining_training_workouts = [
         workout
         for workout in training_workouts
         if workout.planned_date >= today
-        and workout.planned_date not in actual_training_dates
-        and not is_manually_completed_workout(workout)
+        and workout.id not in resolved_workout_ids
     ]
     projected_training_dates = actual_training_dates | {
         workout.planned_date for workout in remaining_training_workouts
@@ -104,43 +118,23 @@ def calculate_weekly_metrics(
 
     planned_quality_dates = {workout.planned_date for workout in quality_workouts}
     actual_quality_dates = {activity.start_date_local.date() for activity in quality_activities}
-    # A normal run logged on a planned hard day still fulfills that hard day.
-    actual_quality_dates |= {
-        activity.start_date_local.date()
-        for activity in run_activities
-        if activity.start_date_local.date() in planned_quality_dates
-    }
-    actual_quality_dates |= {
-        workout.planned_date
-        for workout in quality_workouts
-        if is_manually_completed_workout(workout)
-    }
     remaining_quality_dates = {
         workout.planned_date
         for workout in quality_workouts
         if workout.planned_date >= today
-        and workout.planned_date not in actual_quality_dates
-        and not is_manually_completed_workout(workout)
+        and workout.id not in resolved_workout_ids
     }
     projected_quality_dates = actual_quality_dates | remaining_quality_dates
 
-    manually_completed_run_workouts = [
-        workout
-        for workout in run_workouts
-        if is_manually_completed_workout(workout)
-        and workout.planned_date not in completed_run_dates
-    ]
     remaining_run_workouts = [
         workout
         for workout in run_workouts
         if workout.planned_date >= today
-        and workout.planned_date not in completed_run_dates
-        and not is_manually_completed_workout(workout)
+        and workout.id not in resolved_workout_ids
     ]
     planned_miles = round(sum(workout.planned_distance or 0 for workout in run_workouts), 1)
     actual_miles = round(
-        sum(activity.distance / 1609.344 for activity in run_activities)
-        + sum(workout.planned_distance or 0 for workout in manually_completed_run_workouts),
+        sum(activity.distance / 1609.344 for activity in run_activities),
         1,
     )
     remaining_miles = round(
@@ -153,8 +147,7 @@ def calculate_weekly_metrics(
     )
     actual_longest = round(
         max(
-            [activity.distance / 1609.344 for activity in run_activities]
-            + [workout.planned_distance or 0 for workout in manually_completed_run_workouts],
+            [activity.distance / 1609.344 for activity in run_activities],
             default=0,
         ),
         1,
@@ -165,22 +158,11 @@ def calculate_weekly_metrics(
     )
     projected_longest = max(actual_longest, remaining_longest)
 
-    actual_strength_dates = {activity.start_date_local.date() for activity in strength_activities}
-    manually_completed_strength_workouts = [
-        workout
-        for workout in strength_workouts
-        if is_manually_completed_workout(workout)
-        and workout.planned_date not in actual_strength_dates
-    ]
     remaining_strength_workouts = [
         workout
         for workout in strength_workouts
         if workout.planned_date >= today
-        and not is_manually_completed_workout(workout)
-        and not any(
-            activity.start_date_local.date() == workout.planned_date
-            for activity in strength_activities
-        )
+        and workout.id not in resolved_workout_ids
     ]
 
     return {
@@ -196,10 +178,8 @@ def calculate_weekly_metrics(
         "training_session_count": measurement(
             "training_session_count",
             len(training_workouts),
-            len(training_activities) + len(manually_completed_training_workouts),
-            len(training_activities)
-            + len(manually_completed_training_workouts)
-            + len(remaining_training_workouts),
+            len(training_activities),
+            len(training_activities) + len(remaining_training_workouts),
             remaining=len(remaining_training_workouts),
             workouts=training_workouts,
             activities=training_activities,
@@ -233,10 +213,8 @@ def calculate_weekly_metrics(
         "strength_session_count": measurement(
             "strength_session_count",
             len(strength_workouts),
-            len(strength_activities) + len(manually_completed_strength_workouts),
-            len(strength_activities)
-            + len(manually_completed_strength_workouts)
-            + len(remaining_strength_workouts),
+            len(strength_activities),
+            len(strength_activities) + len(remaining_strength_workouts),
             remaining=len(remaining_strength_workouts),
             workouts=strength_workouts,
             activities=strength_activities,
@@ -317,13 +295,27 @@ def is_strength_workout(workout: PlannedWorkout) -> bool:
     }
 
 
-def is_manually_completed_workout(workout: PlannedWorkout) -> bool:
-    return workout.status in {"completed_as_planned", "completed_modified", "partial"}
-
-
 def is_quality_activity(activity: StravaActivity) -> bool:
     name = activity.name.lower()
     return is_run_activity(activity) and any(keyword in name for keyword in QUALITY_KEYWORDS)
+
+
+def is_quality_occurrence(
+    activity: StravaActivity | SessionOccurrence,
+    workouts_by_id: dict[str, PlannedWorkout],
+) -> bool:
+    if not is_run_activity(activity):
+        return False
+    if not isinstance(activity, SessionOccurrence):
+        return is_quality_activity(activity)
+    if activity.intensity_category in {"workout", "race"}:
+        return True
+    matched_workout = workouts_by_id.get(activity.planned_workout_id or "")
+    return (
+        activity.outcome in {"as_planned", "moved"}
+        and matched_workout is not None
+        and is_quality_workout(matched_workout)
+    )
 
 
 def is_quality_workout(workout: PlannedWorkout) -> bool:
@@ -359,17 +351,23 @@ def effective_training_occurrences(
         activity for activity in activities if activity.id not in grouped_ids
     ]
     for session in sessions:
+        linked_recordings = [
+            by_id[recording.strava_activity_id]
+            for recording in getattr(session, "recordings", [])
+            if recording.strava_activity_id in by_id
+        ]
         recordings = [
             by_id[recording.strava_activity_id]
             for recording in getattr(session, "recordings", [])
             if recording.contributes_to_totals and recording.strava_activity_id in by_id
         ]
-        distance = sum(activity.distance for activity in recordings) + (
-            getattr(session, "manual_distance_meters", None) or 0
-        )
-        duration = sum(activity.moving_time or 0 for activity in recordings) + (
-            getattr(session, "manual_duration_seconds", None) or 0
-        )
+        distance = sum(activity.distance for activity in recordings)
+        duration = sum(activity.moving_time or 0 for activity in recordings)
+        outcome = getattr(session, "outcome", "unresolved")
+        if outcome in {"skipped", "missed"}:
+            continue
+        if not linked_recordings:
+            continue
         effective.append(
             SessionOccurrence(
                 id=session.id,
@@ -380,6 +378,9 @@ def effective_training_occurrences(
                 name="workout"
                 if getattr(session, "intensity_category", None) in {"workout", "race"}
                 else "session",
+                planned_workout_id=getattr(session, "planned_workout_id", None),
+                outcome=outcome,
+                intensity_category=getattr(session, "intensity_category", None),
             )
         )
     return effective

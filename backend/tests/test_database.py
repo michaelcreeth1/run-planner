@@ -52,6 +52,17 @@ def test_all_dialect_migrations_are_recorded_and_idempotent() -> None:
     assert applied == expected
 
 
+def test_postgresql_migration_comments_do_not_break_statement_splitting() -> None:
+    offenders = [
+        f"{path.name}:{line_number}"
+        for _, path in migration_files("postgresql")
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1)
+        if line.lstrip().startswith("--") and ";" in line
+    ]
+
+    assert offenders == []
+
+
 def test_database_enforces_foreign_keys() -> None:
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(

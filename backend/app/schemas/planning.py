@@ -55,7 +55,14 @@ PrescriptionExtent = Literal["distance", "duration", "open"]
 PrescriptionTargetKind = Literal["pace", "heart_rate", "rpe", "guidance"]
 SessionAssociation = Literal["unmatched", "suggested", "associated"]
 SessionOutcome = Literal[
-    "unresolved", "as_planned", "modified", "partial", "replaced", "skipped", "missed"
+    "unresolved",
+    "as_planned",
+    "modified",
+    "partial",
+    "replaced",
+    "skipped",
+    "missed",
+    "moved",
 ]
 MatchProvenance = Literal["automatic", "suggested", "user_confirmed"]
 EvidenceLevel = Literal[
@@ -330,19 +337,10 @@ class PerformedSessionBase(ApiModel):
     manual_duration_seconds: int | None = Field(default=None, ge=0)
 
 
-class PerformedSessionCreate(PerformedSessionBase):
-    planned_workout_id: str | None = None
-
-
 class ReconciliationUpdate(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
     planned_workout_id: str | None = None
-    recordings: list[SessionRecordingInput] | None = None
-    association: SessionAssociation = "associated"
-    match_provenance: MatchProvenance = "user_confirmed"
-    outcome: SessionOutcome = "unresolved"
-    intensity_category: IntensityCategory | None = None
-    evidence: EvidenceLevel = "user_confirmation"
-    assessment_note: str = ""
     expected_version: int | None = Field(default=None, ge=1)
 
 

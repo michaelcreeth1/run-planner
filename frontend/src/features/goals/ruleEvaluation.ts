@@ -277,7 +277,7 @@ function evaluateRestDays(rule: PlanRule, week: TrainingWeek, basis: EvaluationB
   const word = basis === "actual" ? "taken" : "planned";
   const activeDates =
     basis === "actual"
-      ? new Set(week.actualActivities.map((activity) => activity.activityDate))
+      ? new Set(actualTrainingDates(week))
       : new Set(week.workouts.filter((workout) => workout.sport !== "rest").map((workout) => workout.plannedDate));
   const restDays = 7 - activeDates.size;
   const metrics = withNote(`${restDays} rest ${pluralDay(restDays)} ${word} · minimum ${formatNumber(minimum)}`, note);
@@ -582,24 +582,91 @@ function plannedLongRunCandidate(week: TrainingWeek): LongRunCandidate | null {
 }
 
 function longestActualRun(week: TrainingWeek): LongRunCandidate | null {
-  const activity = week.actualActivities
-    .filter((candidate) => /run/i.test(candidate.sportType) && candidate.distanceMiles > 0)
-    .sort((left, right) => right.distanceMiles - left.distanceMiles)[0];
-  return activity ? { distance: activity.distanceMiles, title: activity.name, workoutId: null } : null;
+  const sessions = week.performedSessions ?? [];
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
+  const sessionRuns: LongRunCandidate[] = sessions
+    .filter(
+      (session) =>
+        session.sport === "run" &&
+        session.recordings.length > 0 &&
+        !["skipped", "missed"].includes(session.outcome) &&
+        (session.totalDistanceMeters ?? 0) > 0
+    )
+    .map((session) => {
+      const workout = week.workouts.find((item) => item.id === session.plannedWorkoutId);
+      return {
+        distance: (session.totalDistanceMeters ?? 0) / 1609.344,
+        title: workout?.title ?? "Completed run",
+        workoutId: workout?.id ?? null
+      };
+    });
+  const ungroupedRuns: LongRunCandidate[] = week.actualActivities
+    .filter(
+      (activity) =>
+        !groupedActivityIds.has(activity.id) &&
+        /run/i.test(activity.sportType) &&
+        activity.distanceMiles > 0
+    )
+    .map((activity) => ({ distance: activity.distanceMiles, title: activity.name, workoutId: null }));
+  return [...sessionRuns, ...ungroupedRuns].sort((left, right) => right.distance - left.distance)[0] ?? null;
 }
 
 function actualHardDates(week: TrainingWeek) {
-  return Array.from(
-    new Set(
-      week.actualActivities
-        .filter((activity) => QUALITY_NAME_PATTERN.test(`${activity.sportType} ${activity.name}`))
-        .map((activity) => activity.activityDate)
+  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
+  const workoutsById = new Map(week.workouts.map((workout) => [workout.id, workout]));
+  const sessionDates = sessions
+    .filter((session) => {
+      if (["skipped", "missed"].includes(session.outcome)) return false;
+      if (["workout", "race"].includes(session.intensityCategory ?? "")) return true;
+      const workout = workoutsById.get(session.plannedWorkoutId ?? "");
+      return Boolean(
+        workout &&
+        ["as_planned", "moved"].includes(session.outcome) &&
+        isQualityWorkout(workout)
+      );
+    })
+    .map((session) => session.occurredAt.slice(0, 10));
+  const ungroupedActivityDates = week.actualActivities
+    .filter(
+      (activity) =>
+        !groupedActivityIds.has(activity.id) &&
+        QUALITY_NAME_PATTERN.test(`${activity.sportType} ${activity.name}`)
     )
+    .map((activity) => activity.activityDate);
+  return Array.from(
+    new Set([...sessionDates, ...ungroupedActivityDates])
   ).sort();
 }
 
 function hasActualWork(week: TrainingWeek) {
-  return week.actualActivities.length > 0 || week.actualMileage > 0;
+  return (
+    (week.performedSessions?.some((session) => session.recordings.length > 0) ?? false) ||
+    week.actualActivities.length > 0 ||
+    week.actualMileage > 0
+  );
+}
+
+function actualTrainingDates(week: TrainingWeek) {
+  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
+  return [
+    ...sessions
+      .filter(
+        (session) =>
+          !["skipped", "missed"].includes(session.outcome)
+      )
+      .map((session) => session.occurredAt.slice(0, 10)),
+    ...week.actualActivities
+      .filter((activity) => !groupedActivityIds.has(activity.id))
+      .map((activity) => activity.activityDate)
+  ];
 }
 
 function hasBackToBackDates(sortedDates: string[]) {

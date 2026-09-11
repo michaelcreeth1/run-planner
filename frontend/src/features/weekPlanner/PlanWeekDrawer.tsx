@@ -125,10 +125,10 @@ export function PlanWeekDrawer({
     draft.weekState === "past"
       ? "Review week"
       : draft.weekState === "current" && draft.hasExistingPlan
-        ? "Adjust rest of week"
-      : draft.hasExistingPlan
-        ? "Edit week plan"
-        : "Plan week";
+        ? "Adjust week"
+        : draft.hasExistingPlan
+          ? "Edit week plan"
+          : "Plan week";
 
   function handleClose() {
     if (isSaving) {
@@ -779,14 +779,13 @@ function isCompletedDraftWorkout(workout: PlanWeekWorkoutDraft, sourceWeek: Trai
   if (!sourceWorkout) {
     return false;
   }
-  if (sourceWorkout.status.startsWith("completed") || sourceWorkout.status === "partial") {
-    return true;
-  }
-  return (
-    sourceWorkout.sport === "run" &&
-    sourceWeek?.actualActivities.some(
-      (activity) => activity.activityDate === sourceWorkout.plannedDate && activity.sportType.toLowerCase().includes("run")
-    )
+  const sessions = sourceWeek?.performedSessions ?? [];
+  return sessions.some(
+    (session) =>
+      session.recordings.length > 0 &&
+      session.association === "associated" &&
+      session.plannedWorkoutId === sourceWorkout.id &&
+      session.outcome !== "unresolved"
   );
 }
 
@@ -834,6 +833,7 @@ function trainingWeekFromDraft(draft: PlanWeekDraft, sourceWeek?: TrainingWeek):
     reviewedAt: sourceWeek?.reviewedAt ?? null,
     workouts,
     actualActivities: sourceWeek?.actualActivities ?? [],
+    performedSessions: sourceWeek?.performedSessions ?? [],
     goals: draft.goals.map((goal) => ({
       id: goal.id ?? goal.draftId,
       trainingWeekId: draft.weekId,

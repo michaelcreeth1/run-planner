@@ -95,10 +95,47 @@ describe("buildWeekContextStrip", () => {
     });
   });
 
+  it("does not treat a status-only workout as performed", () => {
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: makeWeek({
+        workouts: [
+          makeWorkout({
+            plannedDate: "2026-07-09",
+            status: "completed_as_planned"
+          })
+        ]
+      }),
+      currentWeekStart: "2026-07-13",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({ kind: "workout", status: "upcoming" });
+  });
+
   it("does not complete today's primary workout from an unrelated activity", () => {
     const week = makeWeek({
       workouts: [makeWorkout({ plannedDate: "2026-07-09", title: "Easy run", plannedDistance: 5 })],
       actualActivities: [makeActivity({ sportType: "Ride", distanceMiles: 12 })]
+    });
+    const result = buildWeekContextStrip({
+      plan: makePlan(),
+      currentWeek: week,
+      currentWeekStart: "2026-07-13",
+      today: "2026-07-09"
+    });
+    if (result?.kind !== "active") {
+      throw new Error("expected active strip");
+    }
+    expect(result.today).toMatchObject({ kind: "workout", title: "Easy run", status: "upcoming" });
+  });
+
+  it("does not complete today's workout from a raw same-day run", () => {
+    const week = makeWeek({
+      workouts: [makeWorkout({ plannedDate: "2026-07-09", title: "Easy run", plannedDistance: 5 })],
+      actualActivities: [makeActivity({ sportType: "Run", distanceMiles: 5 })]
     });
     const result = buildWeekContextStrip({
       plan: makePlan(),

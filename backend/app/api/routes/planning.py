@@ -10,7 +10,6 @@ from app.goal_metrics import goal_metric_catalog
 from app.models.planning import AthleteAccount
 from app.schemas.planning import (
     MatchSuggestion,
-    PerformedSessionCreate,
     PerformedSessionRead,
     PlannedWorkoutCreate,
     PlannedWorkoutMove,
@@ -295,15 +294,6 @@ def list_sessions(db: DbSession, profile: CurrentProfile) -> list[dict]:
         planning.serialize_performed_session(db, session)
         for session in planning.list_performed_sessions(db, profile.id)
     ]
-
-
-@router.post(
-    "/performed-sessions", response_model=PerformedSessionRead, status_code=status.HTTP_201_CREATED
-)
-def create_session(payload: PerformedSessionCreate, db: DbSession, profile: CurrentProfile) -> dict:
-    return planning.serialize_performed_session(
-        db, planning.create_performed_session(db, payload, profile.id)
-    )
 
 
 @router.get("/performed-sessions/{session_id}", response_model=PerformedSessionRead)

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addDays } from "../../lib/dates";
 import type {
   ActualActivity,
+  PerformedSession,
   PlanWeekDraft,
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
@@ -13,6 +14,7 @@ import {
   deriveGoalDraftsFromSchedule,
   draftWorkoutsFromWeek,
   evaluatePlanAlignment,
+  isUsablePriorWeek,
   planWeekDraftToPayload,
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
@@ -103,6 +105,15 @@ describe("plan week draft helpers", () => {
       plannedDistance: "6.3",
       purpose: "Seeded from completed activity"
     });
+  });
+
+  it("ignores legacy manual-only sessions as completed training", () => {
+    const sourceWeek = makeWeek("2026-06-22", {
+      performedSessions: [makePerformedSession({ recordings: [] })]
+    });
+
+    expect(isUsablePriorWeek(sourceWeek)).toBe(false);
+    expect(draftWorkoutsFromWeek(sourceWeek, "2026-06-29")).toEqual([]);
   });
 
   it("scales run mileage while leaving non-run sessions unchanged", () => {
@@ -397,6 +408,31 @@ function makeActivity(overrides: Partial<ActualActivity> = {}): ActualActivity {
     distanceMiles: 6.34,
     movingTime: 3000,
     averageHeartrate: null,
+    ...overrides
+  };
+}
+
+function makePerformedSession(overrides: Partial<PerformedSession> = {}): PerformedSession {
+  return {
+    id: "session-1",
+    athleteAccountId: "athlete-1",
+    occurredAt: "2026-06-25T07:00:00",
+    sport: "run",
+    recordings: [{ stravaActivityId: "activity-1", contributesToTotals: true }],
+    manualDistanceMeters: null,
+    manualDurationSeconds: null,
+    plannedWorkoutId: null,
+    prescriptionRevisionId: null,
+    association: "unmatched",
+    matchProvenance: null,
+    outcome: "unresolved",
+    intensityCategory: "easy",
+    evidence: "activity_summary",
+    assessmentNote: "",
+    evidenceChanged: false,
+    version: 1,
+    totalDistanceMeters: 8046.72,
+    totalDurationSeconds: 2700,
     ...overrides
   };
 }

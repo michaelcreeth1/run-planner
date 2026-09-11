@@ -10,7 +10,7 @@ import { WeekReviewHandoff } from "../../components/week/WeekReviewHandoff";
 import { buildWeekCommandCenterViewModel } from "../weekGoals/buildWeekCommandCenterViewModel";
 import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
-import type { ActualActivity, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
+import type { ActualActivity, PerformedSession, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
 import { addDays, startOfWeek } from "../../lib/dates";
 import {
   formatCompactWeekRange,
@@ -55,7 +55,7 @@ export function WeekView({
   weekStarts,
   onCreate,
   onEdit,
-  onSetCompletion,
+  onEditPerformedSession,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -88,8 +88,8 @@ export function WeekView({
   weekStack: Record<string, TrainingWeek>;
   weekStarts: string[];
   onCreate: (plannedDate: string) => void;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onEditPerformedSession?: (session: PerformedSession) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -219,7 +219,7 @@ export function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
-            onSetCompletion={onSetCompletion}
+            onEditPerformedSession={onEditPerformedSession}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
@@ -257,7 +257,7 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
-  onSetCompletion,
+  onEditPerformedSession,
   onCreateGoal,
   onCopyPriorWeek,
   onDeriveWeekGoals,
@@ -279,8 +279,8 @@ function WeekRow({
   onCreate: (plannedDate: string) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onEditPerformedSession?: (session: PerformedSession) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
@@ -314,7 +314,7 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
-            onSetCompletion={onSetCompletion}
+            onEditPerformedSession={onEditPerformedSession}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
             onDeriveWeekGoals={onDeriveWeekGoals}
@@ -400,7 +400,7 @@ function ExpandedWeekBoard({
   weekStart,
   onCreate,
   onEdit,
-  onSetCompletion,
+  onEditPerformedSession,
   onDelete,
   onDuplicate,
   onCreateGoal,
@@ -418,8 +418,8 @@ function ExpandedWeekBoard({
   week: TrainingWeek | null;
   weekStart: string;
   onCreate: (plannedDate: string) => void;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onEditPerformedSession?: (session: PerformedSession) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -469,7 +469,7 @@ function ExpandedWeekBoard({
       onDeriveWeekGoals={onDeriveWeekGoals}
       onDuplicate={onDuplicate}
       onEdit={onEdit}
-      onSetCompletion={onSetCompletion}
+      onEditPerformedSession={onEditPerformedSession}
       onEditGoal={onEditGoal}
       onOpenPlanWeek={onOpenPlanWeek}
       onSkipReview={onSkipReview}
@@ -491,7 +491,7 @@ function WeekSlate({
   onDeriveWeekGoals,
   onDuplicate,
   onEdit,
-  onSetCompletion,
+  onEditPerformedSession,
   onEditGoal,
   onOpenPlanWeek,
   onSkipReview,
@@ -508,8 +508,8 @@ function WeekSlate({
   onDelete: (workout: Workout) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onDuplicate: (workout: Workout) => void;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onEditPerformedSession?: (session: PerformedSession) => void;
   onEditGoal: (goal: WeekGoal) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSkipReview: (weekId: string) => void;
@@ -554,7 +554,10 @@ function WeekSlate({
           onDelete={onDelete}
           onDuplicate={onDuplicate}
           onEdit={onEdit}
-          onSetCompletion={onSetCompletion}
+          onEditPerformedSession={onEditPerformedSession}
+          performedSessions={(week.performedSessions ?? []).filter(
+            (session) => session.recordings.length > 0
+          )}
           today={today}
           readOnly={week.weekState === "past"}
           workouts={workouts}
@@ -571,7 +574,8 @@ function WeekSchedule({
   onDelete,
   onDuplicate,
   onEdit,
-  onSetCompletion,
+  onEditPerformedSession,
+  performedSessions,
   readOnly,
   today,
   workouts
@@ -581,8 +585,9 @@ function WeekSchedule({
   onCreate: (plannedDate: string) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onEditPerformedSession?: (session: PerformedSession) => void;
+  performedSessions: PerformedSession[];
   readOnly: boolean;
   today: string;
   workouts: Workout[];
@@ -590,22 +595,35 @@ function WeekSchedule({
   return (
     <section className="week-schedule-panel" aria-label="Weekly schedule">
       <header>
-        <h2>Weekly schedule</h2>
+        <h2>Schedule</h2>
         {!days.includes(today) ? <span className="schedule-range">{formatCompactWeekRange(days[0], days[6])}</span> : null}
       </header>
       <div className="week-board">
         {days.map((dateValue) => {
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
           const dayActuals = actualActivities.filter((activity) => activity.activityDate === dateValue);
-          const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0;
+          const hasDaySession = performedSessions.some(
+            (session) =>
+              session.occurredAt.slice(0, 10) === dateValue ||
+              dayWorkouts.some((workout) => workout.id === session.plannedWorkoutId)
+          );
+          const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0 && !hasDaySession;
           const isToday = dateValue === today;
           const isCompactDay =
             !isToday &&
             dayActuals.length === 0 &&
+            !hasDaySession &&
             dayWorkouts.every(
               (workout) => workout.sport === "rest" || workout.intensityCategory === "rest"
             );
-          const entries = buildDayEntries(dayWorkouts, dayActuals);
+          const entries = buildDayEntries(
+            dateValue,
+            dayWorkouts,
+            dayActuals,
+            performedSessions,
+            actualActivities,
+            workouts
+          );
           return (
             <article
               className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}${
@@ -624,17 +642,25 @@ function WeekSchedule({
               <div className="workout-stack">
                 {entries.map((entry) =>
                   entry.kind === "unplanned" ? (
+                    <PerformedSessionItem
+                      activities={entry.activities}
+                      key={`session-${entry.session.id}`}
+                      onEdit={onEditPerformedSession}
+                      session={entry.session}
+                    />
+                  ) : entry.kind === "raw" ? (
                     <ActualActivityItem activity={entry.actual} key={`actual-${entry.actual.id}`} />
                   ) : (
                     <WorkoutItem
                       key={entry.workout.id}
                       workout={entry.workout}
-                      actual={entry.actual}
+                      activities={entry.activities}
+                      hasPendingMatch={entry.hasPendingMatch}
+                      session={entry.session}
                       today={today}
                       onDelete={onDelete}
                       onDuplicate={onDuplicate}
                       onEdit={onEdit}
-                      onSetCompletion={onSetCompletion}
                       readOnly={readOnly}
                     />
                   )
@@ -643,15 +669,17 @@ function WeekSchedule({
                   <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
                 {dateValue >= today && !readOnly ? (
-                  <button
-                    aria-label={`Add session to ${formatWeekday(dateValue)}`}
-                    className={`day-add-session${isEmpty ? " day-add-session--empty" : ""}`}
-                    type="button"
-                    onClick={() => onCreate(dateValue)}
-                  >
-                    <Plus aria-hidden="true" size={15} />
-                    <span>Add session</span>
-                  </button>
+                  <div className={`day-actions${!isToday && !isEmpty ? " day-actions--quiet" : ""}`}>
+                    <button
+                      aria-label={`Add session to ${formatWeekday(dateValue)}`}
+                      className={`day-add-session${isEmpty ? " day-add-session--empty" : ""}`}
+                      type="button"
+                      onClick={() => onCreate(dateValue)}
+                    >
+                      <Plus aria-hidden="true" size={15} />
+                      <span>Plan</span>
+                    </button>
+                  </div>
                 ) : null}
               </div>
             </article>
@@ -749,44 +777,78 @@ function ExpandedWeekSkeleton({ days }: { days: string[] }) {
 }
 
 type DayEntry =
-  | { kind: "planned"; workout: Workout; actual: ActualActivity | null }
-  | { kind: "unplanned"; actual: ActualActivity };
+  | { kind: "planned"; workout: Workout; session: PerformedSession | null; activities: ActualActivity[]; hasPendingMatch: boolean }
+  | { kind: "unplanned"; session: PerformedSession; activities: ActualActivity[] }
+  | { kind: "raw"; actual: ActualActivity };
 
-function buildDayEntries(dayWorkouts: Workout[], dayActuals: ActualActivity[]): DayEntry[] {
-  const matches = new Map<string, ActualActivity>();
-  const unmatched: ActualActivity[] = [];
-  for (const activity of dayActuals) {
-    const isRun = activity.sportType.toLowerCase().includes("run");
-    const best = dayWorkouts
-      .filter((workout) => isRun && workout.sport === "run" && !matches.has(workout.id))
-      .map((workout) => ({
-        workout,
-        gap:
-          workout.plannedDistance === null
-            ? Number.MAX_SAFE_INTEGER
-            : Math.abs(workout.plannedDistance - activity.distanceMiles)
-      }))
-      .sort((left, right) => left.gap - right.gap)[0];
-    if (best) {
-      matches.set(best.workout.id, activity);
-    } else {
-      unmatched.push(activity);
-    }
-  }
+function buildDayEntries(
+  dateValue: string,
+  dayWorkouts: Workout[],
+  dayActuals: ActualActivity[],
+  sessions: PerformedSession[],
+  activities: ActualActivity[],
+  workouts: Workout[]
+): DayEntry[] {
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+  const workoutIds = new Set(workouts.map((workout) => workout.id));
+  const sessionForWorkout = new Map(
+    sessions
+      .filter((session) => session.association === "associated" && session.plannedWorkoutId)
+      .map((session) => [session.plannedWorkoutId as string, session])
+  );
+  const activitiesForSession = (session: PerformedSession) =>
+    session.recordings
+      .map((recording) => activityById.get(recording.stravaActivityId))
+      .filter((activity): activity is ActualActivity => Boolean(activity));
+  const unplannedSessions = sessions.filter(
+    (session) =>
+      session.occurredAt.slice(0, 10) === dateValue &&
+      (session.association !== "associated" || !session.plannedWorkoutId || !workoutIds.has(session.plannedWorkoutId))
+  );
+  const groupedActivityIds = new Set(
+    sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+  );
   return [
-    ...unmatched.map((actual) => ({ kind: "unplanned" as const, actual })),
+    ...unplannedSessions.map((session) => ({
+      kind: "unplanned" as const,
+      session,
+      activities: activitiesForSession(session)
+    })),
+    ...dayActuals
+      .filter((activity) => !groupedActivityIds.has(activity.id))
+      .map((actual) => ({ kind: "raw" as const, actual })),
     ...dayWorkouts.map((workout) => ({
       kind: "planned" as const,
       workout,
-      actual: matches.get(workout.id) ?? null
+      session: sessionForWorkout.get(workout.id) ?? null,
+      hasPendingMatch: unplannedSessions.some(
+        (session) => session.outcome === "unresolved" && session.sport === workout.sport
+      ),
+      activities: sessionForWorkout.has(workout.id)
+        ? activitiesForSession(sessionForWorkout.get(workout.id) as PerformedSession)
+        : []
     }))
   ];
 }
 
-type WorkoutState = "done" | "planned" | "missed";
+type WorkoutState = "done" | "planned" | "missed" | "review";
 
-function workoutState(workout: Workout, actual: ActualActivity | null, today: string): WorkoutState {
-  if (actual || workout.status.startsWith("completed") || workout.status === "partial") {
+function workoutState(
+  workout: Workout,
+  session: PerformedSession | null,
+  hasPendingMatch: boolean,
+  today: string
+): WorkoutState {
+  if (session?.outcome === "unresolved") {
+    return "review";
+  }
+  if (hasPendingMatch) {
+    return "review";
+  }
+  if (session?.outcome === "skipped" || session?.outcome === "missed") {
+    return "missed";
+  }
+  if (session) {
     return "done";
   }
   if (workout.sport === "rest" || workout.intensityCategory === "rest") {
@@ -796,6 +858,19 @@ function workoutState(workout: Workout, actual: ActualActivity | null, today: st
     return "missed";
   }
   return "planned";
+}
+
+function sessionStatsLabel(session: PerformedSession) {
+  const miles = (session.totalDistanceMeters ?? 0) / 1609.344;
+  const pieces: string[] = [];
+  if (miles > 0) pieces.push(`${formatNumber(miles)} mi`);
+  if (session.totalDurationSeconds) {
+    const pace = session.sport === "run" && miles > 0
+      ? formatPace(session.totalDurationSeconds, miles)
+      : "-";
+    pieces.push(pace === "-" ? `${formatNumber(session.totalDurationSeconds / 60)} min` : pace);
+  }
+  return pieces.join(" · ") || outcomeLabel(session.outcome);
 }
 
 function actualStatsLabel(activity: ActualActivity) {
@@ -840,35 +915,82 @@ function ActualActivityItem({ activity }: { activity: ActualActivity }) {
   );
 }
 
+function PerformedSessionItem({
+  activities,
+  onEdit,
+  session
+}: {
+  activities: ActualActivity[];
+  onEdit?: (session: PerformedSession) => void;
+  session: PerformedSession;
+}) {
+  const title = activities.length > 0
+    ? activities.map((activity) => activity.name).join(" + ")
+    : `Strava ${session.sport.replaceAll("_", " ")}`;
+  const needsReview = session.outcome === "unresolved" || session.evidenceChanged;
+  return (
+    <div className={`actual-item performed-session-item${needsReview ? " needs-review" : ""}`}>
+      <div className="workout-title-row">
+        <span className="workout-type-dot" title="Completed session" aria-hidden="true" />
+        <strong>{title}</strong>
+      </div>
+      <p className={`workout-status-line workout-status-line--${needsReview ? "review" : "done"}`}>
+        {needsReview ? <Circle size={12} aria-hidden="true" /> : <Check size={12} strokeWidth={2.75} aria-hidden="true" />}
+        <span>{sessionStatsLabel(session)}</span>
+      </p>
+      <small>{needsReview ? "Review match" : outcomeLabel(session.outcome)}</small>
+      <SessionActions label={`Actions for ${title}`}>
+        {onEdit ? (
+          <button type="button" title="Edit Strava match" onClick={() => onEdit(session)}>
+            <Edit3 size={15} />
+            Edit match
+          </button>
+        ) : null}
+        {activities[0] ? (
+          <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activities[0])}>
+            <ExternalLink size={15} />
+            View on Strava
+          </button>
+        ) : null}
+      </SessionActions>
+    </div>
+  );
+}
+
 function WorkoutItem({
   workout,
-  actual,
+  activities,
+  hasPendingMatch,
+  session,
   today,
   onEdit,
-  onSetCompletion,
   onDelete,
   onDuplicate,
   readOnly
 }: {
   workout: Workout;
-  actual: ActualActivity | null;
+  activities: ActualActivity[];
+  hasPendingMatch: boolean;
+  session: PerformedSession | null;
   today: string;
-  onEdit: (workout: Workout) => void;
-  onSetCompletion: (workout: Workout, completed: boolean) => void;
+  onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   readOnly: boolean;
 }) {
-  const state = workoutState(workout, actual, today);
+  const state = workoutState(workout, session, hasPendingMatch, today);
   const isRest = workout.sport === "rest" || workout.intensityCategory === "rest";
-  const isManuallyCompleted = !actual && workout.status === "completed_as_planned";
-  const canSetCompletion = !readOnly && !actual && !isRest && (isManuallyCompleted || state !== "done");
   const plannedMeta = sessionMetrics(workout);
   const hasPlannedMetrics = plannedMeta !== "Rest" && plannedMeta !== workout.status.replaceAll("_", " ");
 
   let statusLine: string;
-  if (actual) {
-    statusLine = actualStatsLabel(actual);
+  if (session) {
+    statusLine = [
+      sessionStatsLabel(session),
+      activities[0]?.averageHeartrate ? `${Math.round(activities[0].averageHeartrate as number)} bpm` : null
+    ].filter(Boolean).join(" · ");
+  } else if (state === "review") {
+    statusLine = "Awaiting match";
   } else if (state === "done") {
     statusLine = hasPlannedMetrics ? plannedMeta : "done";
   } else {
@@ -876,13 +998,25 @@ function WorkoutItem({
   }
 
   const detailPieces: string[] = [];
-  if ((actual || state === "missed") && hasPlannedMetrics && plannedMeta !== statusLine) {
-    detailPieces.push(`Planned ${plannedMeta}`);
-  }
-  if (actual?.averageHeartrate) {
-    detailPieces.push(`${Math.round(actual.averageHeartrate)} bpm`);
+  const showPlanComparison =
+    state === "review" ||
+    Boolean(session && !["as_planned", "moved"].includes(session.outcome));
+  if (showPlanComparison && hasPlannedMetrics && plannedMeta !== statusLine) {
+    detailPieces.push(`Plan ${plannedMeta}`);
   }
   const detail = detailPieces.join(" · ");
+
+  const stateLabel = isRest
+    ? null
+    : session
+      ? session.outcome === "as_planned"
+        ? null
+        : outcomeLabel(session.outcome)
+      : state === "review"
+        ? "Review"
+        : state === "missed"
+          ? workout.status === "skipped_intentionally" ? "Skipped" : "Missed"
+          : null;
 
   const StatusIcon = isRest ? null : state === "done" ? Check : state === "missed" ? Minus : Circle;
   const primaryContent = (
@@ -892,9 +1026,9 @@ function WorkoutItem({
           <span className="workout-type-dot" title={labelForWorkoutType(workout.workoutType)} aria-hidden="true" />
           <strong>{workout.title}</strong>
         </span>
-        <span className={`workout-state-label workout-state-label--${state}`}>
-          {isRest ? "Recovery" : workout.status === "partial" ? "Partially completed" : workout.status === "completed_modified" ? "Completed with changes" : state === "done" ? "Completed" : state === "missed" ? (workout.status === "skipped_intentionally" ? "Skipped" : "Missed") : labelForWorkoutType(workout.workoutType)}
-        </span>
+        {stateLabel ? (
+          <span className={`workout-state-label workout-state-label--${state}`}>{stateLabel}</span>
+        ) : null}
       </span>
       <span className="workout-metrics">
         <span className={`workout-status-line workout-status-line--${state}`}>
@@ -915,37 +1049,27 @@ function WorkoutItem({
           type="button"
           className="workout-primary-action"
           aria-label={`Edit ${workout.title}`}
-          onClick={() => onEdit(workout)}
+          onClick={() => session ? onEdit(workout, session) : onEdit(workout)}
         >
           {primaryContent}
         </button>
       )}
-      {canSetCompletion ? (
-        <button
-          type="button"
-          className={`workout-completion-toggle ${isManuallyCompleted ? "is-complete" : ""}`}
-          aria-label={`Mark ${workout.title} ${isManuallyCompleted ? "incomplete" : "complete"}`}
-          aria-pressed={isManuallyCompleted}
-          title={isManuallyCompleted ? "Mark workout incomplete" : "Mark workout complete"}
-          onClick={() => onSetCompletion(workout, !isManuallyCompleted)}
-        >
-          <Check size={14} strokeWidth={2.75} aria-hidden="true" />
-        </button>
-      ) : null}
-      {actual || !readOnly ? (
+      {session || !readOnly ? (
         <SessionActions label={`Actions for ${workout.title}`}>
-          {actual ? (
-            <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(actual)}>
+          {activities[0] ? (
+            <button type="button" title="View activity on Strava" onClick={() => openStravaActivity(activities[0])}>
               <ExternalLink size={15} />
               View on Strava
             </button>
           ) : null}
+          {session || !readOnly ? (
+            <button type="button" title="Edit workout" onClick={() => session ? onEdit(workout, session) : onEdit(workout)}>
+              <Edit3 size={15} />
+              Edit session
+            </button>
+          ) : null}
           {!readOnly ? (
             <>
-              <button type="button" title="Edit workout" onClick={() => onEdit(workout)}>
-                <Edit3 size={15} />
-                Edit session
-              </button>
               <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
                 <Copy size={15} />
                 Duplicate
@@ -960,6 +1084,20 @@ function WorkoutItem({
       ) : null}
     </div>
   );
+}
+
+function outcomeLabel(outcome: PerformedSession["outcome"]) {
+  const labels: Record<PerformedSession["outcome"], string> = {
+    unresolved: "Review",
+    as_planned: "Done",
+    modified: "Modified",
+    partial: "Partial",
+    replaced: "Replaced",
+    skipped: "Skipped",
+    missed: "Missed",
+    moved: "Moved"
+  };
+  return labels[outcome];
 }
 
 function SessionActions({ label, children }: { label: string; children: ReactNode }) {
@@ -1047,9 +1185,21 @@ function dayColumnClass(workouts: Workout[], activities: ActualActivity[], isEmp
 function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: string) {
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDays(weekStart, index);
-    const dayActuals = week?.actualActivities.filter((activity) => activity.activityDate === date) ?? [];
+    const sessions = week?.performedSessions ?? [];
+    const groupedActivityIds = new Set(
+      sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
+    );
+    const daySessions = sessions.filter(
+      (session) => session.occurredAt.slice(0, 10) === date && isPerformedWorkSession(session)
+    );
+    const dayActuals = week?.actualActivities.filter(
+      (activity) => activity.activityDate === date && !groupedActivityIds.has(activity.id)
+    ) ?? [];
     const dayWorkouts = week?.workouts.filter((workout) => workout.plannedDate === date) ?? [];
-    const actualMiles = sumActualDistance(dayActuals);
+    const actualMiles = sumActualDistance(dayActuals) + daySessions.reduce(
+      (total, session) => total + (session.sport === "run" ? (session.totalDistanceMeters ?? 0) / 1609.344 : 0),
+      0
+    );
     const plannedMiles = sumDistance(dayWorkouts);
     const weekday = formatWeekday(date);
     const dateLabel = formatShortDate(date);
@@ -1063,12 +1213,13 @@ function collapsedWeekDayBadges(week: TrainingWeek | undefined, weekStart: strin
       };
     }
 
-    if (dayActuals.length > 0) {
+    const completedCount = dayActuals.length + daySessions.length;
+    if (completedCount > 0) {
       return {
         date,
         kind: "actual",
         label: actualMiles > 0 ? `${formatNumber(actualMiles)} mi` : "done",
-        title: `${weekday} ${dateLabel}: ${dayActuals.length} completed activit${dayActuals.length === 1 ? "y" : "ies"}`
+        title: `${weekday} ${dateLabel}: ${completedCount} completed session${completedCount === 1 ? "" : "s"}`
       };
     }
 
@@ -1140,7 +1291,7 @@ function formatCollapsedWeekDetail(week: TrainingWeek | undefined) {
   }
 
   const hasPlannedWork = week.plannedMileage > 0 || week.workouts.length > 0;
-  const hasActualWork = week.actualMileage > 0 || week.actualActivities.length > 0;
+  const hasActualWork = week.actualMileage > 0 || week.actualActivities.length > 0 || (week.performedSessions?.some(isPerformedWorkSession) ?? false);
 
   if (!hasPlannedWork && !hasActualWork) {
     return "not planned yet";
@@ -1148,6 +1299,13 @@ function formatCollapsedWeekDetail(week: TrainingWeek | undefined) {
 
   const planLabel = hasPlannedWork ? formatHardDays(week.hardDays) : "no plan";
   return `${planLabel} · ${formatLongRun(week.longRunDistance)}`;
+}
+
+function isPerformedWorkSession(session: PerformedSession) {
+  return (
+    !["skipped", "missed"].includes(session.outcome) &&
+    session.recordings.length > 0
+  );
 }
 
 function openStravaActivity(activity: ActualActivity) {

@@ -277,3 +277,19 @@ Imported activities are available at:
 ```http
 GET /api/activities
 ```
+
+Imports also create logical performed sessions for matching and reconciliation:
+
+```http
+GET  /api/performed-sessions
+GET  /api/performed-sessions/{id}/match-suggestions
+PUT  /api/performed-sessions/{id}/reconciliation
+```
+
+Edit a completed session to change its **Strava match** with one dropdown. An
+unmatched import exposes the same match-only edit. There are no recording,
+outcome, intensity, note, or metric-override controls. Strava recordings are the
+only source of performed work; the app does not provide manual activity entry.
+Clear nearby recordings are grouped automatically. If an ambiguous recording is
+assigned to a plan that already has a recording, that choice merges them into one
+performed session.

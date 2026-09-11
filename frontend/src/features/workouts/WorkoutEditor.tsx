@@ -2,7 +2,8 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Library, Plus,
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useModalDialog } from "../../hooks/useModalDialog";
-import type { PrescriptionBlock, PrescriptionStep, TrainingPaceEstimate, WorkoutForm } from "../../types/domain";
+import { formatShortDate, formatWeekday } from "../../lib/formatters";
+import type { PerformedSession, PrescriptionBlock, PrescriptionStep, TrainingPaceEstimate, Workout, WorkoutForm } from "../../types/domain";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import { isStructuredPrescription, prescriptionTotals } from "../../lib/prescriptions";
 import { formatDurationSeconds, formatPaceSeconds, recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
@@ -12,11 +13,16 @@ export function WorkoutEditor({
   error,
   isSaving,
   isSavingToLibrary = false,
+  stravaMatch = null,
+  stravaMatchOnly = false,
+  workouts = [],
   mode = "scheduled",
   trainingPaceEstimate,
   templateTags = [],
   setTemplateTags,
   setEditor,
+  setStravaMatch,
+  onSaveStravaMatch,
   onSaveToLibrary,
   onSubmit,
   onClose
@@ -25,11 +31,16 @@ export function WorkoutEditor({
   error: string | null;
   isSaving: boolean;
   isSavingToLibrary?: boolean;
+  stravaMatch?: { session: PerformedSession; plannedWorkoutId: string } | null;
+  stravaMatchOnly?: boolean;
+  workouts?: Workout[];
   mode?: "scheduled" | "template";
   trainingPaceEstimate?: TrainingPaceEstimate;
   templateTags?: string[];
   setTemplateTags?: (tags: string[]) => void;
   setEditor: (editor: WorkoutForm) => void;
+  setStravaMatch?: (plannedWorkoutId: string) => void;
+  onSaveStravaMatch?: (plannedWorkoutId: string) => void;
   onSaveToLibrary?: () => Promise<boolean>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
@@ -37,6 +48,7 @@ export function WorkoutEditor({
   const selectedSessionType = sessionTypeForWorkout(editor);
   const drawerRef = useRef<HTMLElement | null>(null);
   const initialEditorSnapshotRef = useRef(JSON.stringify(editor));
+  const initialStravaMatchRef = useRef(stravaMatch?.plannedWorkoutId ?? "");
   const [structureOpen, setStructureOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(mode === "template");
   const [savedToLibrary, setSavedToLibrary] = useState(false);
@@ -61,7 +73,11 @@ export function WorkoutEditor({
     if (isBusy) {
       return;
     }
-    if (JSON.stringify(editor) !== initialEditorSnapshotRef.current && !window.confirm("Discard unsaved workout changes?")) {
+    const matchChanged = (stravaMatch?.plannedWorkoutId ?? "") !== initialStravaMatchRef.current;
+    if (
+      (JSON.stringify(editor) !== initialEditorSnapshotRef.current || matchChanged) &&
+      !window.confirm("Discard unsaved changes?")
+    ) {
       return;
     }
     onClose();
@@ -396,17 +412,52 @@ export function WorkoutEditor({
     </div>
   );
 
+  const stravaMatchField = stravaMatch && setStravaMatch ? (
+    <label>
+      <span>Strava match</span>
+      <select
+        aria-label="Strava match"
+        disabled={isBusy}
+        value={stravaMatch.plannedWorkoutId}
+        onChange={(event) => {
+          const plannedWorkoutId = event.target.value;
+          setStravaMatch(plannedWorkoutId);
+          if (stravaMatchOnly) {
+            onSaveStravaMatch?.(plannedWorkoutId);
+          }
+        }}
+      >
+        <option value="">Unplanned</option>
+        {workouts.map((workout) => (
+          <option key={workout.id} value={workout.id}>
+            {formatWeekday(workout.plannedDate)} {formatShortDate(workout.plannedDate)} · {workout.title}
+          </option>
+        ))}
+      </select>
+    </label>
+  ) : null;
+
   return (
     <div className="editor-backdrop">
-      <aside aria-label="Workout editor" aria-modal="true" className="editor-panel workout-editor-panel" ref={drawerRef} role="dialog" tabIndex={-1}>
+      <aside
+        aria-label="Workout editor"
+        aria-modal="true"
+        className={`editor-panel workout-editor-panel${stravaMatchOnly ? " workout-editor-panel--match-only" : ""}`}
+        ref={drawerRef}
+        role="dialog"
+        tabIndex={-1}
+      >
         <header>
-          <h2>{editor.id ? `Edit ${mode === "template" ? "library workout" : "workout"}` : `New ${mode === "template" ? "library workout" : "workout"}`}</h2>
+          <h2>{stravaMatchOnly ? "Edit Strava match" : editor.id ? `Edit ${mode === "template" ? "library workout" : "workout"}` : `New ${mode === "template" ? "library workout" : "workout"}`}</h2>
           <button type="button" title="Close" disabled={isBusy} onClick={handleClose}>
             <X size={18} />
           </button>
         </header>
         <form aria-busy={isBusy} onSubmit={onSubmit}>
           {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
+          {stravaMatchOnly ? (
+            <div className="workout-editor-basics">{stravaMatchField}</div>
+          ) : <>
           <div className="workout-editor-basics">
             {mode === "scheduled" ? <label>
               <span>Date</span>
@@ -469,6 +520,7 @@ export function WorkoutEditor({
                 <small className="field-help">Separate tags with commas.</small>
               </label>
             ) : null}
+            {mode === "scheduled" ? stravaMatchField : null}
           </div>
           {derivedTotals ? (
             <section className="workout-derived-totals" aria-label="Totals from workout structure">
@@ -548,8 +600,9 @@ export function WorkoutEditor({
               {detailsOpen ? workoutDetails : null}
             </section>
           ) : workoutDetails}
-          <div className="editor-actions">
-            {mode === "scheduled" && editor.id && onSaveToLibrary ? (
+          </>}
+          {!stravaMatchOnly ? <div className="editor-actions">
+            {!stravaMatchOnly && mode === "scheduled" && editor.id && onSaveToLibrary ? (
               <button className="secondary" disabled={isBusy || savedToLibrary} type="button" onClick={saveToLibrary}>
                 {savedToLibrary ? <Check size={17} /> : <Library size={17} />}
                 <span>{isSavingToLibrary ? "Saving to library…" : savedToLibrary ? "Saved to workout library" : "Save to workout library"}</span>
@@ -559,7 +612,7 @@ export function WorkoutEditor({
               <Save size={17} />
               <span>{isSaving ? "Saving…" : mode === "template" ? "Save to library" : "Save"}</span>
             </button>
-          </div>
+          </div> : null}
         </form>
       </aside>
     </div>

@@ -1,22 +1,19 @@
-import type { TrainingWeek, Workout } from "../types/domain";
-
-export function isCompletedWorkout(workout: Workout) {
-  return workout.status.startsWith("completed") || workout.status === "partial";
-}
+import type { TrainingWeek } from "../types/domain";
 
 export function completedSessionCount(week: TrainingWeek) {
-  const importedSessions = week.actualActivities.length;
-  const manualSessions = week.workouts.filter(
-    (workout) => isCompletedWorkout(workout) && !hasMatchingImportedActivity(week, workout)
-  ).length;
-  return importedSessions + manualSessions;
-}
-
-function hasMatchingImportedActivity(week: TrainingWeek, workout: Workout) {
-  if (workout.sport !== "run") {
-    return false;
-  }
-  return week.actualActivities.some(
-    (activity) => activity.activityDate === workout.plannedDate && activity.sportType.toLowerCase().includes("run")
+  const performedSessions = week.performedSessions ?? [];
+  const groupedActivityIds = new Set(
+    performedSessions.flatMap((session) =>
+      session.recordings.map((recording) => recording.stravaActivityId)
+    )
   );
+  const completedPerformedSessions = performedSessions.filter(
+    (session) =>
+      !["skipped", "missed"].includes(session.outcome) &&
+      session.recordings.length > 0
+  ).length;
+  const ungroupedActivities = week.actualActivities.filter(
+    (activity) => !groupedActivityIds.has(activity.id)
+  ).length;
+  return completedPerformedSessions + ungroupedActivities;
 }

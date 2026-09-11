@@ -1,6 +1,6 @@
 import { daysBetween } from "../../lib/dates";
 import { formatNumber, formatShortDate, formatWeekday, formatWorkoutMeta } from "../../lib/formatters";
-import type { ActualActivity, TrainingPlan, TrainingWeek, Workout } from "../../types/domain";
+import type { TrainingPlan, TrainingWeek } from "../../types/domain";
 
 export type WeekContextSegment = {
   id: "race" | "phase" | "mileage";
@@ -167,6 +167,17 @@ function buildMileageSegment(currentWeek: TrainingWeek | null): WeekContextSegme
 function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContextTodaySession {
   const todaysWorkouts = currentWeek.workouts.filter((workout) => workout.plannedDate === today);
   const todaysActuals = currentWeek.actualActivities.filter((activity) => activity.activityDate === today);
+  const resolvedWorkoutIds = new Set(
+    (currentWeek.performedSessions ?? [])
+      .filter(
+        (session) =>
+          session.recordings.length > 0 &&
+          session.association === "associated" &&
+          session.plannedWorkoutId &&
+          session.outcome !== "unresolved"
+      )
+      .map((session) => session.plannedWorkoutId)
+  );
 
   if (todaysWorkouts.length === 0) {
     const activity = todaysActuals[0];
@@ -185,7 +196,7 @@ function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContex
           workout.plannedDate > today &&
           workout.sport !== "rest" &&
           workout.intensityCategory !== "rest" &&
-          !workout.status.startsWith("completed") &&
+          !resolvedWorkoutIds.has(workout.id) &&
           !["missed", "skipped_intentionally", "replaced"].includes(workout.status)
       )
       .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate))[0];
@@ -207,10 +218,14 @@ function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContex
     return { kind: "rest", label: "Today" };
   }
 
-  const done =
-    matchActualActivities(todaysWorkouts, todaysActuals).has(primary.id) ||
-    primary.status.startsWith("completed") ||
-    primary.status === "partial";
+  const performedSessions = currentWeek.performedSessions ?? [];
+  const matchedSession = performedSessions.find(
+    (session) =>
+      session.association === "associated" &&
+      session.plannedWorkoutId === primary.id &&
+      session.outcome !== "unresolved"
+  );
+  const done = Boolean(matchedSession?.recordings.length);
   return {
     kind: "workout",
     label: "Today",
@@ -219,32 +234,6 @@ function buildTodaySession(currentWeek: TrainingWeek, today: string): WeekContex
     status: done ? "done" : "upcoming",
     workoutId: primary.id
   };
-}
-
-function matchActualActivities(
-  workouts: Workout[],
-  activities: ActualActivity[]
-): Map<string, ActualActivity> {
-  const matches = new Map<string, ActualActivity>();
-  for (const activity of activities) {
-    if (!activity.sportType.toLowerCase().includes("run")) {
-      continue;
-    }
-    const best = workouts
-      .filter((workout) => workout.sport === "run" && !matches.has(workout.id))
-      .map((workout) => ({
-        workout,
-        gap:
-          workout.plannedDistance === null
-            ? Number.MAX_SAFE_INTEGER
-            : Math.abs(workout.plannedDistance - activity.distanceMiles)
-      }))
-      .sort((left, right) => left.gap - right.gap)[0];
-    if (best) {
-      matches.set(best.workout.id, activity);
-    }
-  }
-  return matches;
 }
 
 function capitalize(value: string) {
