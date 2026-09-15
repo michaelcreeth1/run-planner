@@ -77,10 +77,14 @@ export function rebuildPlanWeekDraftForStartingPoint(
   const sourceWeek = startingPoint === "existing" ? currentWeek ?? weekStack[draft.weekStartDate] : priorWeek ?? null;
   const loadSourceWeek = priorWeek ?? null;
   const planTargetMileage = targetWeek?.targetMileage ?? null;
-  const sourceWorkouts =
+  const sourceWorkoutsWithIdentity =
     startingPoint === "blank" || !sourceWeek
       ? []
       : draftWorkoutsFromWeek(sourceWeek, draft.weekStartDate);
+  const sourceWorkouts =
+    startingPoint === "existing"
+      ? sourceWorkoutsWithIdentity
+      : sourceWorkoutsWithIdentity.map(({ id: _id, version: _version, ...workout }) => workout);
   const loadSuggestion =
     planTargetMileage !== null
       ? planTargetLoad(planTargetMileage, loadBaselineMileageOrNull(loadSourceWeek))
@@ -588,7 +592,7 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
     workouts: draft.workouts.map((workout) => {
       const sessionType = sessionTypeForWorkout(workout);
       return {
-        id: workout.id,
+        ...(workout.id ? { id: workout.id } : {}),
         ...formToPayload({
           ...workout,
           sport: sessionType.sport,

@@ -8,7 +8,7 @@ from app.db.migrations import execute_sql_file
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models import AthleteAccount, PerformedSession, PlannedWorkout
-from app.services import planning, strava
+from app.services import analytics, planning, strava, weekly_metrics
 
 
 def login(client: TestClient) -> str:
@@ -151,6 +151,75 @@ def test_one_recording_in_a_double_leaves_the_other_workout_projected() -> None:
         assert next(item for item in week["workouts"] if item["id"] == second["id"])[
             "status"
         ] == "planned"
+
+
+def test_recorded_workout_cannot_be_patched_or_deleted() -> None:
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        planned_date = planning.today_for_timezone("America/Denver").isoformat()
+        workout = create_workout(client, planned_date, "Easy 5", 5)
+        import_activity(athlete_id, 1020, planned_date, 5)
+
+        patch_response = client.patch(
+            f"/api/planned-workouts/{workout['id']}",
+            json={"title": "Rewritten after completion"},
+        )
+        delete_response = client.delete(f"/api/planned-workouts/{workout['id']}")
+
+        assert patch_response.status_code == 409
+        assert delete_response.status_code == 409
+        assert patch_response.json() == {
+            "detail": "Completed workouts stay fixed. Edit only the Strava match."
+        }
+        assert delete_response.json() == patch_response.json()
+        persisted = client.get(f"/api/planned-workouts/{workout['id']}")
+        assert persisted.status_code == 200
+        assert persisted.json()["title"] == "Easy 5"
+
+
+def test_cross_week_match_resolves_workout_in_its_planned_week() -> None:
+    planned_date = date(2099, 1, 5)
+    activity_date = planned_date - timedelta(days=1)
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        workout = create_workout(client, planned_date.isoformat(), "Monday easy 5", 5)
+        import_activity(athlete_id, 1021, activity_date.isoformat(), 5)
+        session = client.get("/api/performed-sessions").json()[0]
+
+        reconciled = client.put(
+            f"/api/performed-sessions/{session['id']}/reconciliation",
+            json={
+                "plannedWorkoutId": workout["id"],
+                "expectedVersion": session["version"],
+            },
+        )
+        assert reconciled.status_code == 200
+        assert reconciled.json()["outcome"] == "moved"
+
+        source_week = client.get(f"/api/weeks/{planned_date.isoformat()}").json()
+        assert session["id"] in {item["id"] for item in source_week["performedSessions"]}
+
+        with SessionLocal() as db:
+            week = planning.load_week(db, planned_date, athlete_id)
+            sessions = planning.performed_sessions_for_week(db, week)
+            metrics = weekly_metrics.calculate_weekly_metrics(
+                week.workouts,
+                [],
+                today=planned_date,
+                sessions=sessions,
+            )
+            assert metrics["weekly_run_distance"].remaining == 0
+            assert metrics["training_session_count"].remaining == 0
+
+            grouped = analytics.sessions_in_range(
+                db,
+                athlete_id,
+                activity_date - timedelta(days=6),
+                planned_date + timedelta(days=6),
+            )
+            assert session["id"] in {
+                item.id for item in grouped[planning.week_start_for(planned_date)]
+            }
 
 
 def test_user_can_confirm_an_imported_activity_was_unplanned() -> None:

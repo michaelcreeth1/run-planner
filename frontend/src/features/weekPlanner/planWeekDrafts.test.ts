@@ -60,6 +60,9 @@ describe("plan week draft helpers", () => {
       title: "Midweek aerobic",
       plannedDistance: "5"
     });
+    expect(copiedDraft.workouts[0].id).toBeUndefined();
+    expect(copiedDraft.workouts[0].version).toBeUndefined();
+    expect(planWeekDraftToPayload(copiedDraft).workouts[0]).not.toHaveProperty("id");
   });
 
   it("treats legacy notes as custom purpose instead of guessing a structured purpose", () => {

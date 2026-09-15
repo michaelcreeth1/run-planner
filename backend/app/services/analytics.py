@@ -2,7 +2,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.planning import (
@@ -138,19 +138,40 @@ def sessions_in_range(
 ) -> dict[date, list[PerformedSession]]:
     start_at = datetime.combine(start, time.min)
     end_at = datetime.combine(end + timedelta(days=1), time.min)
+    workouts_in_range = select(PlannedWorkout.id).where(
+        PlannedWorkout.athlete_account_id == athlete_account_id,
+        PlannedWorkout.planned_date >= start,
+        PlannedWorkout.planned_date <= end,
+    )
     sessions = db.scalars(
         select(PerformedSession)
         .where(
             PerformedSession.athlete_account_id == athlete_account_id,
-            PerformedSession.occurred_at >= start_at,
-            PerformedSession.occurred_at < end_at,
+            or_(
+                and_(
+                    PerformedSession.occurred_at >= start_at,
+                    PerformedSession.occurred_at < end_at,
+                ),
+                PerformedSession.planned_workout_id.in_(workouts_in_range),
+            ),
         )
-        .options(selectinload(PerformedSession.recordings))
+        .options(
+            selectinload(PerformedSession.recordings),
+            selectinload(PerformedSession.planned_workout),
+        )
         .order_by(PerformedSession.occurred_at)
     ).all()
     grouped: dict[date, list[PerformedSession]] = defaultdict(list)
     for session in sessions:
-        grouped[planning.week_start_for(session.occurred_at.date())].append(session)
+        occurrence_date = session.occurred_at.date()
+        occurrence_week = planning.week_start_for(occurrence_date)
+        if start <= occurrence_date <= end:
+            grouped[occurrence_week].append(session)
+        if session.planned_workout is not None:
+            planned_date = session.planned_workout.planned_date
+            planned_week = planning.week_start_for(planned_date)
+            if start <= planned_date <= end and planned_week != occurrence_week:
+                grouped[planned_week].append(session)
     return grouped
 
 

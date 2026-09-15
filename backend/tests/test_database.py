@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
-from app.db.migrations import migration_files, run_migrations
+from app.db.migrations import execute_sql_file, migration_files, run_migrations
 from app.db.session import engine
 from app.db.testing import DESTRUCTIVE_TEST_OPT_IN, validate_external_test_database_url
 
@@ -61,6 +62,53 @@ def test_postgresql_migration_comments_do_not_break_statement_splitting() -> Non
     ]
 
     assert offenders == []
+
+
+def test_template_prescription_migration_backfills_legacy_rows() -> None:
+    test_engine = create_engine("sqlite://")
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "20260915_019_backfill_workout_template_prescriptions.sqlite.sql"
+    )
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE workout_templates (
+                  id TEXT PRIMARY KEY,
+                  default_distance REAL,
+                  default_duration INTEGER,
+                  prescription_json JSON
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO workout_templates (
+                  id, default_distance, default_duration, prescription_json
+                ) VALUES
+                  ('distance', 6, NULL, NULL),
+                  ('duration', NULL, 2400, NULL),
+                  ('open', NULL, NULL, NULL)
+                """
+            )
+        )
+        execute_sql_file(connection, migration)
+        rows = {
+            row.id: row.prescription_json
+            for row in connection.execute(
+                text("SELECT id, prescription_json FROM workout_templates")
+            )
+        }
+
+    assert '"extent":"distance"' in rows["distance"]
+    assert '"distance_meters":9656.064' in rows["distance"]
+    assert '"extent":"duration"' in rows["duration"]
+    assert '"duration_seconds":2400' in rows["duration"]
+    assert '"extent":"open"' in rows["open"]
 
 
 def test_database_enforces_foreign_keys() -> None:

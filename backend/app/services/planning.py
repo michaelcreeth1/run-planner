@@ -4,7 +4,7 @@ from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.goal_metrics import GOAL_METRICS, infer_goal_metric, normalized_goal_thresholds
@@ -1149,6 +1149,7 @@ def update_workout(
     workout = get_workout(db, workout_id, athlete_account_id)
     original_week_id = workout.training_week_id
     ensure_week_is_mutable(get_week_by_id(db, original_week_id, workout.athlete_account_id))
+    ensure_workout_has_no_recorded_session(db, workout.id)
     updates = payload.model_dump(exclude_unset=True)
     expected_version = updates.pop("expected_version", None)
     prescription_was_supplied = "prescription" in updates
@@ -1404,6 +1405,14 @@ def workout_has_recorded_session(db: Session, workout_id: str) -> bool:
     )
 
 
+def ensure_workout_has_no_recorded_session(db: Session, workout_id: str) -> None:
+    if workout_has_recorded_session(db, workout_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed workouts stay fixed. Edit only the Strava match.",
+        )
+
+
 def is_simple_prescription(document: dict) -> bool:
     blocks = document.get("blocks", [])
     if len(blocks) != 1:
@@ -1433,6 +1442,17 @@ def schedule_event(
     )
 
 
+def template_prescription(template: WorkoutTemplate) -> WorkoutPrescription:
+    if template.prescription_json is not None:
+        return WorkoutPrescription.model_validate(template.prescription_json)
+    return legacy_prescription(
+        {
+            "planned_distance": template.default_distance,
+            "planned_duration": template.default_duration,
+        }
+    )
+
+
 def serialize_template(template: WorkoutTemplate) -> dict:
     return {
         "id": template.id,
@@ -1440,7 +1460,7 @@ def serialize_template(template: WorkoutTemplate) -> dict:
         "name": template.name,
         "workout_type": template.workout_type,
         "tags": __import__("json").loads(template.tags or "[]"),
-        "prescription": template.prescription_json,
+        "prescription": template_prescription(template).model_dump(exclude_none=True),
         "purpose": template.default_purpose,
         "instructions": template.default_instructions,
         "version": template.version,
@@ -1535,13 +1555,15 @@ def schedule_template(
     title: str | None = None,
 ) -> PlannedWorkout:
     template = get_template(db, template_id, athlete_account_id)
-    prescription = WorkoutPrescription.model_validate(template.prescription_json)
+    prescription = template_prescription(template)
     workout = create_workout(
         db,
         PlannedWorkoutCreate(
             planned_date=planned_date,
             title=title or template.name,
             workout_type=template.workout_type,
+            planned_distance=template.default_distance,
+            planned_duration=template.default_duration,
             purpose=template.default_purpose,
             instructions=template.default_instructions,
             prescription=prescription,
@@ -2152,15 +2174,31 @@ def copy_prior_week(
     if not target.notes:
         target.notes = source.notes
 
+    pace_estimate = training_pace_estimate(db, active_athlete_id)
     for source_workout in source.workouts:
         day_offset = (source_workout.planned_date - source.week_start_date).days
-        db.add(
-            clone_workout(
-                source_workout,
-                target.id,
-                target.week_start_date + timedelta(days=day_offset),
-            )
+        target_date = target.week_start_date + timedelta(days=day_offset)
+        clone = clone_workout(
+            source_workout,
+            target.id,
+            target_date,
         )
+        db.add(clone)
+        db.flush()
+        source_document = (
+            WorkoutPrescription.model_validate(
+                source_workout.current_prescription.prescription_json
+            )
+            if source_workout.current_prescription is not None
+            else None
+        )
+        add_prescription_revision(
+            db,
+            clone,
+            source_document,
+            easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+        )
+        db.add(schedule_event(clone.id, target_date))
 
     if not target.goals:
         for source_goal in source.goals:
@@ -2474,6 +2512,7 @@ def delete_workout(db: Session, workout_id: str, athlete_account_id: str | None 
     week_id = workout.training_week_id
     active_athlete_id = workout.athlete_account_id
     ensure_week_is_mutable(get_week_by_id(db, week_id, active_athlete_id))
+    ensure_workout_has_no_recorded_session(db, workout.id)
     db.delete(workout)
     db.commit()
     recalculate_week(
@@ -2548,13 +2587,22 @@ def activities_for_week(db: Session, week: TrainingWeek) -> list[StravaActivity]
 def performed_sessions_for_week(db: Session, week: TrainingWeek) -> list[PerformedSession]:
     start = datetime.combine(week.week_start_date, time.min)
     end = datetime.combine(week.week_end_date + timedelta(days=1), time.min)
+    workouts_in_week = select(PlannedWorkout.id).where(
+        PlannedWorkout.athlete_account_id == week.athlete_account_id,
+        PlannedWorkout.training_week_id == week.id,
+    )
     return list(
         db.scalars(
             select(PerformedSession)
             .where(
                 PerformedSession.athlete_account_id == week.athlete_account_id,
-                PerformedSession.occurred_at >= start,
-                PerformedSession.occurred_at < end,
+                or_(
+                    and_(
+                        PerformedSession.occurred_at >= start,
+                        PerformedSession.occurred_at < end,
+                    ),
+                    PerformedSession.planned_workout_id.in_(workouts_in_week),
+                ),
             )
             .options(selectinload(PerformedSession.recordings))
             .order_by(PerformedSession.occurred_at)

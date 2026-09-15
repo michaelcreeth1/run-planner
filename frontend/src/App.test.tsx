@@ -1038,6 +1038,7 @@ describe("App mutation handling", () => {
       totalDurationSeconds: 2700
     };
     let matchPayload: unknown = null;
+    let workoutPatchRequests = 0;
     useAuthenticatedAppHandlers();
     server.use(
       http.get(apiUrl("/api/weeks/:weekStartDate"), ({ params }) => {
@@ -1060,7 +1061,10 @@ describe("App mutation handling", () => {
           }] : []
         });
       }),
-      http.patch(apiUrl(`/api/planned-workouts/${workout.id}`), () => HttpResponse.json(workout)),
+      http.patch(apiUrl(`/api/planned-workouts/${workout.id}`), () => {
+        workoutPatchRequests += 1;
+        return HttpResponse.json(workout);
+      }),
       http.put(apiUrl(`/api/performed-sessions/${performedSession.id}/reconciliation`), async ({ request }) => {
         matchPayload = await request.json();
         return HttpResponse.json(performedSession);
@@ -1071,15 +1075,17 @@ describe("App mutation handling", () => {
 
     await user.click(await screen.findByRole("button", { name: `View ${workout.title}` }));
     await user.click(within(screen.getByRole("dialog", { name: `${workout.title} workout details` })).getByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("heading", { name: "Edit Strava match" })).toBeVisible();
     expect(screen.getByLabelText("Strava match")).toHaveValue(workout.id);
     expect(screen.queryByText("Outcome")).not.toBeInTheDocument();
     expect(screen.queryByText("Actual intensity")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Save match" }));
 
     await waitFor(() => expect(matchPayload).toEqual({
       plannedWorkoutId: workout.id,
       expectedVersion: 3
     }));
+    expect(workoutPatchRequests).toBe(0);
   });
 
   it("lets an unmatched Strava activity be explicitly confirmed as unplanned", async () => {

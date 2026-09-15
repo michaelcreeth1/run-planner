@@ -13,6 +13,7 @@ from app.models import (
     TrainingWeek,
     WorkoutPrescriptionRevision,
     WorkoutScheduleEvent,
+    WorkoutTemplate,
 )
 from app.schemas.planning import (
     PlannedWorkoutCreate,
@@ -433,6 +434,48 @@ def test_workout_library_crud_and_scheduling_preserve_independent_copy() -> None
         still_scheduled = client.get(f"/api/planned-workouts/{scheduled['id']}")
         assert still_scheduled.status_code == 200
         assert still_scheduled.json()["prescription"] == created["prescription"]
+
+
+def test_legacy_workout_template_without_prescription_can_be_listed_and_scheduled() -> None:
+    with TestClient(app) as client:
+        login(client)
+        with SessionLocal() as db:
+            athlete_id = db.scalars(select(WorkoutTemplate.athlete_account_id)).first()
+            if athlete_id is None:
+                athlete_id = planning.ensure_default_athlete(db).id
+            template = WorkoutTemplate(
+                athlete_account_id=athlete_id,
+                name="Legacy six miles",
+                workout_type="easy",
+                default_distance=6,
+                prescription_json=None,
+            )
+            db.add(template)
+            db.commit()
+            template_id = template.id
+
+        listed = client.get("/api/workout-templates")
+        assert listed.status_code == 200
+        legacy = next(item for item in listed.json() if item["id"] == template_id)
+        assert legacy["prescription"]["blocks"][0] == {
+            "kind": "step",
+            "id": None,
+            "role": "other",
+            "extent": "distance",
+            "distanceMeters": pytest.approx(6 * 1609.344),
+            "durationSeconds": None,
+            "displayUnit": "mi",
+            "primaryTarget": None,
+            "supportingTargets": [],
+            "notes": "",
+        }
+
+        scheduled = client.post(
+            f"/api/workout-templates/{template_id}/schedule",
+            json={"plannedDate": "2099-09-14"},
+        )
+        assert scheduled.status_code == 200
+        assert scheduled.json()["plannedDistance"] == pytest.approx(6)
 
 
 def test_migrated_prescription_baseline_does_not_break_week_reads() -> None:
@@ -929,6 +972,17 @@ def test_copy_prior_week_copies_whole_plan_forward() -> None:
         assert copied_workout.status == "planned"
         assert copied_workout.steps[0].label == "Warm up"
         assert copied_workout.steps[0].duration == 600
+        assert copied_workout.current_prescription is not None
+        assert workout.current_prescription is not None
+        assert (
+            copied_workout.current_prescription.prescription_json
+            == workout.current_prescription.prescription_json
+        )
+
+        moved = planning.move_workout(db, copied_workout.id, date(2099, 3, 12))
+        assert moved.planned_date == date(2099, 3, 12)
+        restored = planning.undo_workout_move(db, copied_workout.id)
+        assert restored.planned_date == date(2099, 3, 11)
     finally:
         db.close()
 

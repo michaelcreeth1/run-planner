@@ -690,7 +690,7 @@ function AppShell() {
     setStravaMatch(linkedSession ? {
       session: linkedSession,
       plannedWorkoutId: linkedSession.plannedWorkoutId ?? "",
-      matchOnly: false
+      matchOnly: true
     } : null);
     setEditor(workoutToForm(workout));
   }
@@ -704,7 +704,7 @@ function AppShell() {
     setStravaMatch({
       session: performedSession,
       plannedWorkoutId: performedSession.plannedWorkoutId ?? "",
-      matchOnly: !linkedWorkout
+      matchOnly: true
     });
     setEditor(
       hostWorkout
