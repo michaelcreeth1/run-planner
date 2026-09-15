@@ -2917,6 +2917,33 @@ dt {
   font-size: 0.82rem;
 }
 
+.schedule-move-prompt {
+  align-items: center;
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 4px 0 6px;
+  padding: 9px 12px;
+}
+
+.schedule-move-prompt > div {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+}
+
+.schedule-move-prompt strong {
+  font-size: 0.84rem;
+}
+
+.schedule-move-prompt span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
 .week-board {
   align-items: stretch;
   gap: 6px;
@@ -2991,6 +3018,57 @@ dt {
 .day-column--today > header span,
 .day-column--today > header strong {
   color: var(--primary);
+}
+
+.week-schedule-panel--moving .day-column {
+  grid-template-rows: auto auto 1fr;
+}
+
+.week-schedule-panel--moving .day-column--move-target {
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.week-schedule-panel--moving .day-column--move-origin {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.week-schedule-panel--moving .workout-stack {
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.move-day-target {
+  align-items: center;
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--primary) 55%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  display: inline-flex;
+  font-size: 0.76rem;
+  font-weight: 650;
+  gap: 5px;
+  justify-content: center;
+  margin: 0 5px 6px;
+  min-height: 34px;
+  padding: 5px 7px;
+}
+
+.move-day-target:not(:disabled):hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border-style: solid;
+}
+
+.move-day-target:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: 0;
+}
+
+.move-day-target:disabled {
+  border-color: var(--border-subtle);
+  color: var(--text-muted);
+  cursor: default;
 }
 
 .workout-stack {
@@ -3349,6 +3427,26 @@ dt {
     grid-template-columns: 88px minmax(0, 1fr);
     grid-template-rows: auto;
     padding: 14px 0;
+  }
+
+  .week-schedule-panel--moving .day-column,
+  .week-schedule-panel--moving .day-column--compact {
+    grid-template-rows: auto auto;
+  }
+
+  .week-schedule-panel--moving .day-column > header {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .week-schedule-panel--moving .move-day-target {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .week-schedule-panel--moving .workout-stack {
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .day-column + .day-column {
@@ -8470,15 +8568,9 @@ button.goal-impact-cell:focus-visible {
   border-top: 1px solid var(--border-subtle);
 }
 
-.schedule-workout-body label,
-.schedule-swap-control {
+.schedule-workout-body label {
   display: grid;
   gap: 8px;
-}
-
-.schedule-swap-control {
-  padding-top: 20px;
-  border-top: 1px solid var(--border-subtle);
 }
 
 .plan-current-focus {

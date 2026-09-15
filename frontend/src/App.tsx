@@ -78,7 +78,7 @@ type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
 type ScheduleChangeNotice = {
   detail: string;
-  undo: { kind: "move"; workoutId: string } | { kind: "swap"; workoutId: string; otherWorkoutId: string };
+  undo: { workoutId: string };
 };
 type StravaMatchDraft = {
   session: PerformedSession;
@@ -1223,52 +1223,12 @@ function AppShell() {
       loadAnalyticsPlanning();
       setScheduleChangeNotice({
         detail: `${workout.title} moved to ${plannedDate}.`,
-        undo: { kind: "move", workoutId: workout.id }
+        undo: { workoutId: workout.id }
       });
       setApiError(null);
     } catch (error) {
       if (request.isCurrent()) {
         setApiError(toApiErrorPresentation(error, "Could not move workout."));
-      }
-    } finally {
-      request.finish();
-      finishMutation(mutationKey);
-    }
-  }
-
-  async function swapWorkouts(workout: Workout, otherWorkout: Workout) {
-    if (blockStaleWrite("swapping workouts")) {
-      return;
-    }
-    const mutationKey = `swap:${workout.id}:${otherWorkout.id}`;
-    if (!startMutation(mutationKey)) {
-      return;
-    }
-    const request = beginDataRequest();
-    try {
-      await fetchJson(`/api/planned-workouts/${workout.id}/swap`, {
-        method: "POST",
-        body: JSON.stringify({
-          otherWorkoutId: otherWorkout.id,
-          expectedVersion: workout.version,
-          otherExpectedVersion: otherWorkout.version
-        }),
-        signal: request.signal
-      });
-      if (!request.isCurrent()) {
-        return;
-      }
-      refreshVisibleWeeks();
-      loadTrainingTimeline();
-      loadAnalyticsPlanning();
-      setScheduleChangeNotice({
-        detail: `${workout.title} and ${otherWorkout.title} swapped days.`,
-        undo: { kind: "swap", workoutId: workout.id, otherWorkoutId: otherWorkout.id }
-      });
-      setApiError(null);
-    } catch (error) {
-      if (request.isCurrent()) {
-        setApiError(toApiErrorPresentation(error, "Could not swap workouts."));
       }
     } finally {
       request.finish();
@@ -1287,18 +1247,10 @@ function AppShell() {
     }
     const request = beginDataRequest();
     try {
-      if (change.kind === "move") {
-        await fetchJson(`/api/planned-workouts/${change.workoutId}/undo-move`, {
-          method: "POST",
-          signal: request.signal
-        });
-      } else {
-        await fetchJson(`/api/planned-workouts/${change.workoutId}/swap`, {
-          method: "POST",
-          body: JSON.stringify({ otherWorkoutId: change.otherWorkoutId }),
-          signal: request.signal
-        });
-      }
+      await fetchJson(`/api/planned-workouts/${change.workoutId}/undo-move`, {
+        method: "POST",
+        signal: request.signal
+      });
       if (!request.isCurrent()) {
         return;
       }
@@ -1601,7 +1553,6 @@ function AppShell() {
               onDuplicate={duplicateWorkout}
               onDuplicateToDate={duplicateWorkoutToDate}
               onMove={moveWorkoutToDate}
-              onSwap={swapWorkouts}
               onCreateGoal={openCreateGoal}
               onCopyPriorWeek={copyPriorWeek}
               onDeriveWeekGoals={deriveWeekGoals}

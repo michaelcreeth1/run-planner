@@ -1,4 +1,4 @@
-import { ArrowRightLeft, CalendarClock, Check, ChevronRight, Circle, Copy, Edit3, Ellipsis, ExternalLink, Minus, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarClock, Check, ChevronRight, Circle, Copy, Edit3, Ellipsis, ExternalLink, Minus, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
@@ -61,7 +61,6 @@ export function WeekView({
   onDuplicate,
   onDuplicateToDate,
   onMove,
-  onSwap,
   onCreateGoal,
   onCopyPriorWeek,
   onDeriveWeekGoals,
@@ -98,7 +97,6 @@ export function WeekView({
   onDuplicate: (workout: Workout) => void;
   onDuplicateToDate: (workout: Workout, plannedDate: string) => void;
   onMove: (workout: Workout, plannedDate: string) => void;
-  onSwap: (workout: Workout, otherWorkout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
@@ -143,6 +141,24 @@ export function WeekView({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [contextStrip?.kind, selectedWeekIsLoaded, selectedWeekIsVisible, selectedWeekStart]);
+
+  useEffect(() => {
+    if (scheduleAction?.kind !== "move") {
+      return;
+    }
+    const cancelMove = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setScheduleAction(null);
+      }
+    };
+    document.addEventListener("keydown", cancelMove);
+    return () => document.removeEventListener("keydown", cancelMove);
+  }, [scheduleAction]);
+
+  useEffect(() => {
+    setScheduleAction((current) => current?.kind === "move" ? null : current);
+  }, [selectedWeekStart]);
 
   useEffect(() => {
     const sentinel = olderWeeksSentinelRef.current;
@@ -238,6 +254,16 @@ export function WeekView({
             onSkipReview={onSkipReview}
             onSync={onSync}
             onScheduleAction={(kind, workout) => setScheduleAction({ kind, workout })}
+            movingWorkout={
+              start === selectedWeekStart && scheduleAction?.kind === "move"
+                ? scheduleAction.workout
+                : null
+            }
+            onCancelMove={() => setScheduleAction(null)}
+            onMoveWorkout={(workout, plannedDate) => {
+              setScheduleAction(null);
+              onMove(workout, plannedDate);
+            }}
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
@@ -272,24 +298,12 @@ export function WeekView({
           }}
         />
       ) : null}
-      {scheduleAction ? (
-        <ScheduleWorkoutDialog
-          action={scheduleAction.kind}
-          candidates={(week?.workouts ?? []).filter(
-            (candidate) => candidate.id !== scheduleAction.workout.id && candidate.sport !== "rest"
-          )}
+      {scheduleAction?.kind === "copy" ? (
+        <CopyWorkoutDialog
           workout={scheduleAction.workout}
           onClose={() => setScheduleAction(null)}
           onCopy={(plannedDate) => {
             onDuplicateToDate(scheduleAction.workout, plannedDate);
-            setScheduleAction(null);
-          }}
-          onMove={(plannedDate) => {
-            onMove(scheduleAction.workout, plannedDate);
-            setScheduleAction(null);
-          }}
-          onSwap={(otherWorkout) => {
-            onSwap(scheduleAction.workout, otherWorkout);
             setScheduleAction(null);
           }}
         />
@@ -302,6 +316,8 @@ function WeekRow({
   activePlan,
   isExpanded,
   isLoading,
+  movingWorkout,
+  onCancelMove,
   onCreate,
   onDelete,
   onDuplicate,
@@ -316,6 +332,7 @@ function WeekRow({
   onSkipReview,
   onSync,
   onScheduleAction,
+  onMoveWorkout,
   isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
@@ -327,6 +344,8 @@ function WeekRow({
   activePlan: TrainingPlan | null;
   isExpanded: boolean;
   isLoading: boolean;
+  movingWorkout: Workout | null;
+  onCancelMove: () => void;
   onCreate: (plannedDate: string) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
@@ -341,6 +360,7 @@ function WeekRow({
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
   onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
+  onMoveWorkout: (workout: Workout, plannedDate: string) => void;
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
@@ -377,6 +397,9 @@ function WeekRow({
             onSkipReview={onSkipReview}
             onSync={onSync}
             onScheduleAction={onScheduleAction}
+            movingWorkout={movingWorkout}
+            onCancelMove={onCancelMove}
+            onMoveWorkout={onMoveWorkout}
             isCopyingPriorWeek={isCopyingPriorWeek}
             today={today}
             week={week ?? null}
@@ -451,6 +474,7 @@ function CollapsedWeekCard({
 function ExpandedWeekBoard({
   days,
   isLoading,
+  movingWorkout,
   week,
   weekStart,
   onCreate,
@@ -467,11 +491,14 @@ function ExpandedWeekBoard({
   onSkipReview,
   onSync,
   onScheduleAction,
+  onCancelMove,
+  onMoveWorkout,
   isCopyingPriorWeek,
   today,
 }: {
   days: string[];
   isLoading?: boolean;
+  movingWorkout: Workout | null;
   week: TrainingWeek | null;
   weekStart: string;
   onCreate: (plannedDate: string) => void;
@@ -488,6 +515,8 @@ function ExpandedWeekBoard({
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
   onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
+  onCancelMove: () => void;
+  onMoveWorkout: (workout: Workout, plannedDate: string) => void;
   isCopyingPriorWeek: boolean;
   today: string;
 }) {
@@ -535,6 +564,9 @@ function ExpandedWeekBoard({
       onSkipReview={onSkipReview}
       onSync={onSync}
       onScheduleAction={onScheduleAction}
+      movingWorkout={movingWorkout}
+      onCancelMove={onCancelMove}
+      onMoveWorkout={onMoveWorkout}
       today={today}
       week={week}
       workouts={workouts}
@@ -545,6 +577,7 @@ function ExpandedWeekBoard({
 function WeekSlate({
   actualActivities,
   days,
+  movingWorkout,
   onCopyPriorWeek,
   onCreate,
   onCreateGoal,
@@ -559,12 +592,15 @@ function WeekSlate({
   onSkipReview,
   onSync,
   onScheduleAction,
+  onCancelMove,
+  onMoveWorkout,
   today,
   week,
   workouts
 }: {
   actualActivities: ActualActivity[];
   days: string[];
+  movingWorkout: Workout | null;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onCreate: (plannedDate: string) => void;
   onCreateGoal: (week: TrainingWeek) => void;
@@ -579,6 +615,8 @@ function WeekSlate({
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
   onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
+  onCancelMove: () => void;
+  onMoveWorkout: (workout: Workout, plannedDate: string) => void;
   today: string;
   week: TrainingWeek | null | undefined;
   workouts: Workout[];
@@ -624,6 +662,9 @@ function WeekSlate({
           onEdit={onEdit}
           onOpenWorkout={onOpenWorkout}
           onEditPerformedSession={onEditPerformedSession}
+          movingWorkout={movingWorkout}
+          onCancelMove={onCancelMove}
+          onMoveWorkout={onMoveWorkout}
           performedSessions={performedSessions}
           onScheduleAction={onScheduleAction}
           today={today}
@@ -667,7 +708,7 @@ function WorkoutDetailDialog({
             <span>{formatWeekday(workout.plannedDate)} · {formatShortDate(workout.plannedDate)}</span>
             <h2>{workout.title}</h2>
           </div>
-          <button aria-label="Close workout details" type="button" onClick={onClose}>
+          <button className="icon-button" aria-label="Close workout details" type="button" onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -707,9 +748,9 @@ function WorkoutDetailDialog({
           ) : null}
         </div>
         <footer className="workout-detail-actions">
-          <button type="button" onClick={onClose}>Close</button>
+          <button className="ghost-button" type="button" onClick={onClose}>Close</button>
           {!readOnly ? (
-            <button className="primary" type="button" onClick={onEdit}>
+            <button className="primary-button" type="button" onClick={onEdit}>
               <Edit3 size={16} aria-hidden="true" />
               Edit
             </button>
@@ -720,32 +761,23 @@ function WorkoutDetailDialog({
   );
 }
 
-function ScheduleWorkoutDialog({
-  action,
-  candidates,
+function CopyWorkoutDialog({
   onClose,
   onCopy,
-  onMove,
-  onSwap,
   workout
 }: {
-  action: "move" | "copy";
-  candidates: Workout[];
   onClose: () => void;
   onCopy: (plannedDate: string) => void;
-  onMove: (plannedDate: string) => void;
-  onSwap: (workout: Workout) => void;
   workout: Workout;
 }) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const [plannedDate, setPlannedDate] = useState(workout.plannedDate);
-  const [swapId, setSwapId] = useState(candidates[0]?.id ?? "");
   useModalDialog({ dialogRef, onDismiss: onClose });
 
   return (
     <div className="editor-backdrop">
       <aside
-        aria-label={action === "copy" ? "Copy workout to date" : "Move or swap workout"}
+        aria-label="Copy workout to date"
         aria-modal="true"
         className="editor-panel schedule-workout-panel"
         ref={dialogRef}
@@ -755,42 +787,23 @@ function ScheduleWorkoutDialog({
         <header>
           <div>
             <span>{workout.title}</span>
-            <h2>{action === "copy" ? "Copy to a date" : "Move or swap"}</h2>
+            <h2>Copy to a date</h2>
           </div>
-          <button aria-label="Close schedule action" type="button" onClick={onClose}><X size={18} /></button>
+          <button className="icon-button" aria-label="Close schedule action" type="button" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="schedule-workout-body">
           <label>
-            <span>{action === "copy" ? "Copy date" : "Move date"}</span>
+            <span>Copy date</span>
             <input type="date" value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} />
           </label>
           <button
-            className="primary"
-            disabled={!plannedDate || (action === "move" && plannedDate === workout.plannedDate)}
+            className="primary-button"
+            disabled={!plannedDate}
             type="button"
-            onClick={() => action === "copy" ? onCopy(plannedDate) : onMove(plannedDate)}
+            onClick={() => onCopy(plannedDate)}
           >
-            {action === "copy" ? "Copy workout" : "Move workout"}
+            Copy workout
           </button>
-          {action === "move" && candidates.length ? (
-            <div className="schedule-swap-control">
-              <span>Or swap days with</span>
-              <select aria-label="Workout to swap with" value={swapId} onChange={(event) => setSwapId(event.target.value)}>
-                {candidates.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {formatWeekday(candidate.plannedDate)} · {candidate.title}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={() => {
-                const candidate = candidates.find((item) => item.id === swapId);
-                if (candidate) onSwap(candidate);
-              }}>
-                <ArrowRightLeft size={15} aria-hidden="true" />
-                Swap days
-              </button>
-            </div>
-          ) : null}
         </div>
       </aside>
     </div>
@@ -821,12 +834,15 @@ function formatPrescriptionDistance(meters: number, unit?: string | null) {
 function WeekSchedule({
   actualActivities,
   days,
+  movingWorkout,
+  onCancelMove,
   onCreate,
   onDelete,
   onDuplicate,
   onEdit,
   onOpenWorkout,
   onEditPerformedSession,
+  onMoveWorkout,
   performedSessions,
   onScheduleAction,
   readOnly,
@@ -835,12 +851,15 @@ function WeekSchedule({
 }: {
   actualActivities: ActualActivity[];
   days: string[];
+  movingWorkout: Workout | null;
+  onCancelMove: () => void;
   onCreate: (plannedDate: string) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onOpenWorkout: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onEditPerformedSession?: (session: PerformedSession) => void;
+  onMoveWorkout: (workout: Workout, plannedDate: string) => void;
   performedSessions: PerformedSession[];
   onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   readOnly: boolean;
@@ -848,11 +867,25 @@ function WeekSchedule({
   workouts: Workout[];
 }) {
   return (
-    <section className="week-schedule-panel" aria-label="Weekly schedule">
+    <section
+      className={`week-schedule-panel${movingWorkout ? " week-schedule-panel--moving" : ""}`}
+      aria-label="Weekly schedule"
+    >
       <header>
         <h2>Schedule</h2>
         {!days.includes(today) ? <span className="schedule-range">{formatCompactWeekRange(days[0], days[6])}</span> : null}
       </header>
+      {movingWorkout ? (
+        <div className="schedule-move-prompt" role="status">
+          <div>
+            <strong>Moving {movingWorkout.title}</strong>
+            <span>Choose its new day below.</span>
+          </div>
+          <button className="ghost-button ghost-button--compact" type="button" onClick={onCancelMove}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
       <div className="week-board">
         {days.map((dateValue) => {
           const dayWorkouts = workouts.filter((workout) => workout.plannedDate === dateValue);
@@ -864,6 +897,7 @@ function WeekSchedule({
           );
           const isEmpty = dayWorkouts.length === 0 && dayActuals.length === 0 && !hasDaySession;
           const isToday = dateValue === today;
+          const isMoveOrigin = movingWorkout?.plannedDate === dateValue;
           const isCompactDay =
             !isToday &&
             dayActuals.length === 0 &&
@@ -883,7 +917,7 @@ function WeekSchedule({
             <article
               className={`day-column ${dayColumnClass(dayWorkouts, dayActuals, isEmpty, isToday)}${
                 isCompactDay ? " day-column--compact" : ""
-              }`}
+              }${movingWorkout ? isMoveOrigin ? " day-column--move-origin" : " day-column--move-target" : ""}`}
               key={dateValue}
               aria-label={`${isToday ? "Today, " : ""}${formatWeekday(dateValue)}, ${formatShortDate(dateValue)}`}
             >
@@ -894,7 +928,29 @@ function WeekSchedule({
                   {isToday ? <small>Today</small> : null}
                 </div>
               </header>
-              <div className="workout-stack">
+              {movingWorkout ? (
+                <button
+                  aria-label={
+                    isMoveOrigin
+                      ? `${movingWorkout.title} is currently on ${formatWeekday(dateValue)}`
+                      : `Move ${movingWorkout.title} to ${formatWeekday(dateValue)}, ${formatShortDate(dateValue)}`
+                  }
+                  className="move-day-target"
+                  disabled={isMoveOrigin}
+                  type="button"
+                  onClick={() => onMoveWorkout(movingWorkout, dateValue)}
+                >
+                  {isMoveOrigin ? (
+                    <span>Current day</span>
+                  ) : (
+                    <>
+                      <ArrowRight aria-hidden="true" size={14} />
+                      <span>Move here</span>
+                    </>
+                  )}
+                </button>
+              ) : null}
+              <div className="workout-stack" inert={movingWorkout ? true : undefined}>
                 {entries.map((entry) =>
                   entry.kind === "unplanned" ? (
                     <PerformedSessionItem
@@ -925,7 +981,7 @@ function WeekSchedule({
                 {isEmpty && dateValue < today ? (
                   <span aria-label="No session planned" className="empty-day-action empty-day-action--static">—</span>
                 ) : null}
-                {dateValue >= today && !readOnly ? (
+                {dateValue >= today && !readOnly && !movingWorkout ? (
                   <div className={`day-actions${!isToday && !isEmpty ? " day-actions--quiet" : ""}`}>
                     <button
                       aria-label={`Add session to ${formatWeekday(dateValue)}`}
@@ -1319,19 +1375,19 @@ function WorkoutItem({
           {session || !readOnly ? (
             <button
               type="button"
-              title={session ? "Edit completed session" : "Adjust distance or duration"}
+              title={session ? "Edit completed session" : "Edit workout"}
               onClick={() => session ? onEdit(workout, session) : onEdit(workout)}
             >
               <Edit3 size={15} />
-              {session ? "Edit session" : "Adjust distance or duration"}
+              {session ? "Edit session" : "Edit"}
             </button>
           ) : null}
           {!readOnly ? (
             <>
               {!session ? (
-                <button type="button" title="Move or swap workout" onClick={() => onScheduleAction("move", workout)}>
-                  <ArrowRightLeft size={15} />
-                  Move or swap
+                <button type="button" title="Move workout" onClick={() => onScheduleAction("move", workout)}>
+                  <ArrowRight size={15} />
+                  Move
                 </button>
               ) : null}
               <button type="button" title="Copy workout to another date" onClick={() => onScheduleAction("copy", workout)}>

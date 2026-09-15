@@ -113,6 +113,9 @@ describe("WeekView workout completion", () => {
     await user.click(schedule.getByRole("button", { name: `View ${remaining.title}` }));
     const details = within(screen.getByRole("dialog", { name: `${remaining.title} workout details` }));
     expect(details.getByText("No additional instructions for this session.")).toBeVisible();
+    expect(details.getByRole("button", { name: "Close workout details" })).toHaveClass("icon-button");
+    expect(details.getByRole("button", { name: "Close" })).toHaveClass("ghost-button");
+    expect(details.getByRole("button", { name: "Edit" })).toHaveClass("primary-button");
     await user.click(details.getByRole("button", { name: "Edit" }));
     expect(props.onEdit).toHaveBeenCalledWith(remaining);
   });
@@ -137,6 +140,7 @@ describe("WeekView workout completion", () => {
     const trigger = screen.getByRole("button", { name: `Actions for ${workout.title}` });
     expect(screen.queryByTitle("Delete workout")).not.toBeInTheDocument();
     await user.click(trigger);
+    expect(screen.getByRole("button", { name: "Edit" })).toBeVisible();
     expect(screen.getByTitle("Duplicate workout")).toBeVisible();
     await user.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
@@ -148,7 +152,7 @@ describe("WeekView workout completion", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("moves, swaps, and copies a workout from the schedule action", async () => {
+  it("moves a workout by choosing a visible day and keeps copy-to-date separate", async () => {
     const user = userEvent.setup();
     const workout = makeWorkout();
     const other = {
@@ -172,18 +176,19 @@ describe("WeekView workout completion", () => {
     );
 
     await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
-    await user.click(screen.getByTitle("Move or swap workout"));
-    const moveDialog = within(screen.getByRole("dialog", { name: "Move or swap workout" }));
-    await user.click(moveDialog.getByRole("button", { name: "Swap days" }));
-    expect(props.onSwap).toHaveBeenCalledWith(workout, other);
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    expect(screen.queryByRole("dialog", { name: /Move/ })).not.toBeInTheDocument();
+    expect(screen.getByText(`Moving ${workout.title}`)).toBeVisible();
+    expect(screen.getByRole("button", { name: `${workout.title} is currently on Mon` })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(`Moving ${workout.title}`)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
-    await user.click(screen.getByTitle("Move or swap workout"));
-    const moveInput = screen.getByLabelText("Move date");
-    await user.clear(moveInput);
-    await user.type(moveInput, "2026-07-16");
-    await user.click(screen.getByRole("button", { name: "Move workout" }));
-    expect(props.onMove).toHaveBeenCalledWith(workout, "2026-07-16");
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    await user.click(screen.getByRole("button", { name: `Move ${workout.title} to Wed, Jul 15` }));
+    expect(props.onMove).toHaveBeenCalledWith(workout, "2026-07-15");
+    expect(screen.queryByText(`Moving ${workout.title}`)).not.toBeInTheDocument();
+    expect(screen.queryByText("Swap days")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
     await user.click(screen.getByTitle("Copy workout to another date"));
@@ -716,7 +721,6 @@ function makeProps(week: TrainingWeek): ComponentProps<typeof WeekView> {
     onDuplicate: vi.fn(),
     onDuplicateToDate: vi.fn(),
     onMove: vi.fn(),
-    onSwap: vi.fn(),
     onCreateGoal: vi.fn(),
     onCopyPriorWeek: vi.fn(),
     onDeriveWeekGoals: vi.fn(),
