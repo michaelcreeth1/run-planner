@@ -993,7 +993,8 @@ describe("App mutation handling", () => {
     render(<App />);
     await signIn(user);
 
-    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
+    await user.click(await screen.findByRole("button", { name: `View ${workout.title}` }));
+    await user.click(within(screen.getByRole("dialog", { name: `${workout.title} workout details` })).getByRole("button", { name: "Edit" }));
     const title = screen.getByLabelText("Title");
     await user.clear(title);
     await user.type(title, "Updated easy five");
@@ -1068,7 +1069,8 @@ describe("App mutation handling", () => {
     render(<App />);
     await signIn(user);
 
-    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
+    await user.click(await screen.findByRole("button", { name: `View ${workout.title}` }));
+    await user.click(within(screen.getByRole("dialog", { name: `${workout.title} workout details` })).getByRole("button", { name: "Edit" }));
     expect(screen.getByLabelText("Strava match")).toHaveValue(workout.id);
     expect(screen.queryByText("Outcome")).not.toBeInTheDocument();
     expect(screen.queryByText("Actual intensity")).not.toBeInTheDocument();
@@ -1080,7 +1082,7 @@ describe("App mutation handling", () => {
     }));
   });
 
-  it("saves an unmatched Strava activity as soon as a plan is selected", async () => {
+  it("lets an unmatched Strava activity be explicitly confirmed as unplanned", async () => {
     const user = userEvent.setup();
     const workout = currentWorkout();
     const performedSession = {
@@ -1131,10 +1133,10 @@ describe("App mutation handling", () => {
         matchPayload = await request.json();
         return HttpResponse.json({
           ...performedSession,
-          plannedWorkoutId: workout.id,
-          association: "associated",
+          plannedWorkoutId: null,
+          association: "unmatched",
           matchProvenance: "user_confirmed",
-          outcome: "as_planned",
+          outcome: "unplanned",
           version: 3
         });
       })
@@ -1145,11 +1147,13 @@ describe("App mutation handling", () => {
     await user.click(await screen.findByRole("button", { name: "Actions for Monday Run" }));
     await user.click(screen.getByRole("button", { name: "Edit match" }));
     expect(screen.getByRole("heading", { name: "Edit Strava match" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Strava match"), workout.id);
+    expect(screen.getByRole("button", { name: "Save match" })).toBeVisible();
+    expect(screen.getByLabelText("Strava match")).toHaveValue("");
+    expect(matchPayload).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save match" }));
 
     await waitFor(() => expect(matchPayload).toEqual({
-      plannedWorkoutId: workout.id,
+      plannedWorkoutId: null,
       expectedVersion: 2
     }));
     await waitFor(() => {
@@ -1170,7 +1174,8 @@ describe("App mutation handling", () => {
     render(<App />);
     await signIn(user);
 
-    await user.click(await screen.findByRole("button", { name: `Edit ${workout.title}` }));
+    await user.click(await screen.findByRole("button", { name: `View ${workout.title}` }));
+    await user.click(within(screen.getByRole("dialog", { name: `${workout.title} workout details` })).getByRole("button", { name: "Edit" }));
     expect(screen.getByRole("button", { name: "Save to workout library" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save to workout library" }));
 

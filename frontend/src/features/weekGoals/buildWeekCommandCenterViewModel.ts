@@ -59,6 +59,16 @@ export type CompactWeekStatViewModel = {
   outcome?: "hit" | "missed";
 };
 
+export type WeekProgressViewModel = {
+  completedMiles: number;
+  scheduledMiles: number;
+  projectedMiles: number;
+  targetMiles: number | null;
+  deltaMiles: number | null;
+  progressPercent: number | null;
+  completedSessions: number;
+};
+
 export type WeekCommandCenterViewModel = {
   weekStartDate: string;
   weekEndDate: string;
@@ -80,6 +90,7 @@ export type WeekCommandCenterViewModel = {
   notesDetail?: string;
   detailSummary: string;
   compactStats?: CompactWeekStatViewModel[];
+  progress: WeekProgressViewModel;
 };
 
 type BuildWeekCommandCenterOptions = {
@@ -156,7 +167,39 @@ export function buildWeekCommandCenterViewModel({
     guardrailDetails,
     notesDetail: week.notes.trim() || undefined,
     detailSummary: buildDetailSummary(detailGoalCards, guardrailDetails),
-    compactStats
+    compactStats,
+    progress: buildWeekProgress(week, goalCards, mode, today)
+  };
+}
+
+function buildWeekProgress(
+  week: TrainingWeek,
+  goalCards: GoalCardViewModel[],
+  mode: WeekMode,
+  today: string
+): WeekProgressViewModel {
+  const completedMiles = completedMileage(week);
+  const scheduledMiles =
+    mode === "planning"
+      ? week.plannedMileage
+      : mode === "execution"
+        ? remainingPlannedMileage(week, today)
+        : 0;
+  const projectedMiles = mode === "planning" ? scheduledMiles : completedMiles + scheduledMiles;
+  const targetMiles = week.targetMileage ?? mileageTarget(goalCards) ?? null;
+  const deltaMiles = targetMiles === null ? null : projectedMiles - targetMiles;
+
+  return {
+    completedMiles,
+    scheduledMiles,
+    projectedMiles,
+    targetMiles,
+    deltaMiles,
+    progressPercent:
+      targetMiles && targetMiles > 0
+        ? Math.min(100, Math.max(0, (completedMiles / targetMiles) * 100))
+        : null,
+    completedSessions: completedSessionCount(week)
   };
 }
 
@@ -554,24 +597,51 @@ function buildPrimarySummary(
   today: string
 ) {
   if (mode === "planning") {
-    const longRun = deriveLongRun(week, mode, today);
-    return `${formatNumber(week.plannedMileage)} mi planned · ${plannedSessionCount(week)} sessions · ${plannedHardDayCount(week)} hard day${plannedHardDayCount(week) === 1 ? "" : "s"} · ${longRun.summary}`;
+    const target = week.targetMileage ?? mileageTarget(goalCards) ?? week.plannedMileage;
+    return `${formatNumber(week.plannedMileage)} scheduled · ${formatNumber(target)} mi target`;
   }
 
   if (mode === "execution") {
-    const mileage = goalCards.find((card) => card.id === "mileage");
-    const target = projectedTargetMiles(week, mileage);
     const completed = completedMileage(week);
-    const remaining = Math.max(target - completed, 0);
-    return `${formatNumber(completed)} / ${formatNumber(target)} mi completed · ${completedSessionCount(week)} completed · ${plannedSessionCount(week)} planned · ${formatNumber(remaining)} mi remaining`;
+    const remaining = remainingPlannedMileage(week, today);
+    const projected = completed + remaining;
+    const target = week.targetMileage ?? mileageTarget(goalCards) ?? week.plannedMileage;
+    const pending = (week.performedSessions ?? []).some(
+      (session) => session.recordings.length > 0 && session.outcome === "unresolved"
+    );
+    const sessions = completedSessionCount(week);
+    return `${formatNumber(completed)} mi completed + ${formatNumber(remaining)} mi remaining = ${formatNumber(projected)} mi projected · ${formatNumber(target)} mi target · ${sessions} completed session${sessions === 1 ? "" : "s"}${pending ? " · pending one workout match" : ""}`;
   }
 
-  const achieved = goalCards.filter((card) => card.status === "achieved").length;
-  const missed = goalCards.filter((card) => ["missed", "exceeded"].includes(card.status));
-  const missedSummary = missed.length
-    ? ` · ${missed.map((card) => `${card.label.toLowerCase()} ${card.status}`).join(" · ")}`
-    : "";
-  return `${achieved} / ${goalCards.length} goals achieved${missedSummary}`;
+  const target = week.targetMileage ?? mileageTarget(goalCards) ?? week.plannedMileage;
+  return `${formatNumber(completedMileage(week))} mi completed · ${formatNumber(target)} mi target`;
+}
+
+function mileageTarget(goalCards: GoalCardViewModel[]) {
+  return goalCards.find((card) => card.id === "mileage")?.targetValue;
+}
+
+function remainingPlannedMileage(week: TrainingWeek, today: string) {
+  const resolvedWorkoutIds = new Set(
+    (week.performedSessions ?? [])
+      .filter(
+        (session) =>
+          session.recordings.length > 0 &&
+          session.association === "associated" &&
+          session.outcome !== "unresolved" &&
+          session.plannedWorkoutId
+      )
+      .map((session) => session.plannedWorkoutId as string)
+  );
+  return week.workouts.reduce(
+    (total, workout) =>
+      workout.sport === "run" &&
+      workout.plannedDate >= today &&
+      !resolvedWorkoutIds.has(workout.id)
+        ? total + (workout.plannedDistance ?? 0)
+        : total,
+    0
+  );
 }
 
 function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string) {
@@ -611,13 +681,11 @@ function buildActions(mode: WeekMode, week: TrainingWeek): WeekActionViewModel[]
 
   if (isUnplannedWeek(week)) {
     return week.reviewedAt
-      ? []
+      ? [{ id: "review_week", label: "Review week", variant: "primary", icon: "check" }]
       : [{ id: "skip_review", label: "Close empty week", variant: "primary", icon: "check" }];
   }
 
-  return week.reviewedAt
-    ? []
-    : [{ id: "review_week", label: "Review week", variant: "primary", icon: "check" }];
+  return [{ id: "review_week", label: "Review week", variant: "primary", icon: "check" }];
 }
 
 function hasStructuredPlanContext(week: TrainingWeek) {
@@ -1166,11 +1234,6 @@ function isWithinRange(value: number, goal: WeekGoal) {
     return false;
   }
   return true;
-}
-
-function projectedTargetMiles(week: TrainingWeek, mileageCard: GoalCardViewModel | undefined) {
-  const match = mileageCard?.primaryValue.match(/\/\s*(\d+(\.\d+)?)\s*mi/);
-  return match ? Number(match[1]) : week.plannedMileage;
 }
 
 function goalOrder(id: string) {

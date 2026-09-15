@@ -1,5 +1,6 @@
 import type {
   GoalMetricDefinition,
+  MesocyclePhase,
   RecurringGoal,
   WeekGoalEvaluationMode,
   WeekGoalMetric,
@@ -19,6 +20,7 @@ export type GoalDraft = {
   minValue: string;
   maxValue: string;
   notes: string;
+  mesocyclePhase?: MesocyclePhase | "";
 };
 
 export const goalOperatorLabels: Partial<Record<WeekGoalEvaluationMode, string>> = {
@@ -71,7 +73,8 @@ export function goalToDraft(goal: RecurringGoal): GoalDraft {
     value: numberToField(singleValue),
     minValue: numberToField(goal.minAcceptable),
     maxValue: numberToField(goal.maxAcceptable),
-    notes: goal.notes
+    notes: goal.notes,
+    mesocyclePhase: goal.mesocyclePhase ?? ""
   };
 }
 
@@ -88,7 +91,8 @@ export function newGoalDraft(metrics: GoalMetricDefinition[]): GoalDraft | null 
     value: "",
     minValue: "",
     maxValue: "",
-    notes: ""
+    notes: "",
+    mesocyclePhase: ""
   };
 }
 
@@ -251,7 +255,8 @@ export function goalDraftPayload(
     unit: metric.unit,
     evaluationMode: draft.evaluationMode,
     priority: goalType === "guardrail" ? "guardrail" : "secondary",
-    notes: draft.notes
+    notes: draft.notes,
+    mesocyclePhase: draft.mesocyclePhase || null
   };
 }
 

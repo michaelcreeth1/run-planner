@@ -2,6 +2,7 @@ import { formatNumber } from "../../lib/formatters";
 import { daysBetween } from "../../lib/dates";
 import type {
   Mesocycle,
+  MesocyclePhase,
   PlanWeekSummary,
   RecurringGoal,
   TrainingPlan,
@@ -30,6 +31,10 @@ export type PlanRule = {
   category: WeekGoalCategory | null;
   metricKey: WeekGoalMetric | null;
   threshold: number | null;
+  origin: "baseline" | "plan" | "phase";
+  originLabel: string;
+  phaseScope?: MesocyclePhase | null;
+  excludedPhases?: MesocyclePhase[];
 };
 
 export type RuleWeekInput = {
@@ -48,6 +53,10 @@ export type RuleEvaluation = {
   reason: string;
   metrics?: string;
   relatedWorkoutIds: string[];
+  category?: WeekGoalCategory | null;
+  metricKey?: WeekGoalMetric | null;
+  origin?: PlanRule["origin"];
+  originLabel?: string;
 };
 
 export const ruleStatusLabels: Record<RuleStatus, string> = {
@@ -95,7 +104,9 @@ export function buildPlanRules({
   defaultGoals: RecurringGoal[];
   plan: TrainingPlan | null;
 }): PlanRule[] {
-  const activeGoals = [...defaultGoals, ...(plan?.recurringGoals ?? [])];
+  const planGoals = plan?.recurringGoals ?? [];
+  const phaseGoals = planGoals.filter((goal) => goal.mesocyclePhase);
+  const activeGoals = [...planGoals.filter((goal) => !goal.mesocyclePhase), ...defaultGoals];
   const restGoal = matchGoal(activeGoals, "rest_day_count", "recovery", "at_least");
   const hardGoal = matchGoal(activeGoals, "hard_training_day_count", "quality", "at_most");
   const longRunPercentGoal =
@@ -110,6 +121,15 @@ export function buildPlanRules({
   const restMinimum = goalMinimum(restGoal) ?? 1;
   const hardLimit = goalLimit(hardGoal) ?? 2;
   const longRunLimit = goalLimit(longRunPercentGoal) ?? 30;
+  const originFor = (goal: RecurringGoal | null, fallback = "Training preference") => {
+    if (!goal) {
+      return { origin: "baseline" as const, originLabel: fallback };
+    }
+    if (plan?.recurringGoals.some((candidate) => candidate.id === goal.id)) {
+      return { origin: "plan" as const, originLabel: `${plan.name} plan` };
+    }
+    return { origin: "baseline" as const, originLabel: "Training preference" };
+  };
 
   const rules: PlanRule[] = [
     {
@@ -119,7 +139,9 @@ export function buildPlanRules({
       goalType: restGoal?.goalType ?? "guardrail",
       category: "recovery",
       metricKey: "rest_day_count",
-      threshold: restMinimum
+      threshold: restMinimum,
+      excludedPhases: overriddenPhases(phaseGoals, "rest_day_count"),
+      ...originFor(restGoal)
     },
     {
       id: "hard-days",
@@ -128,7 +150,9 @@ export function buildPlanRules({
       goalType: hardGoal?.goalType ?? "guardrail",
       category: "quality",
       metricKey: "hard_training_day_count",
-      threshold: hardLimit
+      threshold: hardLimit,
+      excludedPhases: overriddenPhases(phaseGoals, "hard_training_day_count"),
+      ...originFor(hardGoal)
     },
     {
       id: "long-run-percent",
@@ -137,7 +161,9 @@ export function buildPlanRules({
       goalType: longRunPercentGoal?.goalType ?? "guardrail",
       category: "long_run",
       metricKey: "long_run_share",
-      threshold: longRunLimit
+      threshold: longRunLimit,
+      excludedPhases: overriddenPhases(phaseGoals, "long_run_share"),
+      ...originFor(longRunPercentGoal)
     },
     {
       id: "long-run-scheduled",
@@ -146,9 +172,18 @@ export function buildPlanRules({
       goalType: "achievement",
       category: "long_run",
       metricKey: "longest_run_distance",
-      threshold: null
+      threshold: null,
+      origin: plan ? "plan" : "baseline",
+      originLabel: plan ? `${plan.name} plan` : "Training preference"
     }
   ];
+
+  phaseGoals.forEach((goal) => {
+    const phaseRule = planRuleForPhaseGoal(goal);
+    if (phaseRule) {
+      rules.push(phaseRule);
+    }
+  });
 
   if (plan?.mesocycles.some((mesocycle) => mesocycle.downWeekCadence)) {
     rules.push({
@@ -158,7 +193,9 @@ export function buildPlanRules({
       goalType: "guardrail",
       category: null,
       metricKey: null,
-      threshold: null
+      threshold: null,
+      origin: "phase",
+      originLabel: "Training phase"
     });
   }
 
@@ -177,8 +214,26 @@ export function evaluateRule(rule: PlanRule, input: RuleWeekInput, today: string
     weekId: week.id,
     weekStartDate: week.weekStartDate,
     weekEndDate: week.weekEndDate,
-    relatedWorkoutIds: [] as string[]
+    relatedWorkoutIds: [] as string[],
+    category: rule.category,
+    metricKey: rule.metricKey,
+    origin: rule.origin,
+    originLabel: rule.originLabel
   };
+
+  const weekPhase = input.mesocycle?.phase ?? input.summary?.mesocyclePhase ?? null;
+  if (
+    (rule.phaseScope && weekPhase !== rule.phaseScope) ||
+    (weekPhase && rule.excludedPhases?.includes(weekPhase))
+  ) {
+    return {
+      ...base,
+      status: "not_applicable",
+      reason: rule.phaseScope
+        ? `This check applies only during the ${phaseName(rule.phaseScope)} phase.`
+        : "A phase-specific check applies this week."
+    };
+  }
 
   const overrideGoal = findOverrideGoal(rule, week);
   if (overrideGoal) {
@@ -492,6 +547,74 @@ function matchGoal(
     ) ??
     null
   );
+}
+
+function overriddenPhases(goals: RecurringGoal[], metricKey: WeekGoalMetric): MesocyclePhase[] {
+  return Array.from(
+    new Set(
+      goals
+        .filter((goal) => goal.mesocyclePhase && planRuleForPhaseGoal(goal)?.metricKey === metricKey)
+        .map((goal) => goal.mesocyclePhase!)
+    )
+  );
+}
+
+function planRuleForPhaseGoal(goal: RecurringGoal): PlanRule | null {
+  const phaseScope = goal.mesocyclePhase;
+  if (!phaseScope) {
+    return null;
+  }
+  const metricKey = recurringGoalMetric(goal);
+  const kind: RuleKind | null =
+    metricKey === "rest_day_count" && goal.evaluationMode === "at_least"
+      ? "rest_days"
+      : metricKey === "hard_training_day_count" && goal.evaluationMode === "at_most"
+        ? "hard_days"
+        : metricKey === "long_run_share" && goal.evaluationMode === "at_most"
+          ? "long_run_percent"
+          : null;
+  if (!kind) {
+    return null;
+  }
+  const threshold = kind === "rest_days" ? goalMinimum(goal) : goalLimit(goal);
+  if (threshold === null) {
+    return null;
+  }
+  return {
+    id: `${kind}-${goal.id}`,
+    kind,
+    label: goal.label,
+    goalType: goal.goalType,
+    category: goal.category,
+    metricKey,
+    threshold,
+    origin: "phase",
+    originLabel: `${phaseName(phaseScope)} phase`,
+    phaseScope
+  };
+}
+
+function recurringGoalMetric(goal: RecurringGoal): WeekGoalMetric | null {
+  if (goal.metricKey) {
+    return goal.metricKey;
+  }
+  if (goal.category === "recovery" && goal.unit === "days") {
+    return "rest_day_count";
+  }
+  if (goal.category === "quality" && ["days", "sessions"].includes(goal.unit)) {
+    return "hard_training_day_count";
+  }
+  if (goal.category === "long_run" && goal.unit === "percent") {
+    return "long_run_share";
+  }
+  return null;
+}
+
+function phaseName(phase: MesocyclePhase) {
+  return phase
+    .split("_")
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
 }
 
 function goalMinimum(goal: RecurringGoal | null) {

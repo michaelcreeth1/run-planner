@@ -515,6 +515,10 @@ class RecurringGoal(Base):
     training_plan_id: Mapped[str | None] = mapped_column(
         ForeignKey("training_plans.id", ondelete="CASCADE")
     )
+    # NULL applies throughout the plan. A phase value narrows the rule to
+    # mesocycles of that phase while keeping creation/editing independent of
+    # database-generated mesocycle ids.
+    mesocycle_phase: Mapped[str | None] = mapped_column(String)
     metric_key: Mapped[str | None] = mapped_column(String)
     category: Mapped[str] = mapped_column(String, nullable=False)
     goal_type: Mapped[str] = mapped_column(String, nullable=False, default="achievement")

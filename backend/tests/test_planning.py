@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import Base, SessionLocal, build_engine
 from app.main import app
-from app.models import PlannedWorkoutStep, StravaActivity, TrainingWeek, WorkoutPrescriptionRevision
+from app.models import (
+    PlannedWorkoutStep,
+    StravaActivity,
+    TrainingWeek,
+    WorkoutPrescriptionRevision,
+    WorkoutScheduleEvent,
+)
 from app.schemas.planning import (
     PlannedWorkoutCreate,
     PlannedWorkoutUpdate,
@@ -91,6 +97,49 @@ def test_current_week_and_workout_crud() -> None:
         assert delete_response.status_code == 204
         clone_delete_response = client.delete(f"/api/planned-workouts/{duplicate['id']}")
         assert clone_delete_response.status_code == 204
+
+
+def test_schedule_adjustment_endpoints_support_swap_copy_to_date_and_undo() -> None:
+    with TestClient(app) as client:
+        login(client)
+        first = client.post(
+            "/api/planned-workouts",
+            json={"plannedDate": "2099-12-07", "title": "Intervals", "plannedDistance": 6},
+        ).json()
+        second = client.post(
+            "/api/planned-workouts",
+            json={"plannedDate": "2099-12-10", "title": "Easy run", "plannedDistance": 5},
+        ).json()
+
+        swapped = client.post(
+            f"/api/planned-workouts/{first['id']}/swap",
+            json={
+                "otherWorkoutId": second["id"],
+                "expectedVersion": first["version"],
+                "otherExpectedVersion": second["version"],
+            },
+        )
+        assert swapped.status_code == 200
+        assert [workout["plannedDate"] for workout in swapped.json()] == [
+            "2099-12-10",
+            "2099-12-07",
+        ]
+
+        moved = client.post(
+            f"/api/planned-workouts/{first['id']}/move",
+            json={"plannedDate": "2099-12-11"},
+        )
+        assert moved.status_code == 200
+        restored = client.post(f"/api/planned-workouts/{first['id']}/undo-move")
+        assert restored.status_code == 200
+        assert restored.json()["plannedDate"] == "2099-12-10"
+
+        duplicate = client.post(
+            f"/api/planned-workouts/{first['id']}/duplicate",
+            json={"plannedDate": "2099-12-14"},
+        )
+        assert duplicate.status_code == 200
+        assert duplicate.json()["plannedDate"] == "2099-12-14"
 
 
 def test_structured_prescription_preserves_repeat_recovery_semantics() -> None:
@@ -1553,5 +1602,120 @@ def test_save_week_plan_without_purpose_preserves_existing_intent() -> None:
 
         assert saved_week.purpose == "recovery"
         assert saved_week.purpose_source == "manual"
+    finally:
+        db.close()
+
+
+def test_save_week_plan_updates_existing_workout_without_replacing_its_identity() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 9, 7),
+                title="Easy 5",
+                planned_distance=5,
+                purpose="Aerobic support",
+            ),
+        )
+        original_id = workout.id
+        original_revision_id = workout.current_prescription_revision_id
+        week = planning.get_week_by_id(db, workout.training_week_id)
+
+        saved = planning.save_week_plan(
+            db,
+            week.id,
+            PlanWeekSave(
+                workouts=[
+                    PlanWeekWorkout(
+                        id=workout.id,
+                        expected_version=workout.version,
+                        planned_date=date(2099, 9, 9),
+                        title="Easy 6",
+                        planned_distance=6,
+                        purpose="Aerobic support",
+                    )
+                ]
+            ),
+        )
+
+        assert len(saved.workouts) == 1
+        assert saved.workouts[0].id == original_id
+        assert saved.workouts[0].planned_date == date(2099, 9, 9)
+        assert saved.workouts[0].current_prescription_revision_id != original_revision_id
+        assert saved.workouts[0].current_prescription.revision_number == 2
+        history = list(
+            db.scalars(
+                select(WorkoutScheduleEvent)
+                .where(WorkoutScheduleEvent.planned_workout_id == original_id)
+                .order_by(WorkoutScheduleEvent.created_at)
+            )
+        )
+        assert [event.scheduled_date for event in history] == [
+            date(2099, 9, 7),
+            date(2099, 9, 9),
+        ]
+    finally:
+        db.close()
+
+
+def test_workout_move_can_be_undone_without_losing_identity() -> None:
+    db = make_session()
+    try:
+        workout = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 10, 5),
+                title="Threshold session",
+                planned_distance=7,
+            ),
+        )
+        original_version = workout.version
+
+        moved = planning.move_workout(db, workout.id, date(2099, 10, 8))
+        restored = planning.undo_workout_move(db, workout.id)
+
+        assert moved.id == restored.id == workout.id
+        assert restored.planned_date == date(2099, 10, 5)
+        assert restored.status == "planned"
+        assert restored.version == original_version + 2
+    finally:
+        db.close()
+
+
+def test_workouts_can_swap_days_and_duplicate_to_another_date() -> None:
+    db = make_session()
+    try:
+        first = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 11, 2),
+                title="Intervals",
+                planned_distance=6,
+            ),
+        )
+        second = planning.create_workout(
+            db,
+            PlannedWorkoutCreate(
+                planned_date=date(2099, 11, 5),
+                title="Easy run",
+                planned_distance=5,
+            ),
+        )
+
+        swapped = planning.swap_workouts(db, first.id, second.id)
+        duplicate = planning.duplicate_workout(
+            db,
+            first.id,
+            planned_date=date(2099, 11, 10),
+        )
+
+        assert [workout.planned_date for workout in swapped] == [
+            date(2099, 11, 5),
+            date(2099, 11, 2),
+        ]
+        assert duplicate.id != first.id
+        assert duplicate.planned_date == date(2099, 11, 10)
+        assert duplicate.training_week_id != first.training_week_id
     finally:
         db.close()

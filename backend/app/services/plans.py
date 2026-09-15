@@ -862,7 +862,12 @@ def scaffold_weeks(
             week_warnings.append("Manual long-run override will be preserved.")
 
         if apply_changes:
-            planning.sync_plan_sourced_goals(existing, recurring_goals or [])
+            effective_goals = [
+                goal
+                for goal in recurring_goals or []
+                if goal.get("mesocycle_phase") in {None, scheduled.mesocycle_phase}
+            ]
+            planning.sync_plan_sourced_goals(existing, effective_goals)
 
         if action != "create":
             action = (

@@ -3,6 +3,7 @@ import { fetchJson } from "../../lib/api";
 import { useProfileId } from "../../lib/profileContext";
 import type { GoalMetricDefinition, RecurringGoal } from "../../types/domain";
 import { GoalListEditor } from "./GoalListEditor";
+import type { GoalEditRequest } from "./GoalListEditor";
 import type { GoalDraft } from "./goalDrafts";
 import { goalDraftError, goalDraftPayload, goalToDraft, metricMap, serializeGoalDrafts } from "./goalDrafts";
 
@@ -10,9 +11,11 @@ const AUTOSAVE_DELAY_MS = 650;
 const GOAL_INVALID_MESSAGE = "Finish every goal to save changes.";
 
 export function DefaultGoalsCard({
+  editRequest = null,
   onGoalsSaved,
   writesBlocked
 }: {
+  editRequest?: GoalEditRequest | null;
   onGoalsSaved?: () => void;
   writesBlocked: boolean;
 }) {
@@ -223,9 +226,11 @@ export function DefaultGoalsCard({
             addButtonLabel="Add goal"
             disabled={writesBlocked}
             drafts={drafts}
+            editRequest={editRequest}
             emptyHint="No goals yet. Add a weekly target or limit, like rest days or a mileage cap."
             metrics={metrics}
             onDraftsChange={setDrafts}
+            scopeImpact={() => "Affects every week unless a plan or phase rule overrides it."}
           />
           {isSaving || message || error ? (
             <footer className="default-goals-footer">

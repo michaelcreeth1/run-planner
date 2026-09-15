@@ -11,8 +11,11 @@ import type {
   CompactWeekStatViewModel,
   GoalCardViewModel,
   WeekActionViewModel,
-  WeekCommandCenterViewModel
+  WeekCommandCenterViewModel,
+  WeekMode,
+  WeekProgressViewModel
 } from "../../features/weekGoals/buildWeekCommandCenterViewModel";
+import { formatNumber } from "../../lib/formatters";
 
 type WeekCommandCenterProps = {
   viewModel: WeekCommandCenterViewModel;
@@ -22,6 +25,9 @@ type WeekCommandCenterProps = {
 export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProps) {
   const showNarrative = viewModel.mode === "planning" && viewModel.narrative.trim().length > 0;
   const showGoalOutcomes = viewModel.mode === "review";
+  const visibleCompactStats = viewModel.progress.targetMiles === null
+    ? viewModel.compactStats
+    : viewModel.compactStats?.filter((stat) => stat.label !== "Mileage");
 
   if (viewModel.isUnplanned) {
     return (
@@ -76,11 +82,13 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
         </div>
       ) : null}
 
+      <WeekProgress mode={viewModel.mode} progress={viewModel.progress} />
+
       {viewModel.primaryGoalCards.length ? <GoalSummaryStrip goals={viewModel.primaryGoalCards} /> : null}
 
-      {viewModel.compactStats?.length ? (
+      {visibleCompactStats?.length ? (
         <div className={`week-command-stats${showGoalOutcomes ? " week-command-stats--outcomes" : ""}`} aria-label={showGoalOutcomes ? "Past week goal outcomes" : "Week summary"}>
-          {viewModel.compactStats.map((stat) => (
+          {visibleCompactStats.map((stat) => (
             <WeekCommandStat
               compact={viewModel.mode === "execution"}
               key={stat.label}
@@ -91,6 +99,78 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
         </div>
       ) : null}
 
+    </section>
+  );
+}
+
+function WeekProgress({
+  mode,
+  progress
+}: {
+  mode: WeekMode;
+  progress: WeekProgressViewModel;
+}) {
+  const hasTarget = progress.targetMiles !== null;
+  const targetMiles = progress.targetMiles ?? 0;
+  const primaryValue = hasTarget
+    ? `${formatNumber(progress.completedMiles)} / ${formatNumber(targetMiles)} mi`
+    : `${formatNumber(progress.completedMiles)} mi`;
+  const matchesTarget = (value: number) =>
+    hasTarget && Math.abs(value - targetMiles) < 0.05;
+  const showScheduled =
+    mode !== "review" && progress.scheduledMiles > 0 && !matchesTarget(progress.scheduledMiles);
+  const showProjected =
+    mode === "execution" && progress.projectedMiles > 0 && !matchesTarget(progress.projectedMiles);
+  const deltaLabel =
+    progress.deltaMiles === null
+      ? null
+      : Math.abs(progress.deltaMiles) < 0.05
+        ? null
+        : progress.deltaMiles > 0
+          ? `${formatNumber(progress.deltaMiles)} mi above target`
+          : `${formatNumber(Math.abs(progress.deltaMiles))} mi below target`;
+  const deltaClass =
+    progress.deltaMiles === null || Math.abs(progress.deltaMiles) < 0.05
+      ? "neutral"
+        : progress.deltaMiles > 0
+        ? "above"
+        : "below";
+  const completedSessionsLabel = `${progress.completedSessions} completed session${progress.completedSessions === 1 ? "" : "s"}`;
+  const showDetails = showScheduled || showProjected || Boolean(deltaLabel);
+
+  return (
+    <section className="week-progress" aria-label="Week progress">
+      <div className="week-progress-heading">
+        <p>
+          <strong>{primaryValue}</strong>
+          <span>{hasTarget ? "completed / target" : "completed"}</span>
+          {mode !== "planning" ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{completedSessionsLabel}</span>
+            </>
+          ) : null}
+        </p>
+      </div>
+      {progress.progressPercent !== null ? (
+        <div
+          aria-label={`${formatNumber(progress.completedMiles)} of ${formatNumber(targetMiles)} target miles completed`}
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(progress.progressPercent)}
+          className="week-progress-track"
+          role="progressbar"
+        >
+          <span style={{ width: `${progress.progressPercent}%` }} />
+        </div>
+      ) : null}
+      {showDetails ? (
+        <div className="week-progress-details">
+          {showScheduled ? <span>{formatNumber(progress.scheduledMiles)} mi scheduled</span> : null}
+          {showProjected ? <span>{formatNumber(progress.projectedMiles)} mi projected</span> : null}
+          {deltaLabel ? <span className={`week-progress-delta week-progress-delta--${deltaClass}`}>{deltaLabel}</span> : null}
+        </div>
+      ) : null}
     </section>
   );
 }

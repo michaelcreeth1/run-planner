@@ -83,6 +83,15 @@ export function WorkoutEditor({
     onClose();
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    if (stravaMatchOnly) {
+      event.preventDefault();
+      onSaveStravaMatch?.(stravaMatch?.plannedWorkoutId ?? "");
+      return;
+    }
+    onSubmit(event);
+  }
+
   useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
 
   async function saveToLibrary() {
@@ -419,13 +428,7 @@ export function WorkoutEditor({
         aria-label="Strava match"
         disabled={isBusy}
         value={stravaMatch.plannedWorkoutId}
-        onChange={(event) => {
-          const plannedWorkoutId = event.target.value;
-          setStravaMatch(plannedWorkoutId);
-          if (stravaMatchOnly) {
-            onSaveStravaMatch?.(plannedWorkoutId);
-          }
-        }}
+        onChange={(event) => setStravaMatch(event.target.value)}
       >
         <option value="">Unplanned</option>
         {workouts.map((workout) => (
@@ -453,7 +456,7 @@ export function WorkoutEditor({
             <X size={18} />
           </button>
         </header>
-        <form aria-busy={isBusy} onSubmit={onSubmit}>
+        <form aria-busy={isBusy} onSubmit={handleSubmit}>
           {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
           {stravaMatchOnly ? (
             <div className="workout-editor-basics">{stravaMatchField}</div>
@@ -601,7 +604,7 @@ export function WorkoutEditor({
             </section>
           ) : workoutDetails}
           </>}
-          {!stravaMatchOnly ? <div className="editor-actions">
+          <div className="editor-actions">
             {!stravaMatchOnly && mode === "scheduled" && editor.id && onSaveToLibrary ? (
               <button className="secondary" disabled={isBusy || savedToLibrary} type="button" onClick={saveToLibrary}>
                 {savedToLibrary ? <Check size={17} /> : <Library size={17} />}
@@ -610,9 +613,17 @@ export function WorkoutEditor({
             ) : null}
             <button className="primary" disabled={isBusy} type="submit">
               <Save size={17} />
-              <span>{isSaving ? "Saving…" : mode === "template" ? "Save to library" : "Save"}</span>
+              <span>
+                {isSaving
+                  ? "Saving…"
+                  : stravaMatchOnly
+                    ? "Save match"
+                    : mode === "template"
+                      ? "Save to library"
+                      : "Save"}
+              </span>
             </button>
-          </div> : null}
+          </div>
         </form>
       </aside>
     </div>

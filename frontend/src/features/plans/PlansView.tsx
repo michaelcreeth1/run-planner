@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, ChevronRight, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
 import type { CSSProperties, Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,7 @@ import {
 } from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
 import { GoalListEditor } from "../goals/GoalListEditor";
+import type { GoalEditRequest } from "../goals/GoalListEditor";
 import type { GoalDraft } from "../goals/goalDrafts";
 import { goalDraftError, goalDraftPayload, goalToDraft, metricMap } from "../goals/goalDrafts";
 import type {
@@ -30,6 +31,7 @@ import type {
 } from "../../types/domain";
 
 type PlansViewProps = {
+  editRequest?: GoalEditRequest | null;
   onPlanApplied: () => void;
   onSelectPlan: (planId: string | null) => void;
   onSelectWeek: (weekStartDate: string) => void;
@@ -77,6 +79,7 @@ const phaseOptions: Array<{ value: MesocyclePhase; label: string }> = [
 ];
 
 export function PlansView({
+  editRequest = null,
   onPlanApplied,
   onSelectPlan,
   onSelectWeek,
@@ -100,6 +103,7 @@ export function PlansView({
   const [isSaving, setIsSaving] = useState(false);
   const [selectedMesocycleIndex, setSelectedMesocycleIndex] = useState(0);
   const [success, setSuccess] = useState<string | null>(null);
+  const handledGoalEditRequestRef = useRef<number | null>(null);
 
   const plansByStartDate = useMemo(
     () =>
@@ -127,6 +131,38 @@ export function PlansView({
       (planEditor.mode === "create" || serializePlanEditor(planEditor) !== planEditorBaseline)
   );
   const today = toDateInputValue(new Date());
+
+  useEffect(() => {
+    if (
+      !editRequest ||
+      !selectedPlan ||
+      handledGoalEditRequestRef.current === editRequest.requestId
+    ) {
+      return;
+    }
+    const requestedGoal =
+      (editRequest.goalId
+        ? selectedPlan.recurringGoals.find((goal) => goal.id === editRequest.goalId)
+        : undefined) ??
+      (editRequest.metricKey
+        ? selectedPlan.recurringGoals.find((goal) => goal.metricKey === editRequest.metricKey)
+        : undefined);
+    if (!requestedGoal && !editRequest.createIfMissing) {
+      return;
+    }
+    const editor = planToEditor(selectedPlan);
+    const requestedPhase = requestedGoal?.mesocyclePhase;
+    const phaseIndex = requestedPhase
+      ? editor.mesocycles.findIndex((mesocycle) => mesocycle.phase === requestedPhase)
+      : 0;
+    handledGoalEditRequestRef.current = editRequest.requestId;
+    setSuccess(null);
+    setSelectedMesocycleIndex(Math.max(phaseIndex, 0));
+    setPlanDetailsOpen(false);
+    setDescriptionEditorOpen(Boolean(selectedPlan.description));
+    setPlanEditor(editor);
+    setPlanEditorBaseline(serializePlanEditor(editor));
+  }, [editRequest, selectedPlan]);
 
   useEffect(() => {
     if (!hasUnsavedPlanChanges) {
@@ -262,7 +298,7 @@ export function PlansView({
           <div className="plans-toolbar-actions">
             <button
               type="button"
-              className="primary-button"
+              className={selectedPlan ? "ghost-button" : "primary-button"}
               onClick={openCreatePlan}
               disabled={writesBlocked}
             >
@@ -478,8 +514,11 @@ export function PlansView({
             <GoalListEditor
               addButtonLabel="Add recurring goal"
               drafts={planEditor.recurringGoals}
+              editRequest={editRequest}
               metrics={goalMetrics}
               onDraftsChange={setRecurringGoals}
+              scopeImpact={(draft) => formatAffectedWeeks(affectedWeekStarts(planEditor, draft))}
+              scopeOptions={recurringGoalScopeOptions(planEditor)}
             />
           </div>
 
@@ -525,31 +564,40 @@ export function PlansView({
               </button>
             </div>
           </div>
-          <div className="plan-hero-metrics">
-            <div>
-              <span>Range</span>
-              <strong>{formatCompactWeekRange(selectedPlan.startDate, selectedPlan.endDate)}</strong>
+          <PlanCurrentFocus plan={selectedPlan} today={today} onSelectWeek={onSelectWeek} />
+          <details className="plan-full-timeline">
+            <summary>
+              <span>
+                <strong>Full plan timeline</strong>
+                <small>{selectedPlan.weekSummaries.length} weeks across {selectedPlan.mesocycles.length} phases</small>
+              </span>
+              <ChevronDown size={16} aria-hidden="true" />
+            </summary>
+            <div className="plan-hero-metrics">
+              <div>
+                <span>Range</span>
+                <strong>{formatCompactWeekRange(selectedPlan.startDate, selectedPlan.endDate)}</strong>
+              </div>
+              <div>
+                <span>Race</span>
+                <strong>{selectedPlan.goalRace?.name ?? "Date-range plan"}</strong>
+              </div>
+              <div>
+                <span>Target pace</span>
+                <strong>{selectedPlan.goalRace?.targetPaceSecondsPerMile ? formatPace(selectedPlan.goalRace.targetPaceSecondsPerMile, 1) : "-"}</strong>
+              </div>
+              <div>
+                <span>Peak week</span>
+                <strong>{peakWeekMileage(selectedPlan.weekSummaries) ? `${formatNumber(peakWeekMileage(selectedPlan.weekSummaries))} mi` : "-"}</strong>
+              </div>
             </div>
-            <div>
-              <span>Race</span>
-              <strong>{selectedPlan.goalRace?.name ?? "Date-range plan"}</strong>
-            </div>
-            <div>
-              <span>Target pace</span>
-              <strong>{selectedPlan.goalRace?.targetPaceSecondsPerMile ? formatPace(selectedPlan.goalRace.targetPaceSecondsPerMile, 1) : "-"}</strong>
-            </div>
-            <div>
-              <span>Peak week</span>
-              <strong>{peakWeekMileage(selectedPlan.weekSummaries) ? `${formatNumber(peakWeekMileage(selectedPlan.weekSummaries))} mi` : "-"}</strong>
-            </div>
-          </div>
-          <PlanShape
-            weeks={selectedPlan.weekSummaries}
-            startDate={selectedPlan.startDate}
-            endDate={selectedPlan.endDate}
-            onSelectWeek={onSelectWeek}
-          />
-          <div className="plan-timeline">
+            <PlanShape
+              weeks={selectedPlan.weekSummaries}
+              startDate={selectedPlan.startDate}
+              endDate={selectedPlan.endDate}
+              onSelectWeek={onSelectWeek}
+            />
+            <div className="plan-timeline">
             {groupWeeksByMesocycle(selectedPlan.weekSummaries).map((group, groupIndex) => {
               const mesocycle = group.mesocycleId
                 ? selectedPlanMesocyclesById.get(group.mesocycleId)
@@ -600,11 +648,106 @@ export function PlansView({
               </section>
               );
             })}
-          </div>
+            </div>
+          </details>
         </article>
       ) : null}
     </section>
   );
+}
+
+function PlanCurrentFocus({
+  onSelectWeek,
+  plan,
+  today
+}: {
+  onSelectWeek: (weekStartDate: string) => void;
+  plan: TrainingPlan;
+  today: string;
+}) {
+  const currentWeek = plan.weekSummaries.find(
+    (week) => week.weekStartDate <= today && today <= week.weekEndDate
+  ) ?? plan.weekSummaries.find((week) => week.weekStartDate > today) ?? null;
+  const nextUnplanned = plan.weekSummaries.find(
+    (week) => week.weekEndDate >= today && week.plannedMileage <= 0
+  ) ?? null;
+  const phase = currentWeek?.mesocycleId
+    ? plan.mesocycles.find((mesocycle) => mesocycle.id === currentWeek.mesocycleId) ?? null
+    : null;
+
+  return (
+    <section className="plan-current-focus" aria-label="Current plan focus">
+      <div>
+        <span>Active phase</span>
+        <strong>{phase?.name ?? currentWeek?.mesocycleName ?? "Between phases"}</strong>
+        {currentWeek ? (
+          <small>
+            Week {currentWeek.weekIndexInMesocycle ?? "–"} of {currentWeek.mesocycleWeekCount ?? "–"}
+            {plan.goalRace ? ` · ${daysBetween(today, plan.goalRace.raceDate)} days to ${plan.goalRace.name}` : ""}
+          </small>
+        ) : null}
+      </div>
+      <div>
+        <span>This week's target</span>
+        <strong>{formatTargetMileage(currentWeek?.targetMileage ?? null)}</strong>
+        {currentWeek ? <small>{currentWeek.purpose.replaceAll("_", " ")}</small> : null}
+      </div>
+      <div className="plan-next-action">
+        <span>Next action</span>
+        {nextUnplanned ? (
+          <button type="button" onClick={() => onSelectWeek(nextUnplanned.weekStartDate)}>
+            <strong>Plan week of {formatShortDate(nextUnplanned.weekStartDate)}</strong>
+            <small>{formatTargetMileage(nextUnplanned.targetMileage)} target</small>
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        ) : (
+          <strong>Upcoming weeks are planned</strong>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function recurringGoalScopeOptions(editor: PlanEditorState) {
+  return [
+    {
+      value: "" as const,
+      label: `Whole plan · ${enumerateWeeks(editor.startDate, editor.endDate).length} weeks`,
+      affectedWeekStarts: affectedWeekStarts(editor, { mesocyclePhase: "" })
+    },
+    ...phaseOptions
+      .filter((option) => editor.mesocycles.some((mesocycle) => mesocycle.phase === option.value))
+      .map((option) => {
+        const weekStarts = affectedWeekStarts(editor, { mesocyclePhase: option.value });
+        return {
+          value: option.value,
+          label: `${option.label} phase · ${weekStarts.length} weeks`,
+          affectedWeekStarts: weekStarts
+        };
+      })
+  ];
+}
+
+function affectedWeekStarts(
+  editor: PlanEditorState,
+  goal: Pick<GoalDraft, "mesocyclePhase">
+) {
+  const phase = goal.mesocyclePhase || null;
+  const starts = phase
+    ? editor.mesocycles
+        .filter((mesocycle) => mesocycle.phase === phase)
+        .flatMap((mesocycle) => enumerateWeeks(mesocycle.startDate, mesocycle.endDate))
+    : enumerateWeeks(editor.startDate, editor.endDate);
+  return Array.from(new Set(starts)).sort();
+}
+
+function formatAffectedWeeks(weekStarts: string[]) {
+  if (weekStarts.length === 0) {
+    return "Affects no weeks in the current plan dates.";
+  }
+  return `Affects ${weekStarts.length} ${weekStarts.length === 1 ? "week" : "weeks"}: ${weekStarts
+    .map(formatShortDate)
+    .join(", ")}.`;
 }
 
 function MesocycleTimelineEditor({

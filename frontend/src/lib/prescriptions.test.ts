@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkoutPrescription } from "../types/domain";
-import { isStructuredPrescription, prescriptionTotals } from "./prescriptions";
+import { isStructuredPrescription, prescriptionTotals, scalePrescriptionDistance } from "./prescriptions";
 
 describe("prescription totals", () => {
   it("keeps mixed distance and duration totals explicitly incomplete", () => {
@@ -70,5 +70,42 @@ describe("prescription totals", () => {
         notes: ""
       }]
     })).toBe(true);
+  });
+
+  it("scales every distance step while preserving structured intent", () => {
+    const prescription: WorkoutPrescription = {
+      blocks: [
+        {
+          kind: "step",
+          role: "warmup",
+          extent: "distance",
+          distanceMeters: 1609.344,
+          displayUnit: "mi",
+          supportingTargets: [],
+          notes: "Easy"
+        },
+        {
+          kind: "repeat",
+          repetitions: 2,
+          recoveryAfterFinal: true,
+          notes: "",
+          steps: [{
+            kind: "step",
+            role: "work",
+            extent: "distance",
+            distanceMeters: 1609.344,
+            displayUnit: "mi",
+            supportingTargets: [],
+            notes: "Controlled"
+          }]
+        }
+      ]
+    };
+
+    const scaled = scalePrescriptionDistance(prescription, 6)!;
+
+    expect(prescriptionTotals(scaled).distance / 1609.344).toBeCloseTo(6);
+    expect(scaled.blocks[0]).toMatchObject({ role: "warmup", notes: "Easy" });
+    expect(scaled.blocks[1]).toMatchObject({ kind: "repeat", repetitions: 2 });
   });
 });

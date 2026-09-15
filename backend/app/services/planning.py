@@ -888,6 +888,7 @@ def serialize_recurring_goal(goal: RecurringGoal) -> dict:
         "id": goal.id,
         "athlete_account_id": goal.athlete_account_id,
         "training_plan_id": goal.training_plan_id,
+        "mesocycle_phase": goal.mesocycle_phase,
         **read_fields,
         "goal_type": goal.goal_type,
         "label": goal.label,
@@ -1094,7 +1095,7 @@ def create_workout(
         prescription,
         easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
     )
-    db.add(WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date))
+    db.add(schedule_event(workout.id, workout.planned_date))
     db.commit()
     db.refresh(workout)
     recalculate_week(db, week, refresh_existing_workout_goals=True)
@@ -1194,11 +1195,7 @@ def update_workout(
                 setattr(workout, field, value)
     if "planned_date" in updates:
         db.add(
-            WorkoutScheduleEvent(
-                planned_workout_id=workout.id,
-                scheduled_date=workout.planned_date,
-                event_type="moved",
-            )
+            schedule_event(workout.id, workout.planned_date, "moved")
         )
     workout.version += 1
 
@@ -1218,6 +1215,12 @@ def move_workout(
     planned_date: date,
     athlete_account_id: str | None = None,
 ) -> PlannedWorkout:
+    workout = get_workout(db, workout_id, athlete_account_id)
+    if workout_has_recorded_session(db, workout.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed workouts stay fixed and cannot be moved.",
+        )
     return update_workout(
         db,
         workout_id,
@@ -1230,13 +1233,15 @@ def duplicate_workout(
     db: Session,
     workout_id: str,
     athlete_account_id: str | None = None,
+    planned_date: date | None = None,
 ) -> PlannedWorkout:
     source = get_workout(db, workout_id, athlete_account_id)
-    ensure_week_is_mutable(get_week_by_id(db, source.training_week_id, source.athlete_account_id))
+    target_date = planned_date or source.planned_date
+    target_week = get_or_create_mutable_week(db, target_date, source.athlete_account_id)
     clone = clone_workout(
         source,
-        source.training_week_id,
-        source.planned_date,
+        target_week.id,
+        target_date,
         title=f"{source.title} copy",
     )
     db.add(clone)
@@ -1253,15 +1258,179 @@ def duplicate_workout(
         source_document,
         easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
     )
-    db.add(WorkoutScheduleEvent(planned_workout_id=clone.id, scheduled_date=clone.planned_date))
+    db.add(schedule_event(clone.id, clone.planned_date))
     db.commit()
     db.refresh(clone)
     recalculate_week(
         db,
-        get_week_by_id(db, source.training_week_id, source.athlete_account_id),
+        target_week,
         refresh_existing_workout_goals=True,
     )
     return get_workout(db, clone.id, source.athlete_account_id)
+
+
+def swap_workouts(
+    db: Session,
+    workout_id: str,
+    other_workout_id: str,
+    athlete_account_id: str | None = None,
+    *,
+    expected_version: int | None = None,
+    other_expected_version: int | None = None,
+) -> list[PlannedWorkout]:
+    workout = get_workout(db, workout_id, athlete_account_id)
+    other = get_workout(db, other_workout_id, athlete_account_id)
+    if workout.id == other.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Choose two different workouts to swap.",
+        )
+    if workout.athlete_account_id != other.athlete_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Planned workout not found.",
+        )
+    if expected_version is not None and workout.version != expected_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This workout changed in another editor. Reload before swapping.",
+        )
+    if other_expected_version is not None and other.version != other_expected_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The other workout changed in another editor. Reload before swapping.",
+        )
+    if workout_has_recorded_session(db, workout.id) or workout_has_recorded_session(db, other.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed workouts stay fixed and cannot be swapped.",
+        )
+
+    original_week_id = workout.training_week_id
+    other_original_week_id = other.training_week_id
+    original_date = workout.planned_date
+    other_original_date = other.planned_date
+    target_week = get_or_create_mutable_week(db, other_original_date, workout.athlete_account_id)
+    other_target_week = get_or_create_mutable_week(db, original_date, other.athlete_account_id)
+    workout.planned_date = other_original_date
+    workout.training_week_id = target_week.id
+    workout.version += 1
+    other.planned_date = original_date
+    other.training_week_id = other_target_week.id
+    other.version += 1
+    db.add_all(
+        [
+            workout,
+            other,
+            schedule_event(workout.id, workout.planned_date, "swapped"),
+            schedule_event(other.id, other.planned_date, "swapped"),
+        ]
+    )
+    db.commit()
+    recalculate_impacted_weeks(
+        db,
+        {
+            original_week_id,
+            other_original_week_id,
+            workout.training_week_id,
+            other.training_week_id,
+        },
+        workout.athlete_account_id,
+    )
+    return [
+        get_workout(db, workout.id, workout.athlete_account_id),
+        get_workout(db, other.id, workout.athlete_account_id),
+    ]
+
+
+def undo_workout_move(
+    db: Session,
+    workout_id: str,
+    athlete_account_id: str | None = None,
+) -> PlannedWorkout:
+    workout = get_workout(db, workout_id, athlete_account_id)
+    if workout_has_recorded_session(db, workout.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A completed workout cannot be moved.",
+        )
+    history = list(
+        db.scalars(
+            select(WorkoutScheduleEvent)
+            .where(WorkoutScheduleEvent.planned_workout_id == workout.id)
+            .order_by(WorkoutScheduleEvent.created_at.desc(), WorkoutScheduleEvent.id.desc())
+        )
+    )
+    prior_date = next(
+        (event.scheduled_date for event in history if event.scheduled_date != workout.planned_date),
+        None,
+    )
+    if prior_date is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This workout has no earlier scheduled date to restore.",
+        )
+    original_week_id = workout.training_week_id
+    target_week = get_or_create_mutable_week(db, prior_date, workout.athlete_account_id)
+    workout.planned_date = prior_date
+    workout.training_week_id = target_week.id
+    workout.status = "planned"
+    workout.version += 1
+    db.add(workout)
+    db.add(
+        schedule_event(workout.id, prior_date, "move_undone")
+    )
+    db.commit()
+    recalculate_impacted_weeks(
+        db,
+        {original_week_id, target_week.id},
+        workout.athlete_account_id,
+    )
+    return get_workout(db, workout.id, workout.athlete_account_id)
+
+
+def workout_has_recorded_session(db: Session, workout_id: str) -> bool:
+    return (
+        db.scalars(
+            select(PerformedSessionRecording.id)
+            .join(
+                PerformedSession,
+                PerformedSession.id == PerformedSessionRecording.performed_session_id,
+            )
+            .where(PerformedSession.planned_workout_id == workout_id)
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+def is_simple_prescription(document: dict) -> bool:
+    blocks = document.get("blocks", [])
+    if len(blocks) != 1:
+        return False
+    block = blocks[0]
+    return (
+        block.get("kind") == "step"
+        and block.get("role") == "other"
+        and not block.get("primary_target")
+        and not block.get("supporting_targets")
+        and not block.get("notes")
+    )
+
+
+def schedule_event(
+    workout_id: str,
+    scheduled_date: date,
+    event_type: str = "scheduled",
+) -> WorkoutScheduleEvent:
+    # Database CURRENT_TIMESTAMP can have only second precision (notably in
+    # SQLite), which makes two quick moves impossible to order reliably.
+    return WorkoutScheduleEvent(
+        planned_workout_id=workout_id,
+        scheduled_date=scheduled_date,
+        event_type=event_type,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
 
 
 def serialize_template(template: WorkoutTemplate) -> dict:
@@ -1788,7 +1957,7 @@ def reconcile_session(
         session.prescription_revision_id = None
         session.association = "unmatched"
         session.match_provenance = "user_confirmed"
-        session.outcome = "unresolved"
+        session.outcome = "unplanned"
     else:
         matched_workout = get_workout(db, payload.planned_workout_id, athlete_account_id)
         conflicting_session = db.scalars(
@@ -2025,19 +2194,94 @@ def save_week_plan(
     week.target_long_run_distance = payload.target_long_run_distance
     week.target_long_run_source = "manual"
 
-    week.workouts.clear()
-    week.goals.clear()
-    db.flush()
-
+    existing_workouts = {workout.id: workout for workout in week.workouts}
+    retained_workout_ids: set[str] = set()
     pace_estimate = training_pace_estimate(db, week.athlete_account_id)
     for workout_payload in payload.workouts:
-        workout_data = workout_payload.model_dump(exclude={"prescription"})
-        if workout_payload.prescription is not None:
-            apply_prescription_summary(
-                workout_data,
-                workout_payload.prescription,
-                easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
-                workout_type=workout_payload.workout_type,
+        workout_data = workout_payload.model_dump(
+            exclude={"id", "expected_version", "prescription"}
+        )
+        workout = existing_workouts.get(workout_payload.id or "")
+        if workout is not None:
+            retained_workout_ids.add(workout.id)
+            if (
+                workout_payload.expected_version is not None
+                and workout_payload.expected_version != workout.version
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f'"{workout.title}" changed in another editor. Reload before saving.',
+                )
+            current_values = {field: getattr(workout, field) for field in workout_data}
+            current_document = (
+                workout.current_prescription.prescription_json
+                if workout.current_prescription is not None
+                else None
+            )
+            submitted_prescription = workout_payload.prescription
+            submitted_document = (
+                submitted_prescription.model_dump(exclude_none=True)
+                if submitted_prescription is not None
+                else None
+            )
+            summary_changed = any(
+                current_values[field] != workout_data[field]
+                for field in ("planned_distance", "planned_duration")
+            )
+            if summary_changed and (
+                submitted_document is None or submitted_document == current_document
+            ):
+                if current_document is not None and not is_simple_prescription(current_document):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=(
+                            f'Adjust the structured prescription for "{workout.title}" '
+                            "before changing its calculated distance or duration."
+                        ),
+                    )
+                submitted_prescription = legacy_prescription(workout_data)
+                submitted_document = submitted_prescription.model_dump(exclude_none=True)
+            prescription_changed = (
+                submitted_prescription is not None and current_document != submitted_document
+            )
+            changed = current_values != workout_data or prescription_changed
+            if changed and workout_has_recorded_session(db, workout.id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f'Completed workout "{workout.title}" must stay unchanged.',
+                )
+            original_date = workout.planned_date
+            for field, value in workout_data.items():
+                setattr(workout, field, value)
+            if prescription_changed:
+                add_prescription_revision(
+                    db,
+                    workout,
+                    submitted_prescription,
+                    easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+                )
+                summary_fields: dict = {}
+                apply_prescription_summary(
+                    summary_fields,
+                    submitted_prescription,
+                    easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
+                    workout_type=workout.workout_type,
+                )
+                for field, value in summary_fields.items():
+                    setattr(workout, field, value)
+            if original_date != workout.planned_date:
+                db.add(
+                    schedule_event(workout.id, workout.planned_date, "moved")
+                )
+            if changed:
+                workout.version += 1
+            db.add(workout)
+            continue
+
+        if workout_payload.id and not workout_payload.id.startswith("virtual-"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="A workout in this draft does not belong to the selected week.",
             )
         workout = PlannedWorkout(
             athlete_account_id=week.athlete_account_id,
@@ -2052,19 +2296,38 @@ def save_week_plan(
             workout_payload.prescription,
             easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
         )
-        db.add(
-            WorkoutScheduleEvent(planned_workout_id=workout.id, scheduled_date=workout.planned_date)
-        )
+        db.add(schedule_event(workout.id, workout.planned_date))
 
+    for workout in existing_workouts.values():
+        if workout.id in retained_workout_ids:
+            continue
+        if workout_has_recorded_session(db, workout.id):
+            continue
+        db.delete(workout)
+
+    existing_goals = {goal.id: goal for goal in week.goals}
+    retained_goal_ids: set[str] = set()
     for goal_payload in payload.goals:
+        goal_data = goal_payload.model_dump(exclude={"id"})
+        goal = existing_goals.get(goal_payload.id or "")
+        if goal is not None:
+            retained_goal_ids.add(goal.id)
+            for field, value in goal_data.items():
+                setattr(goal, field, value)
+            db.add(goal)
+            continue
         db.add(
             WeekGoal(
                 training_week_id=week.id,
                 athlete_account_id=week.athlete_account_id,
                 week_start_date=week.week_start_date,
-                **goal_payload.model_dump(),
+                **goal_data,
             )
         )
+
+    for goal in existing_goals.values():
+        if goal.id not in retained_goal_ids:
+            db.delete(goal)
 
     db.add(week)
     db.commit()

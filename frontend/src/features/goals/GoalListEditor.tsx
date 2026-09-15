@@ -1,6 +1,6 @@
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { GoalMetricDefinition, WeekGoalEvaluationMode, WeekGoalMetric } from "../../types/domain";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { GoalMetricDefinition, MesocyclePhase, WeekGoalEvaluationMode, WeekGoalMetric } from "../../types/domain";
 import type { GoalDraft } from "./goalDrafts";
 import {
   goalDraftError,
@@ -11,6 +11,19 @@ import {
   newGoalDraft
 } from "./goalDrafts";
 
+export type GoalEditRequest = {
+  requestId: number;
+  goalId: string | null;
+  metricKey: WeekGoalMetric | null;
+  createIfMissing?: boolean;
+};
+
+export type GoalScopeOption = {
+  value: MesocyclePhase | "";
+  label: string;
+  affectedWeekStarts?: string[];
+};
+
 // Shared editor for standing weekly goals. Rows read as plain sentences and
 // expand into a single-line metric/condition/value form when edited.
 export function GoalListEditor({
@@ -18,18 +31,66 @@ export function GoalListEditor({
   disabled = false,
   drafts,
   emptyHint,
+  editRequest = null,
   metrics,
-  onDraftsChange
+  onDraftsChange,
+  scopeImpact,
+  scopeOptions
 }: {
   addButtonLabel: string;
   disabled?: boolean;
   drafts: GoalDraft[];
   emptyHint?: string;
+  editRequest?: GoalEditRequest | null;
   metrics: GoalMetricDefinition[];
   onDraftsChange: (drafts: GoalDraft[]) => void;
+  scopeImpact?: (draft: GoalDraft) => string | null;
+  scopeOptions?: GoalScopeOption[];
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const metricsByKey = useMemo(() => metricMap(metrics), [metrics]);
+  const handledEditRequestRef = useRef<number | null>(null);
+  const requestedKeyRef = useRef<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
+
+  useEffect(() => {
+    if (!editRequest || handledEditRequestRef.current === editRequest.requestId) {
+      return;
+    }
+    const target = editRequest.goalId
+      ? drafts.find((draft) => draft.id === editRequest.goalId)
+      : editRequest.metricKey
+        ? drafts.find((draft) => draft.metricKey === editRequest.metricKey)
+        : undefined;
+    if (!target) {
+      const metric = editRequest.metricKey ? metricsByKey.get(editRequest.metricKey) : null;
+      const newDraft = metric && editRequest.createIfMissing ? newGoalDraft([metric]) : null;
+      if (newDraft) {
+        onDraftsChange([...drafts, newDraft]);
+      }
+      return;
+    }
+    handledEditRequestRef.current = editRequest.requestId;
+    requestedKeyRef.current = target.key;
+    setEditingKey(target.key);
+  }, [drafts, editRequest, metricsByKey, onDraftsChange]);
+
+  useEffect(() => {
+    if (
+      !editRequest ||
+      handledEditRequestRef.current !== editRequest.requestId ||
+      !editingKey ||
+      requestedKeyRef.current !== editingKey
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const row = rowRefs.current.get(editingKey);
+      row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      row?.querySelector<HTMLElement>("select, input, textarea, button")?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editRequest, editingKey]);
 
   function updateDraft(key: string, updates: Partial<GoalDraft>) {
     onDraftsChange(drafts.map((draft) => (draft.key === key ? { ...draft, ...updates } : draft)));
@@ -67,11 +128,21 @@ export function GoalListEditor({
     const isEditing = editingKey === draft.key;
     const validationError = goalDraftError(draft, metricsByKey);
     const sentence = metric ? goalSentence(draft, metric) : draft.legacyLabel || "Unsupported goal";
+    const scopeLabel = scopeOptions?.find((option) => option.value === (draft.mesocyclePhase ?? ""))?.label;
+    const impact = scopeImpact?.(draft) ?? null;
+    const setRowRef = (node: HTMLElement | null) => {
+      if (node) {
+        rowRefs.current.set(draft.key, node);
+      } else {
+        rowRefs.current.delete(draft.key);
+      }
+    };
 
     if (!isEditing) {
       return (
-        <article key={draft.key} className="goal-row">
+        <article key={draft.key} className="goal-row" ref={setRowRef}>
           <span className="goal-row-sentence">{sentence}</span>
+          {scopeLabel ? <small className="goal-row-scope">{scopeLabel}</small> : null}
           {validationError ? <small className="goal-row-flag">Needs review</small> : null}
           <span className="goal-row-actions">
             <button
@@ -100,7 +171,7 @@ export function GoalListEditor({
     }
 
     return (
-      <article key={draft.key} className="goal-row goal-row--editing">
+      <article key={draft.key} className="goal-row goal-row--editing" ref={setRowRef}>
         <div className="goal-row-fields">
           <label>
             <span>Metric</span>
@@ -116,6 +187,24 @@ export function GoalListEditor({
               ))}
             </select>
           </label>
+          {scopeOptions ? (
+            <label>
+              <span>Applies to</span>
+              <select
+                aria-label="Goal scope"
+                value={draft.mesocyclePhase ?? ""}
+                onChange={(event) =>
+                  updateDraft(draft.key, { mesocyclePhase: event.target.value as MesocyclePhase | "" })
+                }
+              >
+                {scopeOptions.map((option) => (
+                  <option key={option.value || "plan"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label>
             <span>Condition</span>
             <select
@@ -179,6 +268,7 @@ export function GoalListEditor({
         </div>
         <div className="goal-row-feedback" aria-live="polite">
           {validationError ? <small>{validationError}</small> : <span>{sentence}</span>}
+          {impact ? <small className="goal-row-impact">{impact}</small> : null}
         </div>
         <div className="goal-row-editor-actions">
           <button

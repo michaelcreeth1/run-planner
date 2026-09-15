@@ -303,6 +303,26 @@ describe("plan week draft helpers", () => {
     });
   });
 
+  it("preserves workout and goal identities when an existing week is saved", () => {
+    const draft = makeDraft({
+      hasExistingPlan: true,
+      workouts: [makeDraftWorkout({ id: "workout-existing", version: 4 })],
+      goals: [
+        makeGoalDraft({
+          id: "goal-existing",
+          source: "manual",
+          sourceLabel: "This week",
+          targetValue: "5"
+        })
+      ]
+    });
+
+    const payload = planWeekDraftToPayload(draft);
+
+    expect(payload.workouts[0]).toMatchObject({ id: "workout-existing", expectedVersion: 4 });
+    expect(payload.goals).toEqual(expect.arrayContaining([expect.objectContaining({ id: "goal-existing" })]));
+  });
+
   it("normalizes a strength workout that carries stale running fields", () => {
     const draft = makeDraft({
       workouts: [

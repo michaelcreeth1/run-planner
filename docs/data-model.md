@@ -47,8 +47,10 @@ Remaining implementation order:
 `PerformedSession` is the logical unit of completed work. One session can contain
 one or more Strava recordings, while each recording belongs to only one session.
 Its optional planned-workout association is separate from its outcome. Outcomes
-are `unresolved`, `as_planned`, `modified`, `partial`, `replaced`, `skipped`,
-`missed`, and `moved`. Strava recordings—not workout status or manual metrics—are
+are `unresolved`, `unplanned`, `as_planned`, `modified`, `partial`, `replaced`,
+`skipped`, `missed`, and `moved`. `unplanned` means the athlete explicitly
+confirmed that the imported session should remain unmatched. Strava
+recordings—not workout status or manual metrics—are
 the evidence for completed work and remaining-work projections; raw activity
 dates are retained as evidence but are not completion keys. Legacy nullable manual
 metric columns remain schema-compatible but are not used by the product workflow.

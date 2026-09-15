@@ -286,8 +286,10 @@ GET  /api/performed-sessions/{id}/match-suggestions
 PUT  /api/performed-sessions/{id}/reconciliation
 ```
 
-Edit a completed session to change its **Strava match** with one dropdown. An
-unmatched import exposes the same match-only edit. There are no recording,
+Edit a completed session to change its **Strava match** with one dropdown and an
+explicit save action. An unmatched import exposes the same match-only edit;
+saving `Unplanned` confirms that the activity should remain unmatched and clears
+its review state. There are no recording,
 outcome, intensity, note, or metric-override controls. Strava recordings are the
 only source of performed work; the app does not provide manual activity entry.
 Clear nearby recordings are grouped automatically. If an ambiguous recording is

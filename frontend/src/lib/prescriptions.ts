@@ -136,6 +136,30 @@ export function isStructuredPrescription(prescription?: WorkoutPrescription | nu
   );
 }
 
+export function scalePrescriptionDistance(
+  prescription: WorkoutPrescription | null | undefined,
+  targetDistanceMiles: number
+): WorkoutPrescription | null | undefined {
+  if (!prescription || targetDistanceMiles <= 0) {
+    return prescription;
+  }
+  const totals = prescriptionTotals(prescription);
+  if (!totals.distanceComplete || totals.distance <= 0) {
+    return prescription;
+  }
+  const scale = (targetDistanceMiles * 1609.344) / totals.distance;
+  const scaleBlocks = (blocks: PrescriptionBlock[]): PrescriptionBlock[] =>
+    blocks.map((block) => {
+      if (block.kind === "repeat") {
+        return { ...block, steps: scaleBlocks(block.steps) };
+      }
+      return block.extent === "distance" && block.distanceMeters
+        ? { ...block, distanceMeters: block.distanceMeters * scale }
+        : block;
+    });
+  return { blocks: scaleBlocks(prescription.blocks) };
+}
+
 export function prescriptionFromForm(form: WorkoutForm): WorkoutPrescription {
   if (form.prescription?.blocks.length) {
     return form.prescription;

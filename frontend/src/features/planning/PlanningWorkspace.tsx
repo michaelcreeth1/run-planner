@@ -1,9 +1,15 @@
 import { Route, Target } from "lucide-react";
 import type { PlanningSection } from "../../lib/navigation";
+import type { GoalEditRequest } from "../goals/GoalListEditor";
 import { GoalsView } from "../goals/GoalsView";
 import { PlansView } from "../plans/PlansView";
 
+export type RuleEditRequest = GoalEditRequest & {
+  destination: "baseline" | "plan";
+};
+
 export function PlanningWorkspace({
+  editRequest = null,
   onChangeSection,
   onPlanApplied,
   onSelectPlan,
@@ -12,6 +18,7 @@ export function PlanningWorkspace({
   selectedPlanId,
   writesBlocked
 }: {
+  editRequest?: RuleEditRequest | null;
   onChangeSection: (section: PlanningSection) => void;
   onPlanApplied: () => void;
   onSelectPlan: (planId: string | null) => void;
@@ -45,6 +52,7 @@ export function PlanningWorkspace({
 
       <div hidden={section !== "overview"}>
         <PlansView
+          editRequest={editRequest?.destination === "plan" ? editRequest : null}
           onSelectPlan={onSelectPlan}
           writesBlocked={writesBlocked}
           onPlanApplied={onPlanApplied}
@@ -54,6 +62,7 @@ export function PlanningWorkspace({
       </div>
       <div hidden={section !== "goals"}>
         <GoalsView
+          editRequest={editRequest?.destination === "baseline" ? editRequest : null}
           writesBlocked={writesBlocked}
           onSelectWeek={onSelectWeek}
         />

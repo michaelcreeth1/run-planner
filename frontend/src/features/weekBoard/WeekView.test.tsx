@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HttpResponse, http } from "msw";
@@ -10,7 +10,85 @@ import type { PerformedSession, TrainingWeek, Workout } from "../../types/domain
 import { WeekView } from "./WeekView";
 
 describe("WeekView workout completion", () => {
-  it("keeps today's sessions in the weekly schedule without a duplicate feature card", async () => {
+  it("presents completed, scheduled, projected, and target mileage as separate week signals", () => {
+    const workout = {
+      ...makeWorkout(),
+      plannedDistance: 13,
+      plannedDuration: null,
+      sport: "run" as const,
+      workoutType: "long_run" as const,
+      intensityCategory: "easy" as const,
+      title: "Long run"
+    };
+    const week = {
+      ...makeWeek(workout),
+      actualMileage: 44.5,
+      plannedMileage: 57.5,
+      targetMileage: 55,
+      targetMileageSource: "plan" as const
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const progress = within(screen.getByRole("region", { name: "Week progress" }));
+    expect(progress.getByText("44.5 / 55 mi")).toBeVisible();
+    expect(progress.getByText("completed / target")).toBeVisible();
+    expect(progress.getByText("13 mi scheduled")).toBeVisible();
+    expect(progress.getByText("57.5 mi projected")).toBeVisible();
+    expect(progress.getByText("2.5 mi above target")).toBeVisible();
+    expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "81");
+  });
+
+  it("hides scheduled and projected mileage when both equal the target", () => {
+    const workout = {
+      ...makeWorkout(),
+      plannedDistance: 64,
+      plannedDuration: null,
+      sport: "run" as const,
+      workoutType: "long_run" as const,
+      intensityCategory: "easy" as const,
+      title: "Long run"
+    };
+    const week = {
+      ...makeWeek(workout),
+      plannedMileage: 64,
+      targetMileage: 64,
+      targetMileageSource: "plan" as const
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const progress = within(screen.getByRole("region", { name: "Week progress" }));
+    expect(progress.getByText("0 / 64 mi")).toBeVisible();
+    expect(progress.queryByText("64 mi scheduled")).not.toBeInTheDocument();
+    expect(progress.queryByText("64 mi projected")).not.toBeInTheDocument();
+    expect(progress.queryByText("On target")).not.toBeInTheDocument();
+    expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    expect(progress.getByText("0 completed sessions").closest(".week-progress-heading")).toBeVisible();
+    expect(within(screen.getByLabelText("Week summary")).queryByText("Mileage")).not.toBeInTheDocument();
+  });
+
+  it("keeps every one of today's sessions in the read-first schedule", async () => {
     const user = userEvent.setup();
     const completed = { ...makeWorkout(), status: "completed_as_planned" as const };
     const remaining = { ...makeWorkout(), id: "remaining", title: "Evening mobility" };
@@ -28,11 +106,14 @@ describe("WeekView workout completion", () => {
       </QueryClientProvider>
     );
 
-    expect(screen.queryByRole("region", { name: "Today's training" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Today" })).not.toBeInTheDocument();
     const schedule = within(screen.getByRole("region", { name: "Weekly schedule" }));
-    expect(schedule.getByRole("button", { name: `Edit ${remaining.title}` })).toBeVisible();
+    expect(schedule.getByRole("button", { name: `View ${remaining.title}` })).toBeVisible();
     expect(schedule.getAllByText("30 min")).toHaveLength(2);
-    await user.click(schedule.getByRole("button", { name: `Edit ${remaining.title}` }));
+    await user.click(schedule.getByRole("button", { name: `View ${remaining.title}` }));
+    const details = within(screen.getByRole("dialog", { name: `${remaining.title} workout details` }));
+    expect(details.getByText("No additional instructions for this session.")).toBeVisible();
+    await user.click(details.getByRole("button", { name: "Edit" }));
     expect(props.onEdit).toHaveBeenCalledWith(remaining);
   });
 
@@ -65,6 +146,84 @@ describe("WeekView workout completion", () => {
     expect(props.onDuplicate).toHaveBeenCalledWith(workout);
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
+  });
+
+  it("moves, swaps, and copies a workout from the schedule action", async () => {
+    const user = userEvent.setup();
+    const workout = makeWorkout();
+    const other = {
+      ...makeWorkout(),
+      id: "workout-2",
+      plannedDate: "2026-07-15",
+      title: "Easy run"
+    };
+    const week = { ...makeWeek(workout), workouts: [workout, other] };
+    const props = makeProps(week);
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...props} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Move or swap workout"));
+    const moveDialog = within(screen.getByRole("dialog", { name: "Move or swap workout" }));
+    await user.click(moveDialog.getByRole("button", { name: "Swap days" }));
+    expect(props.onSwap).toHaveBeenCalledWith(workout, other);
+
+    await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Move or swap workout"));
+    const moveInput = screen.getByLabelText("Move date");
+    await user.clear(moveInput);
+    await user.type(moveInput, "2026-07-16");
+    await user.click(screen.getByRole("button", { name: "Move workout" }));
+    expect(props.onMove).toHaveBeenCalledWith(workout, "2026-07-16");
+
+    await user.click(screen.getByRole("button", { name: `Actions for ${workout.title}` }));
+    await user.click(screen.getByTitle("Copy workout to another date"));
+    const copyInput = screen.getByLabelText("Copy date");
+    await user.clear(copyInput);
+    await user.type(copyInput, "2026-07-20");
+    await user.click(screen.getByRole("button", { name: "Copy workout" }));
+    expect(props.onDuplicateToDate).toHaveBeenCalledWith(workout, "2026-07-20");
+  });
+
+  it("does not duplicate completed or upcoming sessions above the schedule", () => {
+    const completed = makeWorkout();
+    const next = {
+      ...makeWorkout(),
+      id: "workout-next",
+      plannedDate: "2026-07-14",
+      title: "Tomorrow's easy run"
+    };
+    const week = {
+      ...makeWeek(completed),
+      workouts: [completed, next],
+      performedSessions: [makePerformedSession(completed)]
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    expect(screen.queryByRole("region", { name: "Today" })).not.toBeInTheDocument();
+    const schedule = within(screen.getByRole("region", { name: "Weekly schedule" }));
+    expect(schedule.getByRole("button", { name: "View Untracked strength session" })).toBeVisible();
+    expect(schedule.getByRole("button", { name: "View Tomorrow's easy run" })).toBeVisible();
   });
 
   it("shows a compatible unresolved import as awaiting review without a reconciliation action", async () => {
@@ -190,6 +349,73 @@ describe("WeekView workout completion", () => {
     expect(screen.queryByRole("button", { name: /Log completed work/ })).not.toBeInTheDocument();
   });
 
+  it("keeps checks collapsed by default when the week has issues", async () => {
+    const workouts = Array.from({ length: 7 }, (_, index) => ({
+      ...makeWorkout(),
+      id: `workout-${index + 1}`,
+      plannedDate: `2026-07-${String(13 + index).padStart(2, "0")}`
+    }));
+    const week = {
+      ...makeWeek(workouts[0]),
+      workouts
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    const issueSummary = await screen.findByText(/^\d+ issues?$/);
+    expect(issueSummary.closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("places the collapsed all-pass checks status between the weekly summary and schedule", async () => {
+    const workouts = ["2026-07-13", "2026-07-15", "2026-07-17", "2026-07-19"].map(
+      (plannedDate, index) => ({
+        ...makeWorkout(),
+        id: `run-${index + 1}`,
+        plannedDate,
+        title: index === 3 ? "Long run" : "Easy run",
+        sport: "run" as const,
+        workoutType: index === 3 ? ("long_run" as const) : ("easy" as const),
+        intensityCategory: "easy" as const,
+        plannedDistance: 4,
+        plannedDuration: null
+      })
+    );
+    const week = {
+      ...makeWeek(workouts[0]),
+      plannedMileage: 16,
+      workouts
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    const checks = screen.getByText("All checks pass").closest("details");
+    expect(checks).not.toHaveAttribute("open");
+    expect(checks?.previousElementSibling).toHaveClass("week-command-center");
+    expect(checks?.nextElementSibling).toHaveClass("week-schedule-panel");
+  });
+
   it("opens week planning from an actually unplanned current week", async () => {
     const user = userEvent.setup();
     const onOpenPlanWeek = vi.fn();
@@ -249,6 +475,33 @@ describe("WeekView workout completion", () => {
     await user.click(within(screen.getByLabelText("Week actions")).getByRole("button", { name: "Close empty week" }));
 
     expect(onSkipReview).toHaveBeenCalledWith(week.id);
+  });
+
+  it("keeps the review action available after a past week was reviewed", async () => {
+    const user = userEvent.setup();
+    const onOpenPlanWeek = vi.fn();
+    const week: TrainingWeek = {
+      ...makeWeek(makeWorkout()),
+      weekStartDate: "2026-07-06",
+      weekEndDate: "2026-07-12",
+      reviewedAt: "2026-07-13T12:00:00Z",
+      weekState: "past"
+    };
+    server.use(
+      http.get(new URL("/api/plans", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/default-goals", window.location.origin).toString(), () => HttpResponse.json([]))
+    );
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProfileProvider profileId="athlete-1">
+          <WeekView {...makeProps(week)} onOpenPlanWeek={onOpenPlanWeek} />
+        </ProfileProvider>
+      </QueryClientProvider>
+    );
+
+    await user.click(within(screen.getByLabelText("Week actions")).getByRole("button", { name: "Review week" }));
+    expect(onOpenPlanWeek).toHaveBeenCalledWith(week);
   });
 
   it("renders an unplanned collapsed week as quiet empty days, not seven rest days", () => {
@@ -461,6 +714,9 @@ function makeProps(week: TrainingWeek): ComponentProps<typeof WeekView> {
     onEditPerformedSession: vi.fn(),
     onDelete: vi.fn(),
     onDuplicate: vi.fn(),
+    onDuplicateToDate: vi.fn(),
+    onMove: vi.fn(),
+    onSwap: vi.fn(),
     onCreateGoal: vi.fn(),
     onCopyPriorWeek: vi.fn(),
     onDeriveWeekGoals: vi.fn(),
@@ -521,5 +777,29 @@ function makeWorkout(): Workout {
     instructions: "",
     notes: "",
     status: "planned"
+  };
+}
+
+function makePerformedSession(workout: Workout): PerformedSession {
+  return {
+    id: "session-complete",
+    athleteAccountId: workout.athleteAccountId,
+    occurredAt: `${workout.plannedDate}T07:00:00`,
+    sport: workout.sport,
+    recordings: [{ stravaActivityId: "activity-complete", contributesToTotals: true }],
+    manualDistanceMeters: null,
+    manualDurationSeconds: null,
+    plannedWorkoutId: workout.id,
+    prescriptionRevisionId: null,
+    association: "associated",
+    matchProvenance: "user_confirmed",
+    outcome: "as_planned",
+    intensityCategory: workout.intensityCategory,
+    evidence: "activity_summary",
+    assessmentNote: "",
+    evidenceChanged: false,
+    version: 1,
+    totalDistanceMeters: 0,
+    totalDurationSeconds: workout.plannedDuration
   };
 }

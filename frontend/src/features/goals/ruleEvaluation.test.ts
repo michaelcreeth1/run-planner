@@ -238,6 +238,41 @@ describe("buildPlanRules", () => {
     const rules = buildPlanRules({ defaultGoals: [], plan });
     expect(rules.some((rule) => rule.kind === "down_week_rhythm")).toBe(true);
   });
+
+  it("uses a phase-scoped rule only in that phase and reports its origin", () => {
+    const plan = {
+      name: "Autumn Half",
+      mesocycles: [makeMesocycle({ phase: "build" })],
+      recurringGoals: [
+        makeRecurringGoal({
+          trainingPlanId: "plan-1",
+          mesocyclePhase: "build",
+          metricKey: "rest_day_count",
+          category: "recovery",
+          label: "Build phase keeps two rest days",
+          evaluationMode: "at_least",
+          targetValue: 2,
+          minAcceptable: 2,
+          unit: "days"
+        })
+      ],
+      weekSummaries: []
+    } as unknown as TrainingPlan;
+    const rules = buildPlanRules({ defaultGoals: [], plan });
+    const workouts = FULL_WEEK_DATES.slice(0, 6).map((plannedDate) => makeWorkout({ plannedDate }));
+    const input = {
+      week: plannedWeek(workouts),
+      summary: makeSummary({ mesocyclePhase: "build" }),
+      mesocycle: makeMesocycle({ phase: "build" })
+    };
+
+    const evaluations = evaluateRulesForWeek(rules, input, TODAY);
+    const phaseEvaluation = evaluations.find((evaluation) => evaluation.origin === "phase" && evaluation.metricKey === "rest_day_count");
+    const baselineEvaluation = evaluations.find((evaluation) => evaluation.ruleId === "rest-days");
+
+    expect(phaseEvaluation).toMatchObject({ status: "fail", originLabel: "Build phase" });
+    expect(baselineEvaluation?.status).toBe("not_applicable");
+  });
 });
 
 describe("pending and override states", () => {

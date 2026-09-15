@@ -12,8 +12,10 @@ from app.schemas.planning import (
     MatchSuggestion,
     PerformedSessionRead,
     PlannedWorkoutCreate,
+    PlannedWorkoutDuplicate,
     PlannedWorkoutMove,
     PlannedWorkoutRead,
+    PlannedWorkoutSwap,
     PlannedWorkoutUpdate,
     PlanWeekSave,
     PrescriptionTotals,
@@ -241,8 +243,44 @@ def move_planned_workout(
 
 
 @router.post("/planned-workouts/{workout_id}/duplicate", response_model=PlannedWorkoutRead)
-def duplicate_planned_workout(workout_id: str, db: DbSession, profile: CurrentProfile):
-    return planning.duplicate_workout(db, workout_id, profile.id)
+def duplicate_planned_workout(
+    workout_id: str,
+    db: DbSession,
+    profile: CurrentProfile,
+    payload: PlannedWorkoutDuplicate | None = None,
+):
+    return planning.duplicate_workout(
+        db,
+        workout_id,
+        profile.id,
+        payload.planned_date if payload else None,
+    )
+
+
+@router.post("/planned-workouts/{workout_id}/swap", response_model=list[PlannedWorkoutRead])
+def swap_planned_workouts(
+    workout_id: str,
+    payload: PlannedWorkoutSwap,
+    db: DbSession,
+    profile: CurrentProfile,
+):
+    return planning.swap_workouts(
+        db,
+        workout_id,
+        payload.other_workout_id,
+        profile.id,
+        expected_version=payload.expected_version,
+        other_expected_version=payload.other_expected_version,
+    )
+
+
+@router.post("/planned-workouts/{workout_id}/undo-move", response_model=PlannedWorkoutRead)
+def undo_planned_workout_move(
+    workout_id: str,
+    db: DbSession,
+    profile: CurrentProfile,
+):
+    return planning.undo_workout_move(db, workout_id, profile.id)
 
 
 @router.get("/workout-templates", response_model=list[WorkoutTemplateRead])

@@ -30,6 +30,7 @@ QUALITY_KEYWORDS = (
 )
 CALCULATOR_VERSION = 2
 RESOLVED_SESSION_OUTCOMES = {
+    "unplanned",
     "as_planned",
     "modified",
     "partial",

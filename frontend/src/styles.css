@@ -2655,20 +2655,20 @@ dt {
 
 .week-slate {
   background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
   display: grid;
-  gap: 8px;
+  gap: 14px;
   overflow: visible;
-  padding: 15px 18px 18px;
+  padding: 16px 18px 18px;
 }
 
 .week-command-center {
   background: transparent;
   border: 0;
   box-shadow: none;
-  gap: 10px;
+  gap: 12px;
   overflow: visible;
   padding: 0;
 }
@@ -2776,17 +2776,17 @@ dt {
 }
 
 .week-command-stats {
-  border-top: 1px solid var(--border-subtle);
-  gap: 0;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding-top: 8px;
+  border-top: 0;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  padding-top: 2px;
 }
 
 .week-command-stat {
   background: transparent;
   border-radius: 0;
   box-shadow: none;
-  padding: 0 12px;
+  padding: 0;
 }
 
 .week-command-stat:first-child {
@@ -2798,7 +2798,7 @@ dt {
 }
 
 .week-command-stat + .week-command-stat {
-  border-left: 1px solid var(--border-subtle);
+  border-left: 0;
 }
 
 .week-command-stat::before {
@@ -2919,7 +2919,7 @@ dt {
 
 .week-board {
   align-items: stretch;
-  gap: 0;
+  gap: 6px;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   overflow: visible;
   padding-bottom: 0;
@@ -2938,7 +2938,7 @@ dt {
 }
 
 .day-column + .day-column {
-  border-left: 1px solid var(--border-subtle);
+  border-left: 0;
 }
 
 .day-column::before {
@@ -2984,7 +2984,7 @@ dt {
 }
 
 .day-column--today {
-  background: color-mix(in srgb, var(--primary) 4%, var(--bg-surface));
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
   border-radius: var(--radius-md);
 }
 
@@ -3006,14 +3006,14 @@ dt {
 .workout-item,
 .actual-item {
   --workout-border-width: 0px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-primary) 3.5%, transparent);
+  border: 0;
+  border-radius: 9px;
   box-shadow: none;
   box-sizing: border-box;
   container-type: normal;
-  height: auto;
-  min-height: 92px;
+  height: 82px;
+  min-height: 82px;
   min-width: 0;
   padding: 8px;
 }
@@ -3033,11 +3033,11 @@ dt {
 }
 
 .workout-item--read-only {
-  background: transparent;
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
 }
 
 .workout-item--missed {
-  border-style: dashed;
+  background: var(--tint-danger-bg);
 }
 
 .actual-item {
@@ -3048,7 +3048,20 @@ dt {
 .workout-item--review {
   --workout-color: var(--warning);
   background: var(--tint-warning-bg);
-  border-color: var(--tint-warning-border);
+}
+
+.workout-item:hover,
+.workout-item:focus-within,
+.actual-item:hover,
+.actual-item:focus-within {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.actual-item.needs-review:hover,
+.actual-item.needs-review:focus-within,
+.workout-item--review:hover,
+.workout-item--review:focus-within {
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-surface));
 }
 
 .workout-item .workout-state-label--review,
@@ -3057,7 +3070,9 @@ dt {
 }
 
 .workout-primary-action {
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .workout-title-row,
@@ -3202,8 +3217,19 @@ dt {
   display: flex;
   height: 28px;
   justify-content: center;
+  opacity: 0;
   padding: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
   width: 28px;
+}
+
+.workout-item:hover .session-actions-trigger,
+.workout-item:focus-within .session-actions-trigger,
+.actual-item:hover .session-actions-trigger,
+.actual-item:focus-within .session-actions-trigger,
+.session-actions-trigger:focus-visible,
+.session-actions-trigger[aria-expanded="true"] {
+  opacity: 1;
 }
 
 .session-actions-trigger:hover,
@@ -3281,7 +3307,8 @@ dt {
 }
 
 @media (hover: none) {
-  .day-actions--quiet {
+  .day-actions--quiet,
+  .session-actions-trigger {
     opacity: 1;
     pointer-events: auto;
   }
@@ -8115,6 +8142,12 @@ button.goal-impact-cell:focus-visible {
   min-width: 0;
 }
 
+.goal-row-scope {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+}
+
 .goal-row-flag {
   color: var(--tint-warning-text);
   flex: 0 0 auto;
@@ -8190,6 +8223,13 @@ button.goal-impact-cell:focus-visible {
 .goal-row-feedback small {
   color: var(--tint-danger-text);
   font-size: 0.84rem;
+}
+
+.goal-row-feedback .goal-row-impact {
+  color: var(--text-secondary);
+  display: block;
+  font-size: 0.76rem;
+  margin-top: 4px;
 }
 
 .goal-row-editor-actions {
@@ -8289,6 +8329,249 @@ button.goal-impact-cell:focus-visible {
   --phase-color: var(--tint-success-text);
   --phase-border: var(--tint-success-border);
   --phase-bg: var(--tint-success-bg);
+}
+
+.workout-detail-panel h2,
+.schedule-workout-panel h2 {
+  margin: 0;
+}
+
+.workout-detail-actions button,
+.schedule-workout-body button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.week-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.week-progress-heading,
+.week-progress-heading p,
+.week-progress-details {
+  align-items: baseline;
+  display: flex;
+}
+
+.week-progress-heading {
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.week-progress-heading p {
+  gap: 7px;
+  margin: 0;
+}
+
+.week-progress-heading strong {
+  font-size: 1.12rem;
+  letter-spacing: -0.025em;
+}
+
+.week-progress-heading p span,
+.week-progress-target,
+.week-progress-details {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.week-progress-target {
+  font-weight: 650;
+}
+
+.week-progress-track {
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  border-radius: 999px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.week-progress-track > span {
+  background: var(--primary);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.week-progress-details {
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.week-progress-delta {
+  font-weight: 650;
+}
+
+.week-progress-delta--above {
+  color: var(--tint-warning-text);
+}
+
+.week-progress-delta--below {
+  color: var(--text-secondary);
+}
+
+.workout-detail-panel,
+.schedule-workout-panel {
+  width: min(560px, calc(100vw - 24px));
+}
+
+.workout-detail-body,
+.schedule-workout-body {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.workout-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.workout-detail-summary span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.workout-detail-body section {
+  display: grid;
+  gap: 6px;
+}
+
+.workout-detail-body h3,
+.workout-detail-body p {
+  margin: 0;
+}
+
+.workout-detail-instructions {
+  white-space: pre-wrap;
+}
+
+.workout-detail-blocks {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.workout-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.schedule-workout-body label,
+.schedule-swap-control {
+  display: grid;
+  gap: 8px;
+}
+
+.schedule-swap-control {
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.plan-current-focus {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--border-subtle);
+}
+
+.plan-current-focus > div {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 104px;
+  padding: 16px;
+  background: var(--bg-surface);
+}
+
+.plan-current-focus span,
+.plan-current-focus small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.plan-next-action button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  text-align: left;
+}
+
+.plan-next-action button small {
+  grid-column: 1;
+}
+
+.plan-next-action button svg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.plan-full-timeline {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.plan-full-timeline > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.plan-full-timeline > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plan-full-timeline > summary > span {
+  display: grid;
+  gap: 3px;
+}
+
+.plan-full-timeline > summary small {
+  color: var(--text-secondary);
+}
+
+.plan-full-timeline[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+@media (max-width: 700px) {
+  .week-progress-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .plan-current-focus {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-current-focus > div {
+    min-height: auto;
+  }
 }
 
 .plan-shape {

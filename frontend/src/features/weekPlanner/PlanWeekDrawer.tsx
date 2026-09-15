@@ -14,8 +14,9 @@ import type {
 } from "../../types/domain";
 import { addDays, todayDateString } from "../../lib/dates";
 import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
+import { defaultGoalForm } from "../../lib/forms";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
-import { prescriptionTotals } from "../../lib/prescriptions";
+import { prescriptionTotals, scalePrescriptionDistance } from "../../lib/prescriptions";
 import { completedSessionCount } from "../../lib/weekMetrics";
 import { useModalDialog } from "../../hooks/useModalDialog";
 import { fetchJson } from "../../lib/api";
@@ -44,6 +45,7 @@ export function PlanWeekDrawer({
   isSaving,
   onClose,
   onCompleteReview,
+  onEditRule,
   onSave,
   plan = null,
   rules = DEFAULT_SHARED_RULES,
@@ -54,6 +56,7 @@ export function PlanWeekDrawer({
   isSaving: boolean;
   onClose: () => void;
   onCompleteReview: (weekId: string) => void;
+  onEditRule?: (evaluation: RuleEvaluation) => void;
   onSave: (draft: PlanWeekDraft) => void;
   plan?: TrainingPlan | null;
   rules?: PlanRule[];
@@ -76,6 +79,15 @@ export function PlanWeekDrawer({
   const scheduledMileage = sumDraftRunDistance(draft.workouts);
   const scheduledQuality = countDraftHardSessions(draft.workouts);
   const scheduledLongRun = maxDraftRunDistance(draft.workouts);
+  const hardDates = new Set(
+    draft.workouts
+      .filter((workout) => workout.intensityCategory === "workout" || workout.intensityCategory === "race")
+      .map((workout) => workout.plannedDate)
+  );
+  const hardDaysAreAdjacent = Array.from(hardDates).some((dateValue) => hardDates.has(addDays(dateValue, 1)));
+  const designatedLongRun = [...draft.workouts]
+    .filter((workout) => effectiveWorkoutSport(workout) === "run")
+    .sort((left, right) => Number(right.plannedDistance || 0) - Number(left.plannedDistance || 0))[0] ?? null;
   const scheduledRestDays = countDraftRestDays(draft.workouts, draft.weekStartDate);
   const sourceWeek = weekStack[draft.weekStartDate];
   const isAdjustingRemainingWeek = draft.weekState === "current" && draft.hasExistingPlan;
@@ -88,6 +100,10 @@ export function PlanWeekDrawer({
   const projectedMileage = isAdjustingRemainingWeek && sourceWeek
     ? sourceWeek.actualMileage + remainingMileage
     : scheduledMileage;
+  const mileageTarget = sourceWeek?.targetMileage ?? goalTarget(
+    draft.goals.find((goal) => goal.category === "mileage" && goal.goalType === "achievement")
+  );
+  const remainingGap = mileageTarget === null ? null : Math.max(mileageTarget - projectedMileage, 0);
   const copyWeekOptions = Array.from({ length: 12 }, (_, index) => {
     const weekStartDate = addDays(draft.weekStartDate, (index + 1) * -7);
     return { weekStartDate, week: weekStack[weekStartDate] ?? null };
@@ -245,7 +261,8 @@ export function PlanWeekDrawer({
           workoutType: sessionType.workoutType,
           intensityCategory: sessionType.intensityCategory,
           plannedDistance: keepRunMetrics ? workout.plannedDistance : "",
-          plannedPace: keepRunMetrics ? workout.plannedPace : ""
+          plannedPace: keepRunMetrics ? workout.plannedPace : "",
+          prescription: keepRunMetrics ? workout.prescription : null
         };
       })
     }));
@@ -384,6 +401,57 @@ export function PlanWeekDrawer({
       }
 
       return current;
+    });
+  }
+
+  function acknowledgeException(evaluation: RuleEvaluation) {
+    const rule = rules.find((candidate) => candidate.id === evaluation.ruleId);
+    const category = rule?.category;
+    if (!rule || !category) {
+      return;
+    }
+    updateDraft((current) => {
+      const existing = current.goals.find(
+        (goal) =>
+          goal.metricKey === rule.metricKey ||
+          (!goal.metricKey && goal.category === category)
+      );
+      if (existing) {
+        return {
+          ...current,
+          goals: current.goals.map((goal) =>
+            goal.draftId === existing.draftId
+              ? { ...goal, status: "waived", source: "manual", sourceLabel: "This week" }
+              : goal
+          )
+        };
+      }
+      const unit = rule.kind === "long_run_percent" ? "percent" : rule.kind === "long_run_scheduled" ? "mi" : "days";
+      const evaluationMode = ["rest_days", "long_run_scheduled"].includes(rule.kind) ? "at_least" : "at_most";
+      const threshold = rule.threshold === null ? "" : String(rule.threshold);
+      return {
+        ...current,
+        goals: [
+          ...current.goals,
+          {
+            ...defaultGoalForm(current.weekId),
+            draftId: `exception-${rule.id}`,
+            metricKey: rule.metricKey,
+            category,
+            goalType: rule.goalType,
+            label: rule.label,
+            targetValue: threshold,
+            minAcceptable: evaluationMode === "at_least" ? threshold : "",
+            maxAcceptable: evaluationMode === "at_most" ? threshold : "",
+            unit,
+            evaluationMode,
+            priority: rule.goalType === "guardrail" ? "guardrail" : "secondary",
+            status: "waived",
+            source: "manual",
+            sourceLabel: "This week"
+          }
+        ]
+      };
     });
   }
 
@@ -539,6 +607,8 @@ export function PlanWeekDrawer({
                       {visibleDayWorkouts.length ? (
                         visibleDayWorkouts.map((workout, workoutIndex) => {
                           const sessionType = sessionTypeForWorkout(workout);
+                          const distanceIsEditable =
+                            !workout.prescription || prescriptionTotals(workout.prescription).distanceComplete;
                           const fieldPrefix = `${formatWeekday(dateValue)} session ${workoutIndex + 1}`;
                           return (
                             <div className="schedule-draft-workout" key={workout.draftId}>
@@ -571,13 +641,22 @@ export function PlanWeekDrawer({
                                 <label className="session-mileage-field" title="Session mileage">
                                   <input
                                     aria-label={`${fieldPrefix} mileage`}
-                                    min="0"
+                                    disabled={!distanceIsEditable}
+                                    min="0.1"
                                     step="0.1"
+                                    title={distanceIsEditable ? "Session mileage" : "Edit the workout to change a duration-based prescription"}
                                     type="number"
                                     value={workout.plannedDistance}
-                                    onChange={(event) =>
-                                      updateWorkout(workout.draftId, { plannedDistance: event.target.value })
-                                    }
+                                    onChange={(event) => {
+                                      const plannedDistance = event.target.value;
+                                      updateWorkout(workout.draftId, {
+                                        plannedDistance,
+                                        prescription: scalePrescriptionDistance(
+                                          workout.prescription,
+                                          Number(plannedDistance)
+                                        ) ?? null
+                                      });
+                                    }}
                                   />
                                   <span>mi</span>
                                 </label>
@@ -619,15 +698,26 @@ export function PlanWeekDrawer({
             </div>
             <div className="week-plan-summary" aria-label="Week plan summary">
               <WeekPlanMetric
-                detail={isAdjustingRemainingWeek && sourceWeek ? `${formatNumber(sourceWeek.actualMileage)} completed + ${formatNumber(remainingMileage)} remaining` : undefined}
+                detail={
+                  isAdjustingRemainingWeek && sourceWeek
+                    ? `${formatNumber(sourceWeek.actualMileage)} mi completed + ${formatNumber(remainingMileage)} mi remaining${mileageTarget !== null ? ` · ${formatNumber(mileageTarget)} mi target${remainingGap ? ` · ${formatNumber(remainingGap)} mi gap` : ""}` : ""}`
+                    : mileageTarget !== null
+                      ? `${formatNumber(mileageTarget)} mi target`
+                      : undefined
+                }
                 label={isAdjustingRemainingWeek ? "Projected mileage" : "Mileage"}
                 value={`${formatNumber(projectedMileage)} mi`}
               />
               <WeekPlanMetric
+                detail={scheduledQuality > 1 ? (hardDaysAreAdjacent ? "Back-to-back" : "Spaced apart") : undefined}
                 label="Hard days"
                 value={`${scheduledQuality} hard day${scheduledQuality === 1 ? "" : "s"}`}
               />
-              <WeekPlanMetric label="Long run" value={`${formatNumber(scheduledLongRun)} mi`} />
+              <WeekPlanMetric
+                detail={designatedLongRun?.title}
+                label="Long run"
+                value={`${formatNumber(scheduledLongRun)} mi`}
+              />
               <WeekPlanMetric
                 label="Recovery"
                 value={`${scheduledRestDays} rest day${scheduledRestDays === 1 ? "" : "s"}`}
@@ -664,15 +754,30 @@ export function PlanWeekDrawer({
                   );
                 })}
                 {sharedIssues.map((evaluation) => (
-                  <SharedPlanIssueRow evaluation={evaluation} key={evaluation.ruleId} />
+                  <SharedPlanIssueRow
+                    evaluation={evaluation}
+                    key={evaluation.ruleId}
+                    onAcknowledge={() => acknowledgeException(evaluation)}
+                    onEditRule={onEditRule ? () => onEditRule(evaluation) : undefined}
+                  />
                 ))}
               </div>
             ) : (
               <div className="plan-check-clear">
                 <CheckCircle2 className="rule-status-icon" size={17} />
                 <div>
-                  <strong>{sharedPendingCount ? "Schedule looks good so far" : "Schedule matches targets"}</strong>
-                  {sharedPendingCount ? <small>Some checks will complete as you add sessions.</small> : null}
+                  <strong>
+                    {remainingGap
+                      ? "Schedule is still incomplete"
+                      : sharedPendingCount
+                        ? "Schedule looks good so far"
+                        : "Schedule matches targets"}
+                  </strong>
+                  {remainingGap ? (
+                    <small>Add {formatNumber(remainingGap)} mi to reach this week's target.</small>
+                  ) : sharedPendingCount ? (
+                    <small>Some checks will complete as you add sessions.</small>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -732,26 +837,41 @@ function TargetIssueRow({
   );
 }
 
-function SharedPlanIssueRow({ evaluation }: { evaluation: RuleEvaluation }) {
+function SharedPlanIssueRow({
+  evaluation,
+  onAcknowledge,
+  onEditRule
+}: {
+  evaluation: RuleEvaluation;
+  onAcknowledge: () => void;
+  onEditRule?: () => void;
+}) {
   return (
     <div className="rule-row rule-row--readonly rule-row--mismatch">
       <AlertTriangle className="rule-status-icon" size={15} />
       <div className="rule-copy">
         <strong>{evaluation.ruleLabel}</strong>
         <small>{evaluation.reason}</small>
+        {evaluation.originLabel ? <small>{evaluation.originLabel}</small> : null}
+      </div>
+      <div className="rule-actions">
+        {onEditRule ? <button type="button" onClick={onEditRule}>Edit rule</button> : null}
+        <button type="button" onClick={onAcknowledge}>Allow this week</button>
       </div>
     </div>
   );
 }
 
 function isCoveredBySharedCheck(goal: PlanWeekGoalDraft, sharedRuleIds: Set<string>) {
-  if (goal.category === "recovery" && sharedRuleIds.has("rest-days")) {
+  const hasRule = (baseId: string, scopedPrefix: string) =>
+    sharedRuleIds.has(baseId) || Array.from(sharedRuleIds).some((ruleId) => ruleId.startsWith(scopedPrefix));
+  if (goal.category === "recovery" && hasRule("rest-days", "rest_days-")) {
     return true;
   }
   if (
     goal.goalType === "guardrail" &&
     goal.category === "quality" &&
-    sharedRuleIds.has("hard-days")
+    hasRule("hard-days", "hard_days-")
   ) {
     return true;
   }
@@ -759,7 +879,7 @@ function isCoveredBySharedCheck(goal: PlanWeekGoalDraft, sharedRuleIds: Set<stri
     goal.goalType === "guardrail" &&
     goal.category === "long_run" &&
     goal.unit === "percent" &&
-    sharedRuleIds.has("long-run-percent")
+    hasRule("long-run-percent", "long_run_percent-")
   );
 }
 

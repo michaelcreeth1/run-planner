@@ -966,6 +966,42 @@ def test_plan_goals_shadow_default_goals_by_category() -> None:
         assert any(goal["source"] == "default" for goal in guardrails)
 
 
+def test_phase_scoped_recurring_goal_only_materializes_in_matching_phase() -> None:
+    with TestClient(app) as client:
+        login(client)
+        payload = make_plan_payload(start_date="2100-02-01", end_date="2100-02-28")
+        payload["recurringGoals"].append(
+            {
+                "mesocyclePhase": "base",
+                "metricKey": "rest_day_count",
+                "category": "recovery",
+                "goalType": "achievement",
+                "label": "Base phase keeps two rest days",
+                "targetValue": 2,
+                "minAcceptable": 2,
+                "unit": "days",
+                "evaluationMode": "at_least",
+                "priority": "secondary",
+            }
+        )
+
+        created = client.post("/api/plans", json=payload)
+
+        assert created.status_code == 201
+        plan = created.json()
+        scoped = next(
+            goal
+            for goal in plan["recurringGoals"]
+            if goal["label"] == "Base phase keeps two rest days"
+        )
+        assert scoped["mesocyclePhase"] == "base"
+
+        base_week = client.get(f"/api/weeks/{plan['weekSummaries'][0]['weekStartDate']}").json()
+        race_week = client.get(f"/api/weeks/{plan['weekSummaries'][-1]['weekStartDate']}").json()
+        assert any(goal["label"] == scoped["label"] for goal in base_week["goals"])
+        assert not any(goal["label"] == scoped["label"] for goal in race_week["goals"])
+
+
 def test_recurring_goals_respect_manual_edits_and_clear_on_delete() -> None:
     with TestClient(app) as client:
         login(client)

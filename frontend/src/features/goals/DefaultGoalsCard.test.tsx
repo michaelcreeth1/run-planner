@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ProfileProvider } from "../../lib/profile";
 import { server } from "../../test/server";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
+import type { GoalEditRequest } from "./GoalListEditor";
 
 const apiUrl = (path: string) => new URL(path, window.location.origin).toString();
 
@@ -54,15 +55,38 @@ function recurringGoal({ id, metricKey, value }: { id: string; metricKey: "weekl
   };
 }
 
-function card(profileId: string) {
+function card(profileId: string, editRequest: GoalEditRequest | null = null) {
   return (
     <ProfileProvider profileId={profileId}>
-      <DefaultGoalsCard writesBlocked={false} />
+      <DefaultGoalsCard editRequest={editRequest} writesBlocked={false} />
     </ProfileProvider>
   );
 }
 
 describe("DefaultGoalsCard", () => {
+  it("opens and focuses the exact baseline rule requested by a weekly check", async () => {
+    server.use(
+      http.get(apiUrl("/api/default-goals"), () =>
+        HttpResponse.json([
+          recurringGoal({ id: "a-mileage", metricKey: "weekly_run_distance", value: 30 }),
+          recurringGoal({ id: "a-rest", metricKey: "rest_day_count", value: 1 })
+        ])
+      ),
+      http.get(apiUrl("/api/goal-metrics"), () => HttpResponse.json(goalMetrics))
+    );
+
+    render(card("profile-a", {
+      requestId: 1,
+      goalId: "a-rest",
+      metricKey: "rest_day_count"
+    }));
+
+    const metric = await screen.findByLabelText("Metric");
+    expect(metric).toHaveValue("rest_day_count");
+    expect(screen.getByText("Affects every week unless a plan or phase rule overrides it.")).toBeVisible();
+    await waitFor(() => expect(metric).toHaveFocus());
+  });
+
   it("builds a numeric rule from the metric catalog and blocks impossible values", async () => {
     const user = userEvent.setup();
     const savedPayload = vi.fn();

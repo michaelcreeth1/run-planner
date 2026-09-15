@@ -19,12 +19,14 @@ import { LoginView } from "./components/LoginView";
 import { Placeholder } from "./components/shared/Placeholder";
 import { StatusBanner } from "./components/shared/StatusBanner";
 import { PlanningWorkspace } from "./features/planning/PlanningWorkspace";
+import type { RuleEditRequest } from "./features/planning/PlanningWorkspace";
 import { ProgressView } from "./features/progress/ProgressView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { WeekGoalEditor } from "./features/weekGoals/WeekGoalEditor";
 import { WeekView } from "./features/weekBoard/WeekView";
 import { isCompletelyEmptyWeek } from "./features/weekBoard/weekState";
 import { buildPlanRules } from "./features/goals/ruleEvaluation";
+import type { RuleEvaluation } from "./features/goals/ruleEvaluation";
 import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlanner/planWeekDrafts";
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
 import { WorkoutEditor } from "./features/workouts/WorkoutEditor";
@@ -51,6 +53,7 @@ import type {
   StravaActivity,
   StravaStatus,
   SyncJob,
+  TrainingPlan,
   TrainingWeek,
   WeekGoal,
   WeekGoalForm,
@@ -73,6 +76,10 @@ const primaryTabs = [
 
 type Theme = "light" | "dark";
 type WeekReviewHandoff = { nextWeekStart: string; reviewedWeekStart: string; wasEmpty: boolean };
+type ScheduleChangeNotice = {
+  detail: string;
+  undo: { kind: "move"; workoutId: string } | { kind: "swap"; workoutId: string; otherWorkoutId: string };
+};
 type StravaMatchDraft = {
   session: PerformedSession;
   plannedWorkoutId: string;
@@ -140,6 +147,7 @@ function AppShell() {
   const [isSavingGoal, setIsSavingGoal] = useState(false);
   const [goalSaveError, setGoalSaveError] = useState<string | null>(null);
   const [planWeekDraft, setPlanWeekDraft] = useState<PlanWeekDraft | null>(null);
+  const [ruleEditRequest, setRuleEditRequest] = useState<RuleEditRequest | null>(null);
   const [stravaMatch, setStravaMatch] = useState<StravaMatchDraft | null>(null);
   const [stravaStatus, setStravaStatus] = useState<StravaStatus | null>(null);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
@@ -150,6 +158,7 @@ function AppShell() {
   const [isSavingPlanWeek, setIsSavingPlanWeek] = useState(false);
   const [pendingPlanWeekStart, setPendingPlanWeekStart] = useState<string | null>(null);
   const [weekReviewHandoff, setWeekReviewHandoff] = useState<WeekReviewHandoff | null>(null);
+  const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeNotice | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const pendingPrependScroll = useRef<WeekScrollSnapshot | null>(null);
   const isPrependingWeeks = useRef(false);
@@ -247,6 +256,7 @@ function AppShell() {
     setIsSavingGoal(false);
     setGoalSaveError(null);
     setPlanWeekDraft(null);
+    setRuleEditRequest(null);
     setStravaMatch(null);
     setIsSavingPlanWeek(false);
     setPendingPlanWeekStart(null);
@@ -689,14 +699,6 @@ function AppShell() {
     const workouts = allLoadedWorkouts(weekStack);
     const linkedWorkout = workouts.find((workout) => workout.id === performedSession.plannedWorkoutId);
     const hostWorkout = linkedWorkout ?? nearestWorkout(performedSession, workouts);
-    if (!hostWorkout) {
-      setApiError({
-        kind: "response",
-        title: "No planned workouts",
-        detail: "Add a planned workout before matching this Strava activity."
-      });
-      return;
-    }
     setWorkoutSaveError(null);
     setIsSavingWorkoutToLibrary(false);
     setStravaMatch({
@@ -704,7 +706,11 @@ function AppShell() {
       plannedWorkoutId: performedSession.plannedWorkoutId ?? "",
       matchOnly: !linkedWorkout
     });
-    setEditor(workoutToForm(hostWorkout));
+    setEditor(
+      hostWorkout
+        ? workoutToForm(hostWorkout)
+        : defaultForm(performedSession.occurredAt.slice(0, 10))
+    );
   }
 
   function openCreateGoal(targetWeek: TrainingWeek) {
@@ -1157,6 +1163,160 @@ function AppShell() {
     }
   }
 
+  async function duplicateWorkoutToDate(workout: Workout, plannedDate: string) {
+    if (blockStaleWrite("copying a workout to another date")) {
+      return;
+    }
+    const mutationKey = `workout:${workout.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      await fetchJson(`/api/planned-workouts/${workout.id}/duplicate`, {
+        method: "POST",
+        body: JSON.stringify({ plannedDate }),
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return;
+      }
+      loadWeeks(
+        [workout.trainingWeekId, startOfWeek(parseDate(plannedDate))]
+          .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)),
+        { force: true }
+      );
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not copy workout to that date."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
+  }
+
+  async function moveWorkoutToDate(workout: Workout, plannedDate: string) {
+    if (plannedDate === workout.plannedDate || blockStaleWrite("moving a workout")) {
+      return;
+    }
+    const mutationKey = `workout:${workout.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      await fetchJson(`/api/planned-workouts/${workout.id}/move`, {
+        method: "POST",
+        body: JSON.stringify({ plannedDate }),
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return;
+      }
+      refreshVisibleWeeks();
+      loadWeeks([startOfWeek(parseDate(plannedDate))], { force: true });
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setScheduleChangeNotice({
+        detail: `${workout.title} moved to ${plannedDate}.`,
+        undo: { kind: "move", workoutId: workout.id }
+      });
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not move workout."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
+  }
+
+  async function swapWorkouts(workout: Workout, otherWorkout: Workout) {
+    if (blockStaleWrite("swapping workouts")) {
+      return;
+    }
+    const mutationKey = `swap:${workout.id}:${otherWorkout.id}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      await fetchJson(`/api/planned-workouts/${workout.id}/swap`, {
+        method: "POST",
+        body: JSON.stringify({
+          otherWorkoutId: otherWorkout.id,
+          expectedVersion: workout.version,
+          otherExpectedVersion: otherWorkout.version
+        }),
+        signal: request.signal
+      });
+      if (!request.isCurrent()) {
+        return;
+      }
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setScheduleChangeNotice({
+        detail: `${workout.title} and ${otherWorkout.title} swapped days.`,
+        undo: { kind: "swap", workoutId: workout.id, otherWorkoutId: otherWorkout.id }
+      });
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not swap workouts."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
+  }
+
+  async function undoScheduleChange() {
+    const change = scheduleChangeNotice?.undo;
+    if (!change || blockStaleWrite("undoing the schedule change")) {
+      return;
+    }
+    const mutationKey = `undo:${change.workoutId}`;
+    if (!startMutation(mutationKey)) {
+      return;
+    }
+    const request = beginDataRequest();
+    try {
+      if (change.kind === "move") {
+        await fetchJson(`/api/planned-workouts/${change.workoutId}/undo-move`, {
+          method: "POST",
+          signal: request.signal
+        });
+      } else {
+        await fetchJson(`/api/planned-workouts/${change.workoutId}/swap`, {
+          method: "POST",
+          body: JSON.stringify({ otherWorkoutId: change.otherWorkoutId }),
+          signal: request.signal
+        });
+      }
+      if (!request.isCurrent()) {
+        return;
+      }
+      setScheduleChangeNotice(null);
+      refreshVisibleWeeks();
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setApiError(toApiErrorPresentation(error, "Could not undo the schedule change."));
+      }
+    } finally {
+      request.finish();
+      finishMutation(mutationKey);
+    }
+  }
+
   async function copyPriorWeek(targetWeek: TrainingWeek) {
     if (blockStaleWrite("copying the prior week")) {
       return;
@@ -1374,6 +1534,16 @@ function AppShell() {
               detail={apiError.detail}
             />
           ) : null}
+          {scheduleChangeNotice ? (
+            <StatusBanner
+              tone="success"
+              icon={<CalendarDays size={18} />}
+              title="Schedule updated"
+              detail={scheduleChangeNotice.detail}
+              actionLabel="Undo"
+              onAction={() => void undoScheduleChange()}
+            />
+          ) : null}
           {compatibility.status === "checking" ? (
             <StatusBanner
               tone="warning"
@@ -1429,6 +1599,9 @@ function AppShell() {
               onEditPerformedSession={openPerformedSessionEdit}
               onDelete={deleteWorkout}
               onDuplicate={duplicateWorkout}
+              onDuplicateToDate={duplicateWorkoutToDate}
+              onMove={moveWorkoutToDate}
+              onSwap={swapWorkouts}
               onCreateGoal={openCreateGoal}
               onCopyPriorWeek={copyPriorWeek}
               onDeriveWeekGoals={deriveWeekGoals}
@@ -1440,6 +1613,7 @@ function AppShell() {
           ) : null}
           <div hidden={activeTab !== "plan"}>
             <PlanningWorkspace
+              editRequest={ruleEditRequest}
               key={session.activeAthleteAccountId}
               onChangeSection={navigatePlanningSection}
               writesBlocked={writesBlocked}
@@ -1538,6 +1712,25 @@ function AppShell() {
             weekStack={weekStack}
             onClose={() => setPlanWeekDraft(null)}
             onCompleteReview={completeWeekReview}
+            onEditRule={(evaluation) => {
+              const destination = evaluation.origin === "baseline" ? "baseline" : "plan";
+              const goalId = destination === "plan"
+                ? recurringGoalForEvaluation(evaluation, activePlan)?.id ?? null
+                : null;
+              setPlanWeekDraft(null);
+              setRuleEditRequest((current) => ({
+                requestId: (current?.requestId ?? 0) + 1,
+                goalId,
+                metricKey: evaluation.metricKey ?? null,
+                createIfMissing: true,
+                destination
+              }));
+              navigateRoute({
+                tab: "plan",
+                planId: destination === "plan" ? activePlan?.id ?? selectedPlanRouteId : null,
+                planningSection: destination === "baseline" ? "goals" : "overview"
+              });
+            }}
             onSave={savePlanWeek}
             plan={activePlan}
             rules={sharedPlanRules}
@@ -1545,6 +1738,22 @@ function AppShell() {
         ) : null}
       </div>
     </ProfileProvider>
+  );
+}
+
+function recurringGoalForEvaluation(
+  evaluation: RuleEvaluation,
+  plan: TrainingPlan | null
+) {
+  if (!plan || !evaluation.metricKey) {
+    return null;
+  }
+  return (
+    plan.recurringGoals.find((goal) => evaluation.ruleId.endsWith(`-${goal.id}`)) ??
+    plan.recurringGoals.find(
+      (goal) => goal.metricKey === evaluation.metricKey && !goal.mesocyclePhase
+    ) ??
+    null
   );
 }
 

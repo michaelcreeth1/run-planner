@@ -400,6 +400,33 @@ describe("PlanWeekDrawer", () => {
     expect(screen.queryByText("Week-specific targets")).not.toBeInTheDocument();
   });
 
+  it("acknowledges an intentional exception for only this week", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const draft = mismatchedDraft();
+    draft.goals = [];
+    draft.workouts = Array.from({ length: 7 }, (_, index) => ({
+      ...draft.workouts[0],
+      draftId: `daily-${index}`,
+      plannedDate: addDays(draft.weekStartDate, index),
+      title: index === 6 ? "Long run" : "Easy run",
+      workoutType: index === 6 ? "long_run" as const : "easy" as const,
+      intensityCategory: "easy" as const,
+      plannedDistance: index === 6 ? "10" : "5"
+    }));
+    render(<PlannerHarness initialDraft={draft} onSave={onSave} />);
+
+    expect(screen.getByText("No rest day planned this week.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Allow this week" }));
+    expect(screen.queryByRole("button", { name: "Allow this week" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save plan" }));
+    const saved = onSave.mock.calls[0][0] as PlanWeekDraft;
+    expect(saved.goals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metricKey: "rest_day_count", source: "manual", status: "waived" })
+    ]));
+  });
+
   it("keeps the schedule-derived week summary live and out of the footer", () => {
     render(<PlannerHarness onSave={vi.fn()} />);
 

@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Circle, Copy, Edit3, Ellipsis, ExternalLink, Minus, Plus, Trash2 } from "lucide-react";
+import { ArrowRightLeft, CalendarClock, Check, ChevronRight, Circle, Copy, Edit3, Ellipsis, ExternalLink, Minus, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { TrainingTimeRail } from "../../components/time-rail/TrainingTimeRail";
@@ -12,6 +12,7 @@ import { buildWeekContextStrip } from "./buildWeekContextStrip";
 import type { TrainingTimelineIndex } from "../../hooks/useTrainingTimeline";
 import type { ActualActivity, PerformedSession, TrainingPlan, TrainingWeek, WeekGoal, Workout } from "../../types/domain";
 import { addDays, startOfWeek } from "../../lib/dates";
+import { useModalDialog } from "../../hooks/useModalDialog";
 import {
   formatCompactWeekRange,
   formatCompactWeekRangeFromStart,
@@ -58,6 +59,9 @@ export function WeekView({
   onEditPerformedSession,
   onDelete,
   onDuplicate,
+  onDuplicateToDate,
+  onMove,
+  onSwap,
   onCreateGoal,
   onCopyPriorWeek,
   onDeriveWeekGoals,
@@ -92,6 +96,9 @@ export function WeekView({
   onEditPerformedSession?: (session: PerformedSession) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onDuplicateToDate: (workout: Workout, plannedDate: string) => void;
+  onMove: (workout: Workout, plannedDate: string) => void;
+  onSwap: (workout: Workout, otherWorkout: Workout) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
@@ -103,6 +110,8 @@ export function WeekView({
   const newerWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const olderWeeksSentinelRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLElement | null>(null);
+  const [workoutDetail, setWorkoutDetail] = useState<{ workout: Workout; session: PerformedSession | null } | null>(null);
+  const [scheduleAction, setScheduleAction] = useState<{ kind: "move" | "copy"; workout: Workout } | null>(null);
   const contextStrip = buildWeekContextStrip({
     plan: activePlan,
     currentWeek: weekStack[currentWeekStart] ?? null,
@@ -219,6 +228,7 @@ export function WeekView({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onOpenWorkout={(workout, session) => setWorkoutDetail({ workout, session: session ?? null })}
             onEditPerformedSession={onEditPerformedSession}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
@@ -227,6 +237,7 @@ export function WeekView({
             onOpenPlanWeek={onOpenPlanWeek}
             onSkipReview={onSkipReview}
             onSync={onSync}
+            onScheduleAction={(kind, workout) => setScheduleAction({ kind, workout })}
             isCopyingPriorWeek={(start === selectedWeekStart ? week : weekStack[start])?.id === copyingPriorWeekId}
             onSelectWeek={onSelectWeek}
             selectedWeekStart={selectedWeekStart}
@@ -245,6 +256,44 @@ export function WeekView({
           onSelectWeek={onSelectTimeWeek}
         />
       </section>
+      {workoutDetail ? (
+        <WorkoutDetailDialog
+          readOnly={week?.weekState === "past"}
+          session={workoutDetail.session}
+          workout={workoutDetail.workout}
+          onClose={() => setWorkoutDetail(null)}
+          onEdit={() => {
+            setWorkoutDetail(null);
+            if (workoutDetail.session) {
+              onEdit(workoutDetail.workout, workoutDetail.session);
+            } else {
+              onEdit(workoutDetail.workout);
+            }
+          }}
+        />
+      ) : null}
+      {scheduleAction ? (
+        <ScheduleWorkoutDialog
+          action={scheduleAction.kind}
+          candidates={(week?.workouts ?? []).filter(
+            (candidate) => candidate.id !== scheduleAction.workout.id && candidate.sport !== "rest"
+          )}
+          workout={scheduleAction.workout}
+          onClose={() => setScheduleAction(null)}
+          onCopy={(plannedDate) => {
+            onDuplicateToDate(scheduleAction.workout, plannedDate);
+            setScheduleAction(null);
+          }}
+          onMove={(plannedDate) => {
+            onMove(scheduleAction.workout, plannedDate);
+            setScheduleAction(null);
+          }}
+          onSwap={(otherWorkout) => {
+            onSwap(scheduleAction.workout, otherWorkout);
+            setScheduleAction(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -257,6 +306,7 @@ function WeekRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onOpenWorkout,
   onEditPerformedSession,
   onCreateGoal,
   onCopyPriorWeek,
@@ -265,6 +315,7 @@ function WeekRow({
   onOpenPlanWeek,
   onSkipReview,
   onSync,
+  onScheduleAction,
   isCopyingPriorWeek,
   onSelectWeek,
   selectedWeekStart,
@@ -280,6 +331,7 @@ function WeekRow({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onOpenWorkout: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onEditPerformedSession?: (session: PerformedSession) => void;
   onCreateGoal: (week: TrainingWeek) => void;
   onCopyPriorWeek: (week: TrainingWeek) => void;
@@ -288,6 +340,7 @@ function WeekRow({
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
+  onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   isCopyingPriorWeek: boolean;
   onSelectWeek: (weekStart: string) => void;
   selectedWeekStart: string;
@@ -314,6 +367,7 @@ function WeekRow({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onOpenWorkout={onOpenWorkout}
             onEditPerformedSession={onEditPerformedSession}
             onCreateGoal={onCreateGoal}
             onCopyPriorWeek={onCopyPriorWeek}
@@ -322,6 +376,7 @@ function WeekRow({
             onOpenPlanWeek={onOpenPlanWeek}
             onSkipReview={onSkipReview}
             onSync={onSync}
+            onScheduleAction={onScheduleAction}
             isCopyingPriorWeek={isCopyingPriorWeek}
             today={today}
             week={week ?? null}
@@ -407,9 +462,11 @@ function ExpandedWeekBoard({
   onCopyPriorWeek,
   onDeriveWeekGoals,
   onEditGoal,
+  onOpenWorkout,
   onOpenPlanWeek,
   onSkipReview,
   onSync,
+  onScheduleAction,
   isCopyingPriorWeek,
   today,
 }: {
@@ -426,9 +483,11 @@ function ExpandedWeekBoard({
   onCopyPriorWeek: (week: TrainingWeek) => void;
   onDeriveWeekGoals: (week: TrainingWeek) => void;
   onEditGoal: (goal: WeekGoal) => void;
+  onOpenWorkout: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
+  onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   isCopyingPriorWeek: boolean;
   today: string;
 }) {
@@ -469,11 +528,13 @@ function ExpandedWeekBoard({
       onDeriveWeekGoals={onDeriveWeekGoals}
       onDuplicate={onDuplicate}
       onEdit={onEdit}
+      onOpenWorkout={onOpenWorkout}
       onEditPerformedSession={onEditPerformedSession}
       onEditGoal={onEditGoal}
       onOpenPlanWeek={onOpenPlanWeek}
       onSkipReview={onSkipReview}
       onSync={onSync}
+      onScheduleAction={onScheduleAction}
       today={today}
       week={week}
       workouts={workouts}
@@ -493,9 +554,11 @@ function WeekSlate({
   onEdit,
   onEditPerformedSession,
   onEditGoal,
+  onOpenWorkout,
   onOpenPlanWeek,
   onSkipReview,
   onSync,
+  onScheduleAction,
   today,
   week,
   workouts
@@ -511,9 +574,11 @@ function WeekSlate({
   onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onEditPerformedSession?: (session: PerformedSession) => void;
   onEditGoal: (goal: WeekGoal) => void;
+  onOpenWorkout: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onOpenPlanWeek: (week: TrainingWeek) => void;
   onSkipReview: (weekId: string) => void;
   onSync: () => void;
+  onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   today: string;
   week: TrainingWeek | null | undefined;
   workouts: Workout[];
@@ -523,6 +588,9 @@ function WeekSlate({
   }
 
   const viewModel = buildWeekCommandCenterViewModel({ week, today });
+  const performedSessions = (week.performedSessions ?? []).filter(
+    (session) => session.recordings.length > 0
+  );
 
   return (
     <section className={`expanded-week-board week-slate week-slate--${viewModel.mode}`} aria-label="Selected training week">
@@ -554,10 +622,10 @@ function WeekSlate({
           onDelete={onDelete}
           onDuplicate={onDuplicate}
           onEdit={onEdit}
+          onOpenWorkout={onOpenWorkout}
           onEditPerformedSession={onEditPerformedSession}
-          performedSessions={(week.performedSessions ?? []).filter(
-            (session) => session.recordings.length > 0
-          )}
+          performedSessions={performedSessions}
+          onScheduleAction={onScheduleAction}
           today={today}
           readOnly={week.weekState === "past"}
           workouts={workouts}
@@ -567,6 +635,189 @@ function WeekSlate({
   );
 }
 
+function WorkoutDetailDialog({
+  onClose,
+  onEdit,
+  readOnly,
+  session,
+  workout
+}: {
+  onClose: () => void;
+  onEdit: () => void;
+  readOnly: boolean;
+  session: PerformedSession | null;
+  workout: Workout;
+}) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  useModalDialog({ dialogRef, onDismiss: onClose });
+  const blocks = workout.prescription?.blocks ?? [];
+
+  return (
+    <div className="editor-backdrop">
+      <aside
+        aria-label={`${workout.title} workout details`}
+        aria-modal="true"
+        className="editor-panel workout-detail-panel"
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <header>
+          <div>
+            <span>{formatWeekday(workout.plannedDate)} · {formatShortDate(workout.plannedDate)}</span>
+            <h2>{workout.title}</h2>
+          </div>
+          <button aria-label="Close workout details" type="button" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="workout-detail-body">
+          <div className="workout-detail-summary">
+            <strong>{sessionMetrics(workout)}</strong>
+            <span>{labelForWorkoutType(workout.workoutType)}</span>
+            <span>{session ? outcomeLabel(session.outcome) : "Planned"}</span>
+          </div>
+          {workout.purpose ? (
+            <section>
+              <h3>Purpose</h3>
+              <p>{workout.purpose}</p>
+            </section>
+          ) : null}
+          <section>
+            <h3>Instructions</h3>
+            <p className="workout-detail-instructions">
+              {workout.instructions || "No additional instructions for this session."}
+            </p>
+          </section>
+          {blocks.length ? (
+            <section>
+              <h3>Workout structure</h3>
+              <ol className="workout-detail-blocks">
+                {blocks.map((block, index) => (
+                  <li key={block.id ?? `${block.kind}-${index}`}>{formatPrescriptionBlock(block)}</li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+          {session ? (
+            <section>
+              <h3>Completed work</h3>
+              <p>{sessionStatsLabel(session)} · {outcomeLabel(session.outcome)}</p>
+            </section>
+          ) : null}
+        </div>
+        <footer className="workout-detail-actions">
+          <button type="button" onClick={onClose}>Close</button>
+          {!readOnly ? (
+            <button className="primary" type="button" onClick={onEdit}>
+              <Edit3 size={16} aria-hidden="true" />
+              Edit
+            </button>
+          ) : null}
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
+function ScheduleWorkoutDialog({
+  action,
+  candidates,
+  onClose,
+  onCopy,
+  onMove,
+  onSwap,
+  workout
+}: {
+  action: "move" | "copy";
+  candidates: Workout[];
+  onClose: () => void;
+  onCopy: (plannedDate: string) => void;
+  onMove: (plannedDate: string) => void;
+  onSwap: (workout: Workout) => void;
+  workout: Workout;
+}) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const [plannedDate, setPlannedDate] = useState(workout.plannedDate);
+  const [swapId, setSwapId] = useState(candidates[0]?.id ?? "");
+  useModalDialog({ dialogRef, onDismiss: onClose });
+
+  return (
+    <div className="editor-backdrop">
+      <aside
+        aria-label={action === "copy" ? "Copy workout to date" : "Move or swap workout"}
+        aria-modal="true"
+        className="editor-panel schedule-workout-panel"
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <header>
+          <div>
+            <span>{workout.title}</span>
+            <h2>{action === "copy" ? "Copy to a date" : "Move or swap"}</h2>
+          </div>
+          <button aria-label="Close schedule action" type="button" onClick={onClose}><X size={18} /></button>
+        </header>
+        <div className="schedule-workout-body">
+          <label>
+            <span>{action === "copy" ? "Copy date" : "Move date"}</span>
+            <input type="date" value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} />
+          </label>
+          <button
+            className="primary"
+            disabled={!plannedDate || (action === "move" && plannedDate === workout.plannedDate)}
+            type="button"
+            onClick={() => action === "copy" ? onCopy(plannedDate) : onMove(plannedDate)}
+          >
+            {action === "copy" ? "Copy workout" : "Move workout"}
+          </button>
+          {action === "move" && candidates.length ? (
+            <div className="schedule-swap-control">
+              <span>Or swap days with</span>
+              <select aria-label="Workout to swap with" value={swapId} onChange={(event) => setSwapId(event.target.value)}>
+                {candidates.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {formatWeekday(candidate.plannedDate)} · {candidate.title}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={() => {
+                const candidate = candidates.find((item) => item.id === swapId);
+                if (candidate) onSwap(candidate);
+              }}>
+                <ArrowRightLeft size={15} aria-hidden="true" />
+                Swap days
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function formatPrescriptionBlock(block: NonNullable<Workout["prescription"]>["blocks"][number]): string {
+  if (block.kind === "repeat") {
+    const steps = block.steps.map(formatPrescriptionBlock).join("; ");
+    return `${block.repetitions} × ${steps}${block.recoveryAfterFinal ? " · recovery after final rep" : ""}`;
+  }
+  const role = block.role === "warmup" ? "Warm-up" : block.role === "cooldown" ? "Cool-down" : `${block.role[0].toUpperCase()}${block.role.slice(1)}`;
+  const extent = block.extent === "distance"
+    ? formatPrescriptionDistance(block.distanceMeters ?? 0, block.displayUnit)
+    : block.extent === "duration"
+      ? `${formatNumber((block.durationSeconds ?? 0) / 60)} min`
+      : "Open";
+  const guidance = block.primaryTarget?.guidance || block.notes;
+  return `${extent} ${role}${guidance ? ` · ${guidance}` : ""}`;
+}
+
+function formatPrescriptionDistance(meters: number, unit?: string | null) {
+  if (unit === "km") return `${formatNumber(meters / 1000)} km`;
+  if (unit === "m") return `${formatNumber(meters)} m`;
+  return `${formatNumber(meters / 1609.344)} mi`;
+}
+
 function WeekSchedule({
   actualActivities,
   days,
@@ -574,8 +825,10 @@ function WeekSchedule({
   onDelete,
   onDuplicate,
   onEdit,
+  onOpenWorkout,
   onEditPerformedSession,
   performedSessions,
+  onScheduleAction,
   readOnly,
   today,
   workouts
@@ -586,8 +839,10 @@ function WeekSchedule({
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
   onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onOpenWorkout: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onEditPerformedSession?: (session: PerformedSession) => void;
   performedSessions: PerformedSession[];
+  onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   readOnly: boolean;
   today: string;
   workouts: Workout[];
@@ -661,6 +916,8 @@ function WeekSchedule({
                       onDelete={onDelete}
                       onDuplicate={onDuplicate}
                       onEdit={onEdit}
+                      onOpen={onOpenWorkout}
+                      onScheduleAction={onScheduleAction}
                       readOnly={readOnly}
                     />
                   )
@@ -964,8 +1221,10 @@ function WorkoutItem({
   session,
   today,
   onEdit,
+  onOpen,
   onDelete,
   onDuplicate,
+  onScheduleAction,
   readOnly
 }: {
   workout: Workout;
@@ -974,8 +1233,10 @@ function WorkoutItem({
   session: PerformedSession | null;
   today: string;
   onEdit: (workout: Workout, performedSession?: PerformedSession | null) => void;
+  onOpen: (workout: Workout, performedSession?: PerformedSession | null) => void;
   onDelete: (workout: Workout) => void;
   onDuplicate: (workout: Workout) => void;
+  onScheduleAction: (kind: "move" | "copy", workout: Workout) => void;
   readOnly: boolean;
 }) {
   const state = workoutState(workout, session, hasPendingMatch, today);
@@ -985,10 +1246,7 @@ function WorkoutItem({
 
   let statusLine: string;
   if (session) {
-    statusLine = [
-      sessionStatsLabel(session),
-      activities[0]?.averageHeartrate ? `${Math.round(activities[0].averageHeartrate as number)} bpm` : null
-    ].filter(Boolean).join(" · ");
+    statusLine = sessionStatsLabel(session);
   } else if (state === "review") {
     statusLine = "Awaiting match";
   } else if (state === "done") {
@@ -1042,18 +1300,14 @@ function WorkoutItem({
 
   return (
     <div className={`workout-item workout-item--${state}${readOnly ? " workout-item--read-only" : ""} ${workout.intensityCategory} ${workout.workoutType.replaceAll("_", "-")}`}>
-      {readOnly ? (
-        <div className="workout-primary-action">{primaryContent}</div>
-      ) : (
-        <button
-          type="button"
-          className="workout-primary-action"
-          aria-label={`Edit ${workout.title}`}
-          onClick={() => session ? onEdit(workout, session) : onEdit(workout)}
-        >
-          {primaryContent}
-        </button>
-      )}
+      <button
+        type="button"
+        className="workout-primary-action"
+        aria-label={`View ${workout.title}`}
+        onClick={() => onOpen(workout, session)}
+      >
+        {primaryContent}
+      </button>
       {session || !readOnly ? (
         <SessionActions label={`Actions for ${workout.title}`}>
           {activities[0] ? (
@@ -1063,13 +1317,27 @@ function WorkoutItem({
             </button>
           ) : null}
           {session || !readOnly ? (
-            <button type="button" title="Edit workout" onClick={() => session ? onEdit(workout, session) : onEdit(workout)}>
+            <button
+              type="button"
+              title={session ? "Edit completed session" : "Adjust distance or duration"}
+              onClick={() => session ? onEdit(workout, session) : onEdit(workout)}
+            >
               <Edit3 size={15} />
-              Edit session
+              {session ? "Edit session" : "Adjust distance or duration"}
             </button>
           ) : null}
           {!readOnly ? (
             <>
+              {!session ? (
+                <button type="button" title="Move or swap workout" onClick={() => onScheduleAction("move", workout)}>
+                  <ArrowRightLeft size={15} />
+                  Move or swap
+                </button>
+              ) : null}
+              <button type="button" title="Copy workout to another date" onClick={() => onScheduleAction("copy", workout)}>
+                <CalendarClock size={15} />
+                Copy to date
+              </button>
               <button type="button" title="Duplicate workout" onClick={() => onDuplicate(workout)}>
                 <Copy size={15} />
                 Duplicate
@@ -1089,6 +1357,7 @@ function WorkoutItem({
 function outcomeLabel(outcome: PerformedSession["outcome"]) {
   const labels: Record<PerformedSession["outcome"], string> = {
     unresolved: "Review",
+    unplanned: "Unplanned",
     as_planned: "Done",
     modified: "Modified",
     partial: "Partial",

@@ -132,6 +132,23 @@ describe("buildWeekCommandCenterViewModel", () => {
     });
     expect(current.compactStats?.find((stat) => stat.label === "Long run")?.detail).not.toContain("Completed:");
     expect(reviewed.modeLabel).toBe("Reviewed");
+    expect(reviewed.actionButtons).toEqual([
+      { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
+    ]);
+  });
+
+  it("keeps review available after an empty week has been closed", () => {
+    const reviewed = buildWeekCommandCenterViewModel({
+      today: "2026-07-20",
+      week: makeWeek({
+        weekState: "past",
+        reviewedAt: "2026-07-20T12:00:00Z"
+      })
+    });
+
+    expect(reviewed.actionButtons).toEqual([
+      { id: "review_week", label: "Review week", variant: "primary", icon: "check" }
+    ]);
   });
 
   it("counts imported sessions and ignores status-only completions", () => {
@@ -172,6 +189,37 @@ describe("buildWeekCommandCenterViewModel", () => {
     });
 
     expect(viewModel.primarySummary).toContain("1 completed");
+  });
+
+  it("separates completed, scheduled, projected, and target mileage for the week header", () => {
+    const viewModel = buildWeekCommandCenterViewModel({
+      today: "2026-07-15",
+      week: makeWeek({
+        actualMileage: 44.5,
+        plannedMileage: 57.5,
+        targetMileage: 55,
+        targetMileageSource: "plan",
+        weekState: "current",
+        workouts: [
+          makeWorkout({
+            id: "long-run",
+            plannedDate: "2026-07-19",
+            plannedDistance: 13,
+            title: "Long run",
+            workoutType: "long_run"
+          })
+        ]
+      })
+    });
+
+    expect(viewModel.progress).toMatchObject({
+      completedMiles: 44.5,
+      scheduledMiles: 13,
+      projectedMiles: 57.5,
+      targetMiles: 55,
+      deltaMiles: 2.5
+    });
+    expect(viewModel.progress.progressPercent).toBeCloseTo(80.91, 1);
   });
 
   it("offers planning for target-only upcoming weeks and editing once sessions exist", () => {

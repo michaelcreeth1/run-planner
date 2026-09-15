@@ -7,6 +7,7 @@ import { queryKeys, useGoalRacesQuery } from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
 import type { GoalRace, RaceDistance } from "../../types/domain";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
+import type { GoalEditRequest } from "./GoalListEditor";
 import { GoalImpactSection } from "./GoalImpactSection";
 
 const raceDistanceLabels: Record<GoalRace["distance"], string> = {
@@ -58,9 +59,11 @@ function formatRaceDateParts(dateString: string) {
 }
 
 export function GoalsView({
+  editRequest = null,
   writesBlocked,
   onSelectWeek
 }: {
+  editRequest?: GoalEditRequest | null;
   writesBlocked: boolean;
   onSelectWeek: (weekStartDate: string) => void;
 }) {
@@ -308,7 +311,11 @@ export function GoalsView({
       <GoalImpactSection onSelectWeek={onSelectWeek} />
 
       <div className="goals-layout">
-        <DefaultGoalsCard onGoalsSaved={invalidateDependentProfileData} writesBlocked={writesBlocked} />
+        <DefaultGoalsCard
+          editRequest={editRequest}
+          onGoalsSaved={invalidateDependentProfileData}
+          writesBlocked={writesBlocked}
+        />
 
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">

@@ -37,12 +37,12 @@ export function WeekChecksCard({
   const issueCount = evaluations.filter((evaluation) => attentionStatuses.has(evaluation.status)).length;
   const pendingCount = evaluations.filter((evaluation) => evaluation.status === "pending").length;
   const visibleEvaluations = selectVisibleWeekChecks(evaluations);
-  const [isOpen, setIsOpen] = useState(issueCount > 0);
+  const [isOpen, setIsOpen] = useState(false);
 
-  // Start each selected week in its useful default state: open for exceptions, closed for a clean slate.
+  // Each selected week starts collapsed; the summary keeps issue state visible without adding noise.
   useEffect(() => {
-    setIsOpen(issueCount > 0);
-  }, [issueCount, week.weekStartDate]);
+    setIsOpen(false);
+  }, [week.weekStartDate]);
 
   // An entirely pending week has nothing to check yet — stay out of the way.
   if (isLoading || error || evaluations.length === 0 || evaluations.every((evaluation) => evaluation.status === "pending")) {
@@ -55,7 +55,7 @@ export function WeekChecksCard({
       : `${issueCount} issues`
     : pendingCount
       ? `${pendingCount} pending`
-      : "All pass";
+      : "All checks pass";
 
   return (
     <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
@@ -98,6 +98,7 @@ export function WeekCheckRow({ evaluation, onOpen }: { evaluation: RuleEvaluatio
       <span className="week-check-copy">
         <strong>{evaluation.ruleLabel}</strong>
         <span title={detail}>{evaluation.reason}</span>
+        {evaluation.originLabel ? <small>{evaluation.originLabel}</small> : null}
       </span>
       <span className={`week-check-status week-check-status--${evaluation.status}`}>
         {ruleStatusLabels[evaluation.status]}

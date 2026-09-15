@@ -56,6 +56,7 @@ PrescriptionTargetKind = Literal["pace", "heart_rate", "rpe", "guidance"]
 SessionAssociation = Literal["unmatched", "suggested", "associated"]
 SessionOutcome = Literal[
     "unresolved",
+    "unplanned",
     "as_planned",
     "modified",
     "partial",
@@ -277,6 +278,16 @@ class PlannedWorkoutUpdate(ApiModel):
 
 class PlannedWorkoutMove(ApiModel):
     planned_date: date
+
+
+class PlannedWorkoutDuplicate(ApiModel):
+    planned_date: date | None = None
+
+
+class PlannedWorkoutSwap(ApiModel):
+    other_workout_id: str
+    expected_version: int | None = Field(default=None, ge=1)
+    other_expected_version: int | None = Field(default=None, ge=1)
 
 
 class PlannedWorkoutRead(PlannedWorkoutBase):
@@ -518,11 +529,12 @@ class TrainingWeekPatch(ApiModel):
 
 
 class PlanWeekWorkout(PlannedWorkoutBase):
-    pass
+    id: str | None = None
+    expected_version: int | None = Field(default=None, ge=1)
 
 
 class PlanWeekGoal(WeekGoalBase):
-    pass
+    id: str | None = None
 
 
 class PlanWeekSave(ApiModel):
@@ -660,6 +672,7 @@ class MesocycleRead(MesocycleSpec):
 
 class RecurringGoalSpec(ApiModel):
     id: str | None = None
+    mesocycle_phase: MesocyclePhase | None = None
     metric_key: GoalMetricKey | None = None
     category: WeekGoalCategory = "custom"
     goal_type: WeekGoalType = "achievement"

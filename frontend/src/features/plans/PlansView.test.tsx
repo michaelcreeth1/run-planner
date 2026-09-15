@@ -7,6 +7,7 @@ import { addDays } from "../../lib/dates";
 import { ProfileProvider } from "../../lib/profile";
 import { server } from "../../test/server";
 import type { PlanWeekSummary, TrainingPlan } from "../../types/domain";
+import type { GoalEditRequest } from "../goals/GoalListEditor";
 import { PlansView } from "./PlansView";
 
 const apiUrl = (path: string) => new URL(path, window.location.origin).toString();
@@ -205,7 +206,10 @@ function generatedWeekRow(label: string) {
   return within(generatedWeekPreview()).getByText(label).closest("li");
 }
 
-function renderPlansView(requestedPlanId: string | null = null) {
+function renderPlansView(
+  requestedPlanId: string | null = null,
+  editRequest: GoalEditRequest | null = null
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
   });
@@ -213,6 +217,7 @@ function renderPlansView(requestedPlanId: string | null = null) {
     <QueryClientProvider client={queryClient}>
       <ProfileProvider profileId="profile-1">
         <PlansView
+          editRequest={editRequest}
           onPlanApplied={vi.fn()}
           onSelectPlan={vi.fn()}
           onSelectWeek={vi.fn()}
@@ -743,6 +748,7 @@ describe("PlansView", () => {
 
     await user.click(screen.getByRole("button", { name: "Add recurring goal" }));
     await user.selectOptions(screen.getByLabelText("Metric"), "rest_day_count");
+    await user.selectOptions(screen.getByLabelText("Goal scope"), "base");
     await user.type(screen.getByLabelText("Value"), "1");
     expect(screen.getByText("Keep at least 1 day of rest")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Done" }));
@@ -766,8 +772,55 @@ describe("PlansView", () => {
       unit: "days",
       evaluationMode: "at_least",
       minAcceptable: 1,
-      maxAcceptable: null
+      maxAcceptable: null,
+      mesocyclePhase: "base"
     });
+  });
+
+  it("opens the requested phase rule and lists every affected week before save", async () => {
+    const plan = makeTwoPhasePlan();
+    plan.recurringGoals = [
+      {
+        id: "build-rest-rule",
+        trainingPlanId: plan.id,
+        athleteAccountId: "profile-1",
+        mesocyclePhase: "build",
+        metricKey: "rest_day_count",
+        category: "recovery",
+        goalType: "achievement",
+        label: "Keep at least 1 day of rest",
+        description: "",
+        targetValue: 1,
+        minAcceptable: 1,
+        maxAcceptable: null,
+        unit: "days",
+        evaluationMode: "at_least",
+        priority: "secondary",
+        notes: "",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-01T00:00:00Z"
+      }
+    ];
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([plan])),
+      http.get(apiUrl("/api/plans/plan-1"), () => HttpResponse.json(plan)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([]))
+    );
+
+    renderPlansView("plan-1", {
+      requestId: 1,
+      goalId: "build-rest-rule",
+      metricKey: "rest_day_count"
+    });
+
+    expect(await screen.findByText("Edit training plan")).toBeVisible();
+    const metric = await screen.findByLabelText("Metric");
+    expect(metric).toHaveValue("rest_day_count");
+    expect(screen.getByLabelText("Goal scope")).toHaveValue("build");
+    expect(
+      screen.getByText("Affects 4 weeks: Jul 20, Jul 27, Aug 3, Aug 10.")
+    ).toBeVisible();
+    await waitFor(() => expect(metric).toHaveFocus());
   });
 
   it("derives a read-only plan end from the selected race and restores date-range editing", async () => {

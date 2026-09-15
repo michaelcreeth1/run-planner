@@ -22,7 +22,7 @@ import { defaultForm, defaultGoalForm, formToPayload, goalFormToPayload, optiona
 import { comparisonMileage, formatNumber, labelForWorkoutType } from "../../lib/formatters";
 import { roundToTenth } from "../../lib/numbers";
 import { sessionTypeForWorkout, sessionTypes, weekPurposes } from "../../lib/options";
-import { prescriptionTotals } from "../../lib/prescriptions";
+import { prescriptionTotals, scalePrescriptionDistance } from "../../lib/prescriptions";
 import { formatDurationSeconds, paceInputFromMetrics } from "../../lib/workoutMetrics";
 
 export function buildPlanWeekDraft(week: TrainingWeek, weekStack: Record<string, TrainingWeek>): PlanWeekDraft {
@@ -231,6 +231,7 @@ export function draftWorkoutsFromWeek(sourceWeek: TrainingWeek, targetWeekStartD
 export function workoutDraftFromWorkout(workout: Workout, plannedDate: string): PlanWeekWorkoutDraft {
   const sessionType = sessionTypeForWorkout(workout);
   return {
+    id: workout.id,
     draftId: draftId("workout"),
     plannedDate,
     title: workout.title,
@@ -246,7 +247,9 @@ export function workoutDraftFromWorkout(workout: Workout, plannedDate: string): 
     purpose: workout.purpose,
     instructions: workout.instructions,
     notes: workout.notes,
-    status: "planned"
+    status: workout.status,
+    prescription: workout.prescription ?? null,
+    version: workout.version
   };
 }
 
@@ -313,9 +316,14 @@ export function scaleDraftWorkoutsToMileage(workouts: PlanWeekWorkoutDraft[], ta
     if (effectiveWorkoutSport(workout) !== "run") {
       return workout;
     }
+    if (workout.prescription && !prescriptionTotals(workout.prescription).distanceComplete) {
+      return workout;
+    }
+    const plannedDistance = roundToTenth(Number(workout.plannedDistance || 0) * scale);
     return {
       ...workout,
-      plannedDistance: String(roundToTenth(Number(workout.plannedDistance || 0) * scale))
+      plannedDistance: String(plannedDistance),
+      prescription: scalePrescriptionDistance(workout.prescription, plannedDistance) ?? null
     };
   });
 }
@@ -579,16 +587,20 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
     targetLongRunDistance: optionalNumber(goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => {
       const sessionType = sessionTypeForWorkout(workout);
-      return formToPayload({
-        ...workout,
-        sport: sessionType.sport,
-        workoutType: sessionType.workoutType,
-        intensityCategory: sessionType.intensityCategory,
-        plannedDistance: sessionType.sport === "run" ? workout.plannedDistance : "",
-        plannedPace: sessionType.sport === "run" ? workout.plannedPace : ""
-      });
+      return {
+        id: workout.id,
+        ...formToPayload({
+          ...workout,
+          sport: sessionType.sport,
+          workoutType: sessionType.workoutType,
+          intensityCategory: sessionType.intensityCategory,
+          plannedDistance: sessionType.sport === "run" ? workout.plannedDistance : "",
+          plannedPace: sessionType.sport === "run" ? workout.plannedPace : ""
+        })
+      };
     }),
     goals: goals.map((goal) => ({
+      id: goal.id,
       ...goalFormToPayload({ ...goal, weekId: draft.weekId }),
       label: goalLabelFromDraft(goal),
       source: goal.source

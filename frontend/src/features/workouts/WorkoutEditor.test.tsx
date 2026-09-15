@@ -39,7 +39,7 @@ function EditorHarness({
 }
 
 describe("WorkoutEditor", () => {
-  it("reduces an unmatched Strava edit to one plan dropdown", async () => {
+  it("reduces an unmatched Strava edit to one plan dropdown with an explicit save", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     const session: PerformedSession = {
@@ -111,10 +111,58 @@ describe("WorkoutEditor", () => {
     expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
     expect(screen.queryByText("Outcome")).not.toBeInTheDocument();
     expect(screen.queryByText("Actual intensity")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save match" })).toBeVisible();
     await user.selectOptions(screen.getByLabelText("Strava match"), workout.id);
+    expect(onSave).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save match" }));
 
     expect(onSave).toHaveBeenCalledWith(workout.id);
+  });
+
+  it("can explicitly confirm that an imported activity was unplanned", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const session: PerformedSession = {
+      id: "session-unplanned",
+      athleteAccountId: "athlete-1",
+      occurredAt: "2026-07-15T06:00:00",
+      sport: "cross_training",
+      recordings: [{ stravaActivityId: "activity-ride", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: null,
+      prescriptionRevisionId: null,
+      association: "unmatched",
+      matchProvenance: null,
+      outcome: "unresolved",
+      intensityCategory: "moderate",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 1,
+      totalDistanceMeters: 2896.82,
+      totalDurationSeconds: 1014
+    };
+
+    render(
+      <WorkoutEditor
+        editor={defaultForm("2026-07-15")}
+        error={null}
+        isSaving={false}
+        stravaMatch={{ session, plannedWorkoutId: "" }}
+        stravaMatchOnly
+        workouts={[]}
+        setEditor={vi.fn()}
+        setStravaMatch={vi.fn()}
+        onSaveStravaMatch={onSave}
+        onClose={vi.fn()}
+        onSubmit={(event) => event.preventDefault()}
+      />
+    );
+
+    expect(screen.getByLabelText("Strava match")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Save match" }));
+    expect(onSave).toHaveBeenCalledWith("");
   });
 
   it("edits and submits a complete workout", async () => {

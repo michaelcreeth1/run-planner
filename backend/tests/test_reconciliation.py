@@ -153,6 +153,37 @@ def test_one_recording_in_a_double_leaves_the_other_workout_projected() -> None:
         ] == "planned"
 
 
+def test_user_can_confirm_an_imported_activity_was_unplanned() -> None:
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        planned_date = planning.today_for_timezone("America/Denver").isoformat()
+        assert import_activity(
+            athlete_id,
+            1015,
+            planned_date,
+            1.8,
+            name="Morning Ride",
+            sport_type="Ride",
+        ) == "created"
+        session = client.get("/api/performed-sessions").json()[0]
+        assert session["outcome"] == "unresolved"
+
+        response = client.put(
+            f"/api/performed-sessions/{session['id']}/reconciliation",
+            json={
+                "plannedWorkoutId": None,
+                "expectedVersion": session["version"],
+            },
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["plannedWorkoutId"] is None
+        assert response.json()["association"] == "unmatched"
+        assert response.json()["matchProvenance"] == "user_confirmed"
+        assert response.json()["outcome"] == "unplanned"
+        assert response.json()["evidence"] == "user_confirmation"
+
+
 def test_strava_strength_and_run_are_both_sessions() -> None:
     with TestClient(app) as client:
         athlete_id = login(client)
