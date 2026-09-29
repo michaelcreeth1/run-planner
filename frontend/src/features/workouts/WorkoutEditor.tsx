@@ -86,10 +86,17 @@ export function WorkoutEditor({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     if (stravaMatchOnly) {
       event.preventDefault();
-      onSaveStravaMatch?.(stravaMatch?.plannedWorkoutId ?? "");
+      saveStravaMatch();
       return;
     }
     onSubmit(event);
+  }
+
+  function saveStravaMatch() {
+    if (isBusy) {
+      return;
+    }
+    onSaveStravaMatch?.(stravaMatch?.plannedWorkoutId ?? "");
   }
 
   useModalDialog({ dialogRef: drawerRef, onDismiss: handleClose });
@@ -452,14 +459,32 @@ export function WorkoutEditor({
       >
         <header>
           <h2>{stravaMatchOnly ? "Edit Strava match" : editor.id ? `Edit ${mode === "template" ? "library workout" : "workout"}` : `New ${mode === "template" ? "library workout" : "workout"}`}</h2>
-          <button type="button" title="Close" disabled={isBusy} onClick={handleClose}>
-            <X size={18} />
-          </button>
+          <div className="workout-editor-header-actions">
+            {stravaMatchOnly ? (
+              <button
+                className="workout-editor-match-save"
+                disabled={isBusy}
+                type="button"
+                onClick={saveStravaMatch}
+              >
+                <Save size={16} />
+                <span>{isSaving ? "Saving…" : "Save match"}</span>
+              </button>
+            ) : null}
+            <button type="button" title="Close" disabled={isBusy} onClick={handleClose}>
+              <X size={18} />
+            </button>
+          </div>
         </header>
         <form aria-busy={isBusy} onSubmit={handleSubmit}>
           {error ? <div className="settings-note settings-note--danger" role="alert">{error}</div> : null}
           {stravaMatchOnly ? (
-            <div className="workout-editor-basics">{stravaMatchField}</div>
+            <>
+              <div className="workout-editor-basics">{stravaMatchField}</div>
+              <p className="strava-match-confirmation-note">
+                Save to confirm the selected workout, even when it was already selected.
+              </p>
+            </>
           ) : <>
           <div className="workout-editor-basics">
             {mode === "scheduled" ? <label>
@@ -604,8 +629,8 @@ export function WorkoutEditor({
             </section>
           ) : workoutDetails}
           </>}
-          <div className="editor-actions">
-            {!stravaMatchOnly && mode === "scheduled" && editor.id && onSaveToLibrary ? (
+          {!stravaMatchOnly ? <div className="editor-actions">
+            {mode === "scheduled" && editor.id && onSaveToLibrary ? (
               <button className="secondary" disabled={isBusy || savedToLibrary} type="button" onClick={saveToLibrary}>
                 {savedToLibrary ? <Check size={17} /> : <Library size={17} />}
                 <span>{isSavingToLibrary ? "Saving to library…" : savedToLibrary ? "Saved to workout library" : "Save to workout library"}</span>
@@ -616,14 +641,12 @@ export function WorkoutEditor({
               <span>
                 {isSaving
                   ? "Saving…"
-                  : stravaMatchOnly
-                    ? "Save match"
-                    : mode === "template"
-                      ? "Save to library"
-                      : "Save"}
+                  : mode === "template"
+                    ? "Save to library"
+                    : "Save"}
               </span>
             </button>
-          </div>
+          </div> : null}
         </form>
       </aside>
     </div>

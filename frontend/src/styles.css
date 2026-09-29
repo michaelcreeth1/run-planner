@@ -3693,6 +3693,40 @@ dt {
   font-size: 1.1rem;
 }
 
+.workout-editor-header-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.editor-panel header .workout-editor-match-save {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--text-on-primary);
+  gap: 7px;
+  padding: 0 11px;
+  width: auto;
+}
+
+.editor-panel header .workout-editor-match-save:hover:not(:disabled),
+.editor-panel header .workout-editor-match-save:focus-visible {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.editor-panel header .workout-editor-match-save:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.strava-match-confirmation-note {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin: -2px 0 0;
+}
+
 .editor-panel form,
 .editor-panel label {
   display: grid;
@@ -4219,7 +4253,7 @@ dt {
   border-bottom: 1px solid var(--border-subtle);
   display: grid;
   gap: 8px;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   min-height: 38px;
   padding: 5px 0;
 }
@@ -4231,8 +4265,8 @@ dt {
 .schedule-day-heading {
   align-items: center;
   align-self: start;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
   min-height: 32px;
 }
 
@@ -4244,6 +4278,7 @@ dt {
 .schedule-day-actions {
   display: flex;
   gap: 0.35rem;
+  justify-self: end;
 }
 
 .schedule-day-add {
@@ -4275,7 +4310,7 @@ dt {
   font-size: 0.68rem;
   font-weight: 650;
   gap: 8px;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   letter-spacing: var(--tracking-caps);
   padding: 0 0 2px;
   text-transform: uppercase;
@@ -7087,6 +7122,10 @@ button.goal-impact-cell:focus-visible {
 
   .schedule-draft-day {
     grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .schedule-day-heading {
+    grid-template-columns: 1fr auto;
   }
 
   .schedule-day-actions {

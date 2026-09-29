@@ -165,6 +165,73 @@ describe("WorkoutEditor", () => {
     expect(onSave).toHaveBeenCalledWith("");
   });
 
+  it("can save a preselected Strava match without changing the dropdown", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const workout: Workout = {
+      id: "workout-preselected",
+      trainingWeekId: "week-1",
+      athleteAccountId: "athlete-1",
+      plannedDate: "2026-07-15",
+      title: "Easy five",
+      sport: "run",
+      workoutType: "easy",
+      intensityCategory: "easy",
+      plannedDistance: 5,
+      plannedDuration: null,
+      plannedPace: null,
+      plannedElevation: null,
+      plannedTss: null,
+      purpose: "",
+      instructions: "",
+      notes: "",
+      status: "planned"
+    };
+    const session: PerformedSession = {
+      id: "session-preselected",
+      athleteAccountId: "athlete-1",
+      occurredAt: "2026-07-15T06:00:00",
+      sport: "run",
+      recordings: [{ stravaActivityId: "activity-preselected", contributesToTotals: true }],
+      manualDistanceMeters: null,
+      manualDurationSeconds: null,
+      plannedWorkoutId: workout.id,
+      prescriptionRevisionId: null,
+      association: "associated",
+      matchProvenance: "automatic",
+      outcome: "unresolved",
+      intensityCategory: "easy",
+      evidence: "activity_summary",
+      assessmentNote: "",
+      evidenceChanged: false,
+      version: 1,
+      totalDistanceMeters: 8046.72,
+      totalDurationSeconds: 2700
+    };
+
+    render(
+      <WorkoutEditor
+        editor={{ ...defaultForm(workout.plannedDate), id: workout.id }}
+        error={null}
+        isSaving={false}
+        stravaMatch={{ session, plannedWorkoutId: workout.id }}
+        stravaMatchOnly
+        workouts={[workout]}
+        setEditor={vi.fn()}
+        setStravaMatch={vi.fn()}
+        onSaveStravaMatch={onSave}
+        onClose={vi.fn()}
+        onSubmit={(event) => event.preventDefault()}
+      />
+    );
+
+    expect(screen.getByLabelText("Strava match")).toHaveValue(workout.id);
+    expect(screen.getByText(/even when it was already selected/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save match" }));
+
+    expect(onSave).toHaveBeenCalledWith(workout.id);
+  });
+
   it("edits and submits a complete workout", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
