@@ -23,6 +23,19 @@ const FULL_WEEK_DATES = [
   "2026-07-12"
 ];
 
+it("does not count an outside-week matched run toward completed checks", () => {
+  const workout = makeWorkout({ id: "moved", workoutType: "threshold", intensityCategory: "workout" });
+  const week = makeWeek({ workouts: [workout], actualActivities: [makeActivity({
+    activityDate: "2026-07-07", startDateLocal: "2026-07-07T07:00:00"
+  })], performedSessions: [makePerformedSession({
+    occurredAt: "2026-07-05T07:00:00", plannedWorkoutId: "moved", outcome: "moved", intensityCategory: "workout"
+  })] });
+  const rules = buildPlanRules({ defaultGoals: [], plan: null });
+  const results = evaluateRulesForWeek(rules, { week }, "2026-07-13");
+  expect(results.find((result) => result.ruleId === "hard-days")?.metrics).toContain("0 hard days");
+  expect(results.find((result) => result.ruleId === "rest-days")?.metrics).toContain("6 rest days taken");
+});
+
 function makeWorkout(overrides: Partial<Workout>): Workout {
   return {
     id: crypto.randomUUID(),

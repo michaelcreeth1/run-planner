@@ -33,6 +33,7 @@ import {
   newWorkoutDraft,
   rebuildPlanWeekDraftForStartingPoint,
   scaleDraftWorkoutsToMileage,
+  canAdjustDraftWorkout,
   sortDraftWorkouts,
   sumDraftRunDistance,
   workoutDraftFromTemplate
@@ -381,13 +382,19 @@ export function PlanWeekDrawer({
       if (category === "mileage") {
         return {
           ...current,
-          workouts: scaleDraftWorkoutsToMileage(current.workouts, target).sort(sortDraftWorkouts)
+          workouts: scaleDraftWorkoutsToMileage(current.workouts, target,
+            isAdjustingRemainingWeek && sourceWeek
+              ? { sourceWeek, today: todayDateString() }
+              : undefined
+          ).sort(sortDraftWorkouts)
         };
       }
 
       if (category === "long_run") {
         const longestRun = current.workouts
           .filter((workout) => effectiveWorkoutSport(workout) === "run")
+          .filter((workout) => !isAdjustingRemainingWeek || canAdjustDraftWorkout(workout, sourceWeek, todayDateString()))
+          .filter((workout) => !workout.prescription || prescriptionTotals(workout.prescription).distanceComplete)
           .sort((left, right) => Number(right.plannedDistance || 0) - Number(left.plannedDistance || 0))[0];
         if (!longestRun) {
           return current;
@@ -395,7 +402,11 @@ export function PlanWeekDrawer({
         return {
           ...current,
           workouts: current.workouts.map((workout) =>
-            workout.draftId === longestRun.draftId ? { ...workout, plannedDistance: String(target) } : workout
+            workout.draftId === longestRun.draftId ? {
+              ...workout,
+              plannedDistance: String(target),
+              prescription: scalePrescriptionDistance(workout.prescription, target)
+            } : workout
           )
         };
       }
@@ -573,7 +584,7 @@ export function PlanWeekDrawer({
                 );
                 const visibleDayWorkouts = isAdjustingRemainingWeek
                   ? dayWorkouts.filter(
-                      (workout) => workout.plannedDate >= todayDateString() && !isCompletedDraftWorkout(workout, sourceWeek)
+                      (workout) => canAdjustDraftWorkout(workout, sourceWeek, todayDateString())
                     )
                   : dayWorkouts;
                 const isEarlierDay = isAdjustingRemainingWeek && dateValue < todayDateString();

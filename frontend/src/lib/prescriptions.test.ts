@@ -1,8 +1,28 @@
 import { describe, expect, it } from "vitest";
 import type { WorkoutPrescription } from "../types/domain";
-import { isStructuredPrescription, prescriptionTotals, scalePrescriptionDistance } from "./prescriptions";
+import { isStructuredPrescription, prescriptionTotals, scalePrescriptionDistance, workoutTemplatePayload } from "./prescriptions";
+import { defaultForm } from "./forms";
 
 describe("prescription totals", () => {
+  it("saves edited simple distances and durations instead of the old baseline", () => {
+    const original = workoutTemplatePayload({ ...defaultForm("2099-01-05"), plannedDistance: "5" }, []).prescription;
+    const edited = { ...defaultForm("2099-01-05"), plannedDistance: "7", prescription: original };
+    expect(prescriptionTotals(workoutTemplatePayload(edited, []).prescription).distance / 1609.344).toBeCloseTo(7);
+    const timed = workoutTemplatePayload({ ...edited, plannedDistance: "", plannedDuration: "0:30:00" }, []).prescription;
+    expect(timed.blocks[0]).toMatchObject({ extent: "duration", durationSeconds: 1800 });
+    expect(prescriptionTotals(timed).duration).toBe(1800);
+    const cleared = workoutTemplatePayload({ ...edited, plannedDistance: "" }, []).prescription;
+    expect(cleared.blocks[0]).toMatchObject({ extent: "open" });
+  });
+
+  it("preserves authored structure when saving to the library", () => {
+    const prescription: WorkoutPrescription = { blocks: [{
+      kind: "step", role: "work", extent: "duration", durationSeconds: 1800,
+      supportingTargets: [], notes: "Threshold effort"
+    }] };
+    const payload = workoutTemplatePayload({ ...defaultForm("2099-01-05"), prescription, plannedDistance: "5" }, []);
+    expect(payload.prescription).toEqual(prescription);
+  });
   it("keeps mixed distance and duration totals explicitly incomplete", () => {
     const prescription: WorkoutPrescription = {
       blocks: [{

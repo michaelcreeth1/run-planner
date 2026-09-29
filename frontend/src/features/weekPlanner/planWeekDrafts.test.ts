@@ -143,6 +143,46 @@ describe("plan week draft helpers", () => {
     expect(scaled[2]).toBe(rest);
   });
 
+  it("adjusts only remaining editable work using completed actual mileage", () => {
+    const completed = makeDraftWorkout({ id: "completed", draftId: "completed", plannedDistance: "5" });
+    const remaining = makeDraftWorkout({ id: "remaining", draftId: "remaining", plannedDistance: "5" });
+    const missed = makeDraftWorkout({ id: "missed", draftId: "missed", plannedDate: "2026-06-28", plannedDistance: "5" });
+    const sourceWeek = makeWeek("2026-06-29", {
+      actualMileage: 4,
+      performedSessions: [makePerformedSession({
+        plannedWorkoutId: "completed", association: "associated", outcome: "as_planned"
+      })]
+    });
+    const scaled = scaleDraftWorkoutsToMileage([completed, remaining, missed], 12, {
+      sourceWeek, today: "2026-06-29"
+    });
+    expect(scaled[0]).toBe(completed);
+    expect(scaled[1].plannedDistance).toBe("8");
+    expect(scaled[2]).toBe(missed);
+  });
+
+  it("saves recorded workouts exactly even when the draft calculated a display pace", () => {
+    const original = makeWorkout({ id: "recorded", plannedDuration: 2700, plannedPace: null, plannedElevation: 300 });
+    const week = makeWeek("2026-06-29", {
+      workouts: [original],
+      performedSessions: [makePerformedSession({ plannedWorkoutId: original.id, association: "associated", outcome: "as_planned" })]
+    });
+    const draft = buildPlanWeekDraft(week, { [week.weekStartDate]: week });
+    expect(draft.workouts[0].plannedPace).toBe("9:00");
+    const payload = planWeekDraftToPayload(draft, week);
+    expect(payload.workouts[0]).toMatchObject({ id: "recorded", plannedPace: null, plannedElevation: 300, plannedDuration: 2700 });
+  });
+
+  it("keeps duration prescriptions fixed and adjusts the other remaining runs", () => {
+    const timed = makeDraftWorkout({ draftId: "timed", plannedDistance: "3", prescription: {
+      blocks: [{ kind: "step", role: "work", extent: "duration", durationSeconds: 1800, supportingTargets: [], notes: "" }]
+    } });
+    const distance = makeDraftWorkout({ draftId: "distance", plannedDistance: "5" });
+    const scaled = scaleDraftWorkoutsToMileage([timed, distance], 10);
+    expect(scaled[0]).toBe(timed);
+    expect(scaled[1].plannedDistance).toBe("7");
+  });
+
   it("derives schedule goals without duplicating shared plan checks", () => {
     const draft = makeDraft({
       workouts: [

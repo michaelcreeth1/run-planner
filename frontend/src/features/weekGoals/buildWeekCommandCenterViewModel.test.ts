@@ -1,8 +1,40 @@
 import { describe, expect, it } from "vitest";
 import type { TrainingWeek, Workout } from "../../types/domain";
 import { buildWeekCommandCenterViewModel } from "./buildWeekCommandCenterViewModel";
+import { completedSessionCount } from "../../lib/weekMetrics";
 
 describe("buildWeekCommandCenterViewModel", () => {
+  it("uses cross-week associations only to resolve planned work, not to count actuals", () => {
+    const workout = makeWorkout({ id: "moved", plannedDate: "2026-07-13", workoutType: "threshold", intensityCategory: "workout" });
+    const week = makeWeek({
+      weekState: "current", plannedMileage: 5, workouts: [workout], performedSessions: [{
+        id: "session", athleteAccountId: "athlete-1", occurredAt: "2026-07-12T07:00:00",
+        sport: "run", recordings: [{ stravaActivityId: "recording", contributesToTotals: true }],
+        plannedWorkoutId: "moved", prescriptionRevisionId: null, association: "associated",
+        matchProvenance: "user_confirmed", outcome: "moved", intensityCategory: "workout",
+        evidence: "user_confirmation", assessmentNote: "", evidenceChanged: false, version: 1,
+        totalDistanceMeters: 8046.72, totalDurationSeconds: 2700,
+        manualDistanceMeters: null, manualDurationSeconds: null
+      }]
+    });
+    const current = buildWeekCommandCenterViewModel({ week, today: "2026-07-13" });
+    expect(current.progress).toMatchObject({ completedMiles: 0, completedSessions: 0, projectedMiles: 0 });
+    const reviewed = buildWeekCommandCenterViewModel({ week, today: "2026-07-20" });
+    expect(reviewed.compactStats?.find((stat) => stat.label === "Quality")?.value).toBe("0 hard days");
+    expect(reviewed.compactStats?.find((stat) => stat.label === "Long run")?.value).not.toBe("5 mi");
+    expect(reviewed.progress.completedSessions).toBe(0);
+    const occurrenceWeek = { ...week, weekStartDate: "2026-07-06", weekEndDate: "2026-07-12" };
+    expect(completedSessionCount(occurrenceWeek)).toBe(1);
+    expect(completedSessionCount({
+      ...occurrenceWeek,
+      performedSessions: occurrenceWeek.performedSessions?.map((session) => ({ ...session, outcome: "skipped" })),
+      actualActivities: [{
+        id: "recording", stravaActivityId: "123", name: "Threshold run", sportType: "Run",
+        activityDate: "2026-07-12", startDateLocal: "2026-07-12T07:00:00", distance: 8046.72,
+        distanceMiles: 5, movingTime: 2700, averageHeartrate: null
+      }]
+    })).toBe(0);
+  });
   it("does not invent placeholder narrative for structured future weeks without load", () => {
     const viewModel = buildWeekCommandCenterViewModel({
       today: "2026-07-05",

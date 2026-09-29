@@ -371,6 +371,7 @@ def apply_prescription_summary(
     *,
     easy_pace_seconds_per_mile: int,
     workout_type: str,
+    sport: str = "run",
 ) -> dict | None:
     """Make authored structure authoritative over legacy workout summary fields."""
     if not is_structured_prescription(prescription):
@@ -382,9 +383,14 @@ def apply_prescription_summary(
     )
     workout_data["planned_distance"] = totals["estimated_distance_meters"] / 1609.344
     workout_data["planned_duration"] = totals["estimated_duration_seconds"]
-    workout_data["planned_pace"] = round(
-        totals["estimated_duration_seconds"] / workout_data["planned_distance"]
+    workout_data["planned_pace"] = (
+        round(totals["estimated_duration_seconds"] / workout_data["planned_distance"])
+        if workout_data["planned_distance"]
+        else None
     )
+    if sport != "run":
+        workout_data["planned_distance"] = None
+        workout_data["planned_pace"] = None
     return totals
 
 
@@ -1081,6 +1087,7 @@ def create_workout(
             prescription,
             easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
             workout_type=payload.workout_type,
+            sport=payload.sport,
         )
     workout = PlannedWorkout(
         athlete_account_id=active_athlete_id,
@@ -1162,6 +1169,19 @@ def update_workout(
             detail="This workout changed in another editor. Reload before saving.",
         )
 
+    summary_changed = any(
+        field in updates and updates[field] != getattr(workout, field)
+        for field in ("planned_distance", "planned_duration")
+    )
+    current_document = workout.prescription
+    if summary_changed and not prescription_was_supplied:
+        if current_document is not None and is_structured_prescription(current_document):
+            raise HTTPException(
+                status_code=422,
+                detail="Adjust the structured prescription before changing its calculated totals.",
+            )
+        prescription_was_supplied = True
+
     new_week = None
     if "planned_date" in updates:
         new_week = get_or_create_mutable_week(
@@ -1177,6 +1197,13 @@ def update_workout(
         workout.training_week_id = new_week.id
 
     if prescription_was_supplied:
+        if prescription is None or not is_structured_prescription(prescription):
+            prescription = legacy_prescription(
+                {
+                    "planned_distance": workout.planned_distance,
+                    "planned_duration": workout.planned_duration,
+                }
+            )
         pace_estimate = training_pace_estimate(db, workout.athlete_account_id)
         add_prescription_revision(
             db,
@@ -1191,6 +1218,7 @@ def update_workout(
                 prescription,
                 easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
                 workout_type=workout.workout_type,
+                sport=workout.sport,
             )
             for field, value in summary_fields.items():
                 setattr(workout, field, value)
@@ -1556,14 +1584,43 @@ def schedule_template(
 ) -> PlannedWorkout:
     template = get_template(db, template_id, athlete_account_id)
     prescription = template_prescription(template)
+    sport = (
+        template.workout_type
+        if template.workout_type in {"strength", "mobility", "rest"}
+        else "run"
+    )
+    intensity = (
+        "race"
+        if template.workout_type in {"race", "time_trial"}
+        else "workout"
+        if template.workout_type in weekly_metrics.QUALITY_WORKOUT_TYPES
+        else "strength"
+        if sport == "strength"
+        else "rest"
+        if sport == "rest"
+        else "moderate"
+        if template.workout_type in {"long_run", "medium_long", "other"}
+        else "easy"
+    )
+    totals = prescription_totals(
+        prescription,
+        easy_pace_seconds_per_mile=training_pace_estimate(db, athlete_account_id)[
+            "easy_pace_seconds_per_mile"
+        ],
+        workout_type=template.workout_type,
+    )
     workout = create_workout(
         db,
         PlannedWorkoutCreate(
             planned_date=planned_date,
             title=title or template.name,
             workout_type=template.workout_type,
-            planned_distance=template.default_distance,
-            planned_duration=template.default_duration,
+            sport=sport,
+            intensity_category=intensity,
+            planned_distance=totals["estimated_distance_meters"] / 1609.344
+            if sport == "run"
+            else None,
+            planned_duration=totals["estimated_duration_seconds"] if sport != "rest" else None,
             purpose=template.default_purpose,
             instructions=template.default_instructions,
             prescription=prescription,
@@ -1958,6 +2015,28 @@ def session_intensity_for_activity(activity: StravaActivity) -> str:
     return "moderate"
 
 
+def recorded_session_intensity(db: Session, session: PerformedSession) -> str:
+    activity_ids = [
+        item.strava_activity_id for item in session.recordings if item.contributes_to_totals
+    ]
+    intensities = {
+        session_intensity_for_activity(activity)
+        for activity in db.scalars(
+            select(StravaActivity).where(
+                StravaActivity.id.in_(activity_ids), StravaActivity.deleted_at.is_(None)
+            )
+        )
+    }
+    return next(
+        (
+            value
+            for value in ("race", "workout", "strength", "moderate", "easy")
+            if value in intensities
+        ),
+        "easy",
+    )
+
+
 def reconcile_session(
     db: Session, session_id: str, payload: ReconciliationUpdate, athlete_account_id: str
 ) -> PerformedSession:
@@ -1974,6 +2053,7 @@ def reconcile_session(
             status_code=409, detail="This session changed in another editor. Reload before saving."
         )
     matched_workout: PlannedWorkout | None = None
+    session.intensity_category = recorded_session_intensity(db, session)
     if payload.planned_workout_id is None:
         session.planned_workout_id = None
         session.prescription_revision_id = None
@@ -2001,6 +2081,7 @@ def reconcile_session(
                 recording.performed_session = session
             db.flush()
             db.delete(conflicting_session)
+            session.intensity_category = recorded_session_intensity(db, session)
         session.planned_workout_id = matched_workout.id
         session.prescription_revision_id = matched_workout.current_prescription_revision_id
         session.association = "associated"
@@ -2015,8 +2096,6 @@ def reconcile_session(
             session.outcome = "moved"
         else:
             session.outcome = "as_planned"
-        if session.outcome in {"as_planned", "moved"}:
-            session.intensity_category = matched_workout.intensity_category
         affected_week_ids.add(matched_workout.training_week_id)
         affected_workout_ids.add(matched_workout.id)
     session.evidence = "user_confirmation"
@@ -2304,6 +2383,7 @@ def save_week_plan(
                     submitted_prescription,
                     easy_pace_seconds_per_mile=pace_estimate["easy_pace_seconds_per_mile"],
                     workout_type=workout.workout_type,
+                    sport=workout.sport,
                 )
                 for field, value in summary_fields.items():
                     setattr(workout, field, value)

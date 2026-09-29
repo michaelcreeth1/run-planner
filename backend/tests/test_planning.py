@@ -1773,3 +1773,88 @@ def test_workouts_can_swap_days_and_duplicate_to_another_date() -> None:
         assert duplicate.training_week_id != first.training_week_id
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("include_prescription", [True, False])
+def test_simple_metric_edit_updates_prescription_and_retains_original(include_prescription) -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post(
+            "/api/planned-workouts",
+            json={
+                "plannedDate": "2099-01-05",
+                "title": "Easy 5",
+                "plannedDistance": 5,
+            },
+        ).json()
+        payload = {"plannedDistance": 7, "expectedVersion": created["version"]}
+        if include_prescription:
+            payload["prescription"] = created["prescription"]
+        response = client.patch(f"/api/planned-workouts/{created['id']}", json=payload)
+        assert response.status_code == 200, response.json()
+        updated = response.json()
+        assert updated["plannedDistance"] == 7
+        assert updated["prescription"]["blocks"][0]["distanceMeters"] == pytest.approx(7 * 1609.344)
+        assert updated["currentPrescriptionRevision"]["revisionNumber"] == 2
+        with SessionLocal() as db:
+            revisions = list(
+                db.scalars(
+                    select(WorkoutPrescriptionRevision)
+                    .where(WorkoutPrescriptionRevision.planned_workout_id == created["id"])
+                    .order_by(WorkoutPrescriptionRevision.revision_number)
+                )
+            )
+            assert revisions[0].prescription_json["blocks"][0]["distance_meters"] == pytest.approx(
+                5 * 1609.344
+            )
+        copied = client.post(f"/api/planned-workouts/{created['id']}/duplicate").json()
+        assert copied["plannedDistance"] == 7
+        assert copied["prescription"] == updated["prescription"]
+
+
+@pytest.mark.parametrize(
+    "workout_type,extent,value,sport,intensity,miles,seconds",
+    [
+        ("easy", "distance", 8046.72, "run", "easy", 5, 3000),
+        ("easy", "duration", 1800, "run", "easy", 3, 1800),
+        ("strength", "duration", 1800, "strength", "strength", None, 1800),
+        ("mobility", "duration", 600, "mobility", "easy", None, 600),
+        ("threshold", "duration", 1800, "run", "workout", 3, 1800),
+    ],
+)
+def test_scheduling_simple_template_preserves_metrics_and_session_type(
+    workout_type, extent, value, sport, intensity, miles, seconds
+) -> None:
+    with TestClient(app) as client:
+        login(client)
+        block = {
+            "kind": "step",
+            "role": "work" if workout_type == "strength" else "other",
+            "extent": extent,
+        }
+        block["distanceMeters" if extent == "distance" else "durationSeconds"] = value
+        template = client.post(
+            "/api/workout-templates",
+            json={
+                "name": "Reusable session",
+                "workoutType": workout_type,
+                "prescription": {"blocks": [block]},
+            },
+        ).json()
+        response = client.post(
+            f"/api/workout-templates/{template['id']}/schedule",
+            json={
+                "plannedDate": "2099-01-05",
+            },
+        )
+        assert response.status_code == 200, response.json()
+        workout = response.json()
+        assert workout["sport"] == sport
+        assert workout["intensityCategory"] == intensity
+        if miles is not None:
+            assert workout["plannedDistance"] == pytest.approx(miles)
+        else:
+            assert workout["plannedDistance"] is None
+        assert workout["plannedDuration"] == seconds
+        week = client.get("/api/weeks/2099-01-05").json()
+        assert week["plannedMileage"] == (miles or 0)

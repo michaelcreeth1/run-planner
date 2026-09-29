@@ -1,7 +1,7 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
 import { weekPurposes } from "../../lib/options";
-import { completedSessionCount } from "../../lib/weekMetrics";
+import { actualPerformedSessions, completedSessionCount } from "../../lib/weekMetrics";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -1005,7 +1005,7 @@ function deriveLongRun(week: TrainingWeek, mode: WeekMode, today: string) {
 }
 
 function longestActualRun(week: TrainingWeek) {
-  const sessions = week.performedSessions ?? [];
+  const sessions = actualPerformedSessions(week);
   const groupedActivityIds = new Set(
     sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
   );
@@ -1108,7 +1108,7 @@ function plannedHardDayCount(week: TrainingWeek) {
 }
 
 function actualHardDayCount(week: TrainingWeek) {
-  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const sessions = actualPerformedSessions(week);
   if (sessions.length === 0) {
     return new Set(
       week.actualActivities
@@ -1135,7 +1135,7 @@ function actualHardDayCount(week: TrainingWeek) {
 }
 
 function actualStrengthSessionCount(week: TrainingWeek) {
-  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const sessions = actualPerformedSessions(week);
   if (sessions.length === 0) {
     return week.actualActivities.filter((activity) =>
       /strength|mobility|workout/i.test(activity.sportType + activity.name)
@@ -1177,7 +1177,7 @@ function actualRestDays(week: TrainingWeek) {
 }
 
 function actualTrainingDates(week: TrainingWeek) {
-  const sessions = week.performedSessions ?? [];
+  const sessions = actualPerformedSessions(week);
   const groupedActivityIds = new Set(
     sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
   );

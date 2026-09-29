@@ -496,3 +496,80 @@ def test_historical_repair_migration_matches_only_safe_pairs() -> None:
         assert repaired["outcome"] == "as_planned"
         week = client.get("/api/weeks/current").json()
         assert week["workouts"][0]["status"] == "completed_as_planned"
+
+
+def test_correcting_or_clearing_a_match_uses_recorded_intensity() -> None:
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        today = planning.today_for_timezone("America/Denver").isoformat()
+        easy = create_workout(client, today, "Easy 5", 5)
+        quality = create_workout(
+            client, today, "Threshold 5", 5, workout_type="threshold", intensity="workout"
+        )
+        import_activity(athlete_id, 2001, today, 5, name="Threshold workout")
+        session = client.get("/api/performed-sessions").json()[0]
+        for planned_id, outcome in [
+            (easy["id"], "as_planned"),
+            (quality["id"], "as_planned"),
+            (None, "unplanned"),
+        ]:
+            response = client.put(
+                f"/api/performed-sessions/{session['id']}/reconciliation",
+                json={
+                    "plannedWorkoutId": planned_id,
+                    "expectedVersion": session["version"],
+                },
+            )
+            assert response.status_code == 200, response.json()
+            session = response.json()
+            assert session["outcome"] == outcome
+            assert session["intensityCategory"] == "workout"
+        week = client.get(f"/api/weeks/{planning.week_start_for(date.fromisoformat(today))}").json()
+        assert evaluation(week, "hard_training_day_count")["actualValue"] == 1
+
+
+def test_deleting_only_recording_restores_remaining_work_and_editability() -> None:
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        today = planning.today_for_timezone("America/Denver").isoformat()
+        workout = create_workout(client, today, "Easy 5", 5)
+        import_activity(athlete_id, 2002, today, 5)
+        week = derive_goals(client, planning.week_start_for(date.fromisoformat(today)).isoformat())
+        with SessionLocal() as db:
+            assert strava.mark_activity_deleted(db, athlete_id, "2002")
+        week = client.get(f"/api/weeks/{week['weekStartDate']}").json()
+        assert week["actualMileage"] == 0
+        assert week["workouts"][0]["status"] == "planned"
+        assert evaluation(week, "weekly_run_distance")["remainingPlannedValue"] == 5
+        assert evaluation(week, "training_session_count")["actualValue"] == 0
+        assert week["performedSessions"][0]["recordings"] == []
+        assert (
+            client.patch(
+                f"/api/planned-workouts/{workout['id']}", json={"plannedDistance": 6}
+            ).status_code
+            == 200
+        )
+        assert client.delete(f"/api/planned-workouts/{workout['id']}").status_code == 204
+
+
+def test_deleting_one_grouped_recording_retains_surviving_session() -> None:
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        today = planning.today_for_timezone("America/Denver").isoformat()
+        workout = create_workout(client, today, "Easy 6", 6)
+        import_activity(athlete_id, 2003, today, 2)
+        import_activity(athlete_id, 2004, today, 4)
+        before = client.get("/api/performed-sessions").json()[0]
+        assert len(before["recordings"]) == 2
+        with SessionLocal() as db:
+            assert strava.mark_activity_deleted(db, athlete_id, "2003")
+        after = client.get("/api/performed-sessions").json()[0]
+        assert after["id"] == before["id"]
+        assert len(after["recordings"]) == 1
+        assert after["plannedWorkoutId"] == workout["id"]
+        assert after["totalDistanceMeters"] == 4 * 1609.344
+        assert after["evidenceChanged"] is True
+        assert after["version"] == before["version"] + 1
+        week = client.get(f"/api/weeks/{planning.week_start_for(date.fromisoformat(today))}").json()
+        assert week["actualMileage"] == 4
+        assert client.delete(f"/api/planned-workouts/{workout['id']}").status_code == 409

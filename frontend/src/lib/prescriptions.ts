@@ -7,7 +7,7 @@ import type {
 } from "../types/domain";
 import { defaultForm } from "./forms";
 import { sessionTypeForWorkout, sessionTypes } from "./options";
-import { formatDurationSeconds } from "./workoutMetrics";
+import { formatDurationSeconds, parseDurationSeconds } from "./workoutMetrics";
 
 const DEFAULT_EASY_PACE_SECONDS_PER_MILE = 600;
 const WORK_PACE_FACTORS: Partial<Record<Workout["workoutType"], number>> = {
@@ -161,7 +161,7 @@ export function scalePrescriptionDistance(
 }
 
 export function prescriptionFromForm(form: WorkoutForm): WorkoutPrescription {
-  if (form.prescription?.blocks.length) {
+  if (form.prescription && isStructuredPrescription(form.prescription)) {
     return form.prescription;
   }
   if (Number(form.plannedDistance) > 0) {
@@ -172,6 +172,20 @@ export function prescriptionFromForm(form: WorkoutForm): WorkoutPrescription {
         extent: "distance",
         distanceMeters: Number(form.plannedDistance) * 1609.344,
         displayUnit: "mi",
+        supportingTargets: [],
+        notes: ""
+      }]
+    };
+  }
+  const duration = parseDurationSeconds(form.plannedDuration);
+  if (duration !== null) {
+    return {
+      blocks: [{
+        kind: "step",
+        role: "other",
+        extent: "duration",
+        durationSeconds: duration,
+        displayUnit: "min",
         supportingTargets: [],
         notes: ""
       }]

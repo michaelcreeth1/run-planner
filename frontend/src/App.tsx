@@ -789,7 +789,7 @@ function AppShell() {
     try {
       const savedWeek = await fetchJson<TrainingWeek>(`/api/weeks/${draft.weekId}/plan`, {
         method: "PUT",
-        body: JSON.stringify(planWeekDraftToPayload(draft)),
+        body: JSON.stringify(planWeekDraftToPayload(draft, weekStack[draft.weekStartDate])),
         signal: request.signal
       });
       if (!request.isCurrent()) {

@@ -1046,3 +1046,43 @@ def test_recurring_goals_respect_manual_edits_and_clear_on_delete() -> None:
         assert not any(goal["source"] == "plan" for goal in second_week["goals"])
         first_week = client.get(f"/api/weeks/{first_week_start}").json()
         assert any(goal["label"] == "Two strength sessions" for goal in first_week["goals"])
+
+
+def test_phase_goal_overrides_matching_plan_goal_but_preserves_other_conditions() -> None:
+    with TestClient(app) as client:
+        login(client)
+        payload = make_plan_payload(start_date="2100-02-01", end_date="2100-02-28")
+        common = {
+            "metricKey": "rest_day_count",
+            "category": "recovery",
+            "unit": "days",
+            "goalType": "guardrail",
+            "evaluationMode": "at_least",
+            "priority": "secondary",
+        }
+        payload["recurringGoals"] = [
+            dict(common, label="Whole plan two rest days", targetValue=2, minAcceptable=2),
+            dict(
+                common,
+                label="Base one rest day",
+                targetValue=1,
+                minAcceptable=1,
+                mesocyclePhase="base",
+            ),
+            dict(
+                common,
+                label="Maximum three rest days",
+                evaluationMode="at_most",
+                targetValue=3,
+                maxAcceptable=3,
+            ),
+        ]
+        response = client.post("/api/plans", json=payload)
+        assert response.status_code == 201, response.json()
+        plan = response.json()
+        base = client.get(f"/api/weeks/{plan['weekSummaries'][0]['weekStartDate']}").json()
+        race = client.get(f"/api/weeks/{plan['weekSummaries'][-1]['weekStartDate']}").json()
+        base_labels = {goal["label"] for goal in base["goals"] if goal["source"] == "plan"}
+        race_labels = {goal["label"] for goal in race["goals"] if goal["source"] == "plan"}
+        assert base_labels == {"Base one rest day", "Maximum three rest days"}
+        assert race_labels == {"Whole plan two rest days", "Maximum three rest days"}

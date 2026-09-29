@@ -7,6 +7,7 @@ import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
 import { server } from "../../test/server";
 import type { PlanWeekDraft, TrainingWeek, WorkoutTemplate } from "../../types/domain";
 import { PlanWeekDrawer } from "./PlanWeekDrawer";
+import { planWeekDraftToPayload } from "./planWeekDrafts";
 
 function PlannerHarness({
   initialDraft = mismatchedDraft(),
@@ -33,6 +34,46 @@ function PlannerHarness({
 }
 
 describe("PlanWeekDrawer", () => {
+  it("matches a current-week target while preserving completed work in the save payload", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const today = todayDateString();
+    const weekStartDate = startOfWeek(new Date());
+    const base = mismatchedDraft();
+    const draft: PlanWeekDraft = {
+      ...base, weekStartDate, weekEndDate: addDays(weekStartDate, 6),
+      weekState: "current", hasExistingPlan: true,
+      workouts: [
+        { ...base.workouts[0], id: "completed", draftId: "completed", title: "Completed run", plannedDate: today },
+        { ...base.workouts[0], id: "remaining", draftId: "remaining", title: "Remaining run", plannedDate: today }
+      ],
+      goals: [{ ...base.goals[0], targetValue: "12", minAcceptable: "12", maxAcceptable: "12" }]
+    };
+    const week: TrainingWeek = {
+      ...priorTrainingWeek(weekStartDate, 10), id: draft.weekId, weekState: "current", actualMileage: 5,
+      targetMileage: 12,
+      workouts: draft.workouts.map((workout) => ({
+        ...priorTrainingWeek().workouts[0], id: workout.id!, title: workout.title,
+        plannedDate: today, plannedDistance: 5
+      })),
+      performedSessions: [{
+        id: "session", athleteAccountId: "athlete-1", occurredAt: `${today}T07:00:00`, sport: "run",
+        recordings: [{ stravaActivityId: "recording", contributesToTotals: true }],
+        plannedWorkoutId: "completed", prescriptionRevisionId: null, association: "associated",
+        matchProvenance: "automatic", outcome: "as_planned", intensityCategory: "easy",
+        evidence: "activity_summary", assessmentNote: "", evidenceChanged: false, version: 1,
+        totalDistanceMeters: 8046.72, totalDurationSeconds: 2700,
+        manualDistanceMeters: null, manualDurationSeconds: null
+      }]
+    };
+    render(<PlannerHarness initialDraft={draft} onSave={onSave} weekStack={{ [weekStartDate]: week }} />);
+    await user.click(screen.getByRole("button", { name: "Match target" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const saved = onSave.mock.calls[0][0] as PlanWeekDraft;
+    expect(saved.workouts.find((workout) => workout.id === "completed")?.plannedDistance).toBe("5");
+    expect(saved.workouts.find((workout) => workout.id === "remaining")?.plannedDistance).toBe("7");
+    expect(planWeekDraftToPayload(saved, week).workouts.map((workout) => workout.plannedDistance)).toEqual([5, 7]);
+  });
   it("matches its title to unplanned and already-planned current weeks", () => {
     const draft = { ...mismatchedDraft(), weekState: "current" as const, hasExistingPlan: false };
     const props = {

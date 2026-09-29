@@ -619,12 +619,36 @@ def mark_activity_deleted(db: Session, athlete_account_id: str, strava_activity_
     session = db.get(PerformedSession, recording.performed_session_id) if recording else None
     affected_dates = {activity.start_date_local.date()}
     affected_week_ids: set[str] = set()
+    affected_workout_id: str | None = None
     if session is not None:
         session.evidence_changed = True
+        session.version += 1
         affected_dates.add(session.occurred_at.date())
         if session.planned_workout is not None:
+            affected_workout_id = session.planned_workout_id
             affected_week_ids.add(session.planned_workout.training_week_id)
+        session.recordings.remove(recording)
+        db.flush()
+        remaining_activities = list(
+            db.scalars(
+                select(StravaActivity).where(
+                    StravaActivity.id.in_([item.strava_activity_id for item in session.recordings]),
+                    StravaActivity.deleted_at.is_(None),
+                )
+            )
+        )
+        if remaining_activities:
+            session.occurred_at = min(item.start_date_local for item in remaining_activities)
+            session.intensity_category = planning.recorded_session_intensity(db, session)
+            affected_dates.add(session.occurred_at.date())
+        else:
+            session.planned_workout_id = None
+            session.prescription_revision_id = None
+            session.association = "unmatched"
+            session.outcome = "unresolved"
     db.commit()
+    if affected_workout_id is not None:
+        planning.sync_workout_status_from_sessions(db, affected_workout_id, athlete_account_id)
     planning.recalculate_impacted_weeks(
         db,
         affected_week_ids,

@@ -310,17 +310,43 @@ export function workoutDraftFromTemplate(
   };
 }
 
-export function scaleDraftWorkoutsToMileage(workouts: PlanWeekWorkoutDraft[], targetMileage: number) {
-  const currentMileage = sumDraftRunDistance(workouts);
-  if (!currentMileage || !targetMileage) {
+export function canAdjustDraftWorkout(
+  workout: PlanWeekWorkoutDraft,
+  sourceWeek?: TrainingWeek,
+  today?: string
+) {
+  return (!today || workout.plannedDate >= today) &&
+    !(sourceWeek?.performedSessions ?? []).some(
+      (session) => session.recordings.length > 0 && session.plannedWorkoutId === workout.id
+    );
+}
+
+export function scaleDraftWorkoutsToMileage(
+  workouts: PlanWeekWorkoutDraft[],
+  targetMileage: number,
+  context?: { sourceWeek: TrainingWeek; today: string }
+) {
+  const remainingWorkouts = context
+    ? workouts.filter((workout) => workout.plannedDate >= context.today &&
+      !(context.sourceWeek.performedSessions ?? []).some((session) =>
+        session.recordings.length > 0 && session.plannedWorkoutId === workout.id &&
+        session.outcome !== "unresolved"
+      ))
+    : workouts;
+  const adjustableWorkouts = remainingWorkouts.filter((workout) =>
+    effectiveWorkoutSport(workout) === "run" &&
+    canAdjustDraftWorkout(workout, context?.sourceWeek, context?.today) &&
+    (!workout.prescription || prescriptionTotals(workout.prescription).distanceComplete)
+  );
+  const fixedMileage = sumDraftRunDistance(remainingWorkouts.filter((workout) => !adjustableWorkouts.includes(workout)));
+  const availableMileage = targetMileage - (context?.sourceWeek.actualMileage ?? 0) - fixedMileage;
+  const currentMileage = sumDraftRunDistance(adjustableWorkouts);
+  if (!currentMileage || availableMileage <= 0) {
     return workouts;
   }
-  const scale = targetMileage / currentMileage;
+  const scale = availableMileage / currentMileage;
   return workouts.map((workout) => {
-    if (effectiveWorkoutSport(workout) !== "run") {
-      return workout;
-    }
-    if (workout.prescription && !prescriptionTotals(workout.prescription).distanceComplete) {
+    if (!adjustableWorkouts.includes(workout)) {
       return workout;
     }
     const plannedDistance = roundToTenth(Number(workout.plannedDistance || 0) * scale);
@@ -578,7 +604,7 @@ export function numericAlignment(id: string, label: string, value: number, goal:
   };
 }
 
-export function planWeekDraftToPayload(draft: PlanWeekDraft) {
+export function planWeekDraftToPayload(draft: PlanWeekDraft, sourceWeek?: TrainingWeek) {
   const retainedGoals = draft.goals.filter((goal) => goal.source !== "workouts");
   const retainedGoalKeys = new Set(retainedGoals.map(goalIdentityKey));
   const scheduleGoals = deriveGoalDraftsFromSchedule(draft, "Schedule").filter(
@@ -590,6 +616,12 @@ export function planWeekDraftToPayload(draft: PlanWeekDraft) {
     customPurpose: "",
     targetLongRunDistance: optionalNumber(goals.find((goal) => goal.category === "long_run" && goal.goalType === "achievement")?.targetValue ?? ""),
     workouts: draft.workouts.map((workout) => {
+      const original = sourceWeek?.workouts.find((candidate) => candidate.id === workout.id);
+      if (original && (sourceWeek?.performedSessions ?? []).some(
+        (session) => session.recordings.length > 0 && session.plannedWorkoutId === original.id
+      )) {
+        return { ...original, expectedVersion: original.version };
+      }
       const sessionType = sessionTypeForWorkout(workout);
       return {
         ...(workout.id ? { id: workout.id } : {}),

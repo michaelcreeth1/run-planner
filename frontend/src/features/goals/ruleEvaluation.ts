@@ -1,5 +1,6 @@
 import { formatNumber } from "../../lib/formatters";
 import { daysBetween } from "../../lib/dates";
+import { actualPerformedSessions } from "../../lib/weekMetrics";
 import type {
   Mesocycle,
   MesocyclePhase,
@@ -705,7 +706,7 @@ function plannedLongRunCandidate(week: TrainingWeek): LongRunCandidate | null {
 }
 
 function longestActualRun(week: TrainingWeek): LongRunCandidate | null {
-  const sessions = week.performedSessions ?? [];
+  const sessions = actualPerformedSessions(week);
   const groupedActivityIds = new Set(
     sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
   );
@@ -737,7 +738,7 @@ function longestActualRun(week: TrainingWeek): LongRunCandidate | null {
 }
 
 function actualHardDates(week: TrainingWeek) {
-  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const sessions = actualPerformedSessions(week);
   const groupedActivityIds = new Set(
     sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
   );
@@ -768,14 +769,14 @@ function actualHardDates(week: TrainingWeek) {
 
 function hasActualWork(week: TrainingWeek) {
   return (
-    (week.performedSessions?.some((session) => session.recordings.length > 0) ?? false) ||
+    actualPerformedSessions(week).length > 0 ||
     week.actualActivities.length > 0 ||
     week.actualMileage > 0
   );
 }
 
 function actualTrainingDates(week: TrainingWeek) {
-  const sessions = (week.performedSessions ?? []).filter((session) => session.recordings.length > 0);
+  const sessions = actualPerformedSessions(week);
   const groupedActivityIds = new Set(
     sessions.flatMap((session) => session.recordings.map((recording) => recording.stravaActivityId))
   );

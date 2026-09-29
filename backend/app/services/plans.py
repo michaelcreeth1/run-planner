@@ -862,10 +862,21 @@ def scaffold_weeks(
             week_warnings.append("Manual long-run override will be preserved.")
 
         if apply_changes:
+            phase_goal_keys = {
+                (goal.get("metric_key") or goal["category"], goal["evaluation_mode"])
+                for goal in recurring_goals or []
+                if goal.get("mesocycle_phase") is not None
+                and goal.get("mesocycle_phase") == scheduled.mesocycle_phase
+            }
             effective_goals = [
                 goal
                 for goal in recurring_goals or []
                 if goal.get("mesocycle_phase") in {None, scheduled.mesocycle_phase}
+                and (
+                    goal.get("mesocycle_phase") is not None
+                    or (goal.get("metric_key") or goal["category"], goal["evaluation_mode"])
+                    not in phase_goal_keys
+                )
             ]
             planning.sync_plan_sourced_goals(existing, effective_goals)
 
