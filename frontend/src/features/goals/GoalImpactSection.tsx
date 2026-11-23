@@ -1,4 +1,4 @@
-import { Grid3x3 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Grid3x3 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "../../lib/api";
 import { addDays, parseDate, startOfWeek, todayDateString } from "../../lib/dates";
@@ -42,6 +42,11 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
   const [weeksError, setWeeksError] = useState<string | null>(null);
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<CellTooltip | null>(null);
+  const [selectedCell, setSelectedCell] = useState<{ evaluation: RuleEvaluation; weekLabel: string; weekStart: string } | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const weekHeaderRefs = useRef(new Map<string, HTMLElement>());
+  const [focusedWeek, setFocusedWeek] = useState(() => startOfWeek(new Date()));
+  const [centerRequest, setCenterRequest] = useState(0);
   const requestedStartsRef = useRef(new Set<string>());
   const currentWeekStart = useMemo(() => startOfWeek(new Date()), []);
 
@@ -55,7 +60,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
     const forward = planStarts.length
       ? planStarts
       : Array.from({ length: FUTURE_WEEKS_WITHOUT_PLAN + 1 }, (_, index) => addDays(anchor, 7 * index));
-    return [...history, ...forward];
+    return Array.from(new Set([...history, ...forward, currentWeekStart])).sort();
   }, [contextLoading, plan, currentWeekStart, historyWeeks]);
 
   useEffect(() => {
@@ -106,6 +111,25 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
     return { columns, today };
   }, [allLoaded, plan, weekStarts, weeks, rules]);
 
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const header = weekHeaderRefs.current.get(focusedWeek);
+    if (!scroller || !header) return;
+    const left = header.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+    const labelWidth = scroller.querySelector<HTMLElement>(".goal-impact-corner")?.offsetWidth ?? 208;
+    scroller.scrollTo?.({
+      left: Math.max(0, left - labelWidth - (scroller.clientWidth - labelWidth) / 2 + header.offsetWidth / 2),
+      behavior: "instant"
+    });
+  }, [matrix, focusedWeek, centerRequest]);
+
+  function focusWeek(weekStart: string) {
+    setFocusedWeek(weekStart);
+    setCenterRequest((current) => current + 1);
+    setSelectedCell(null);
+    setTooltip(null);
+  }
+
   const summary = useMemo(
     () => (matrix ? summarizeRuleMatrix(matrix.columns.flatMap((column) => column.evaluations)) : null),
     [matrix]
@@ -137,6 +161,12 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
         <div>
           <h2>Goal impact</h2>
         </div>
+        <div className="goal-impact-controls">
+          <nav className="goal-impact-week-nav" aria-label="Browse goal impact weeks">
+            <button type="button" className="icon-button" aria-label="Previous week" title="Previous week" disabled={weekStarts.indexOf(focusedWeek) <= 0} onClick={() => focusWeek(weekStarts[weekStarts.indexOf(focusedWeek) - 1])}><ChevronLeft size={14} /></button>
+            <button type="button" className="text-action" title={formatCompactWeekRange(currentWeekStart, addDays(currentWeekStart, 6))} onClick={() => focusWeek(currentWeekStart)}>Current week</button>
+            <button type="button" className="icon-button" aria-label="Next week" title="Next week" disabled={weekStarts.indexOf(focusedWeek) >= weekStarts.length - 1} onClick={() => focusWeek(weekStarts[weekStarts.indexOf(focusedWeek) + 1])}><ChevronRight size={14} /></button>
+          </nav>
         <div className="analytics-segmented-control goal-impact-history-control" aria-label="Matrix timeframe">
           <span>History</span>
           <div>
@@ -151,6 +181,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
               </button>
             ))}
           </div>
+        </div>
         </div>
       </header>
 
@@ -175,12 +206,12 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
             <span> · {summary.pendingWeeks} pending</span>
           </p>
 
-          <div className="goal-impact-scroll">
+          <div className="goal-impact-scroll" ref={scrollRef}>
             <div
               className="goal-impact-grid"
               role="grid"
               aria-label="Goal status per week"
-              style={{ gridTemplateColumns: `minmax(172px, 208px) repeat(${matrix.columns.length}, minmax(20px, 1fr))` }}
+              style={{ gridTemplateColumns: `minmax(172px, 208px) repeat(${matrix.columns.length}, minmax(20px, 1fr))`, minWidth: Math.max(540, 208 + matrix.columns.length * 24) }}
             >
               <span className="goal-impact-corner" role="columnheader" aria-label="Goal" />
               {matrix.columns.map((column, index) => {
@@ -189,6 +220,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
                 return (
                   <span
                     key={column.weekStart}
+                    ref={(node) => { if (node) weekHeaderRefs.current.set(column.weekStart, node); else weekHeaderRefs.current.delete(column.weekStart); }}
                     role="columnheader"
                     className={`goal-impact-week-label${isCurrent ? " goal-impact-week-label--current" : ""}${
                       affectedWeekStarts && !affectedWeekStarts.has(column.weekStart)
@@ -234,7 +266,7 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
                   isDimmed={selectedRuleId !== null && selectedRuleId !== rule.id}
                   rule={rule}
                   onSelectRule={() => setSelectedRuleId((current) => (current === rule.id ? null : rule.id))}
-                  onSelectWeek={onSelectWeek}
+                  onSelectCell={setSelectedCell}
                   onShowTooltip={setTooltip}
                   onHideTooltip={() => setTooltip(null)}
                 />
@@ -242,6 +274,14 @@ export function GoalImpactSection({ onSelectWeek }: { onSelectWeek: (weekStartDa
             </div>
           </div>
 
+          {selectedCell ? <div className="goal-impact-cell-detail" role="region" aria-label="Selected goal explanation" aria-live="polite">
+            <strong>{selectedCell.evaluation.ruleLabel} · {ruleStatusLabels[selectedCell.evaluation.status]}</strong>
+            <small>{selectedCell.weekLabel} · {selectedCell.evaluation.originLabel}</small>
+            <p>{selectedCell.evaluation.reason}</p>
+            {selectedCell.evaluation.metrics ? <small>{selectedCell.evaluation.metrics}</small> : null}
+            <div><button type="button" className="text-action" onClick={() => onSelectWeek(selectedCell.weekStart)}>View week</button>
+            <button type="button" className="text-action" onClick={() => setSelectedCell(null)}>Close explanation</button></div>
+          </div> : null}
           <footer className="goal-impact-legend" aria-hidden="true">
             {legendStatuses.map((status) => (
               <span key={status} className="goal-impact-legend-item">
@@ -269,7 +309,7 @@ function RuleRow({
   isSelected,
   onHideTooltip,
   onSelectRule,
-  onSelectWeek,
+  onSelectCell,
   onShowTooltip,
   rule
 }: {
@@ -279,7 +319,7 @@ function RuleRow({
   isSelected: boolean;
   onHideTooltip: () => void;
   onSelectRule: () => void;
-  onSelectWeek: (weekStartDate: string) => void;
+  onSelectCell: (cell: { evaluation: RuleEvaluation; weekLabel: string; weekStart: string }) => void;
   onShowTooltip: (tooltip: CellTooltip) => void;
   rule: PlanRule;
 }) {
@@ -304,7 +344,6 @@ function RuleRow({
         }
         const range = formatCompactWeekRange(column.weekStart, column.weekEnd);
         const weekLabel = column.planWeekNumber ? `Plan week ${column.planWeekNumber} · ${range}` : range;
-        const isNavigable = attentionStatuses.has(evaluation.status);
         const dimCell = affectedWeekStarts !== null && !affectedWeekStarts.has(column.weekStart);
         return (
           <button
@@ -317,11 +356,7 @@ function RuleRow({
             onFocus={(event) => onShowTooltip(buildTooltip(evaluation, weekLabel, event.currentTarget))}
             onMouseLeave={onHideTooltip}
             onBlur={onHideTooltip}
-            onClick={() => {
-              if (isNavigable) {
-                onSelectWeek(column.weekStart);
-              }
-            }}
+            onClick={() => { onHideTooltip(); onSelectCell({ evaluation, weekLabel, weekStart: column.weekStart }); }}
           />
         );
       })}
@@ -339,10 +374,11 @@ function monthLabelFor(weekStart: string, previousWeekStart: string | null) {
 
 function buildTooltip(evaluation: RuleEvaluation, weekLabel: string, cell: HTMLElement): CellTooltip {
   const rect = cell.getBoundingClientRect();
+  const halfWidth = Math.min(280, window.innerWidth - 32) / 2;
   return {
     evaluation,
     weekLabel,
-    left: rect.left + rect.width / 2,
+    left: Math.min(window.innerWidth - halfWidth - 16, Math.max(halfWidth + 16, rect.left + rect.width / 2)),
     top: rect.top - 8
   };
 }
@@ -358,9 +394,10 @@ function CellPopover({ tooltip }: { tooltip: CellTooltip }) {
         </span>
       </div>
       <span className="goal-impact-popover-week">{weekLabel}</span>
+      <small>{evaluation.originLabel}</small>
       <p>{evaluation.reason}</p>
       {evaluation.metrics ? <small>{evaluation.metrics}</small> : null}
-      {attentionStatuses.has(evaluation.status) ? <small className="goal-impact-popover-hint">Click to open the week.</small> : null}
+      {attentionStatuses.has(evaluation.status) ? <small className="goal-impact-popover-hint">Select to see details and open the week.</small> : null}
     </div>
   );
 }

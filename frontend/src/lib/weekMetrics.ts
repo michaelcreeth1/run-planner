@@ -26,3 +26,21 @@ export function actualPerformedSessions(week: TrainingWeek) {
     return day >= week.weekStartDate && day <= week.weekEndDate && session.recordings.length > 0;
   });
 }
+
+export function weekMileageTarget(week: TrainingWeek) {
+  return week.targetMileage ?? week.goals.find(
+    (goal) => goal.isEnabled && goal.goalType === "achievement" && goal.category === "mileage"
+  )?.targetValue ?? null;
+}
+
+export function remainingPlannedMileage(week: TrainingWeek, today: string) {
+  const resolvedWorkoutIds = new Set(
+    (week.performedSessions ?? []).filter(
+      (session) => session.association === "associated" && session.outcome !== "unresolved" &&
+        session.recordings.length > 0 && session.plannedWorkoutId
+    ).map((session) => session.plannedWorkoutId)
+  );
+  return week.workouts.reduce((total, workout) =>
+    workout.sport === "run" && workout.plannedDate >= today && !resolvedWorkoutIds.has(workout.id)
+      ? total + (workout.plannedDistance ?? 0) : total, 0);
+}

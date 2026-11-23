@@ -6,7 +6,7 @@ import { formatShortDate, formatWeekday } from "../../lib/formatters";
 import type { PerformedSession, PrescriptionBlock, PrescriptionStep, TrainingPaceEstimate, Workout, WorkoutForm } from "../../types/domain";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import { isStructuredPrescription, prescriptionTotals } from "../../lib/prescriptions";
-import { formatDurationSeconds, formatPaceSeconds, recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
+import { durationMinutesInput, formatDurationSeconds, formatPaceSeconds, recalculateWorkoutMetrics, type WorkoutMetricField } from "../../lib/workoutMetrics";
 
 export function WorkoutEditor({
   editor,
@@ -588,13 +588,14 @@ export function WorkoutEditor({
                   />
                 </label>
                 <label>
-                  <span>Time (H:MM:SS)</span>
+                  <span>Duration (minutes)</span>
                   <input
-                    inputMode="numeric"
-                    pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]"
-                    placeholder="0:45:00"
-                    title="Enter time as hours:minutes:seconds"
-                    value={editor.plannedDuration}
+                    type="number"
+                    inputMode="decimal"
+                    min="0.016667"
+                    step="any"
+                    placeholder="45"
+                    value={durationMinutesInput(editor.plannedDuration)}
                     onChange={(event) => setMetric("plannedDuration", event.target.value)}
                   />
                 </label>
@@ -611,9 +612,9 @@ export function WorkoutEditor({
               </div>
               {mode === "scheduled" ? (
                 <p className="workout-metrics-summary">
-                  {editor.plannedPace ? <>Calculated pace <strong>{editor.plannedPace}/mi</strong></> : "Add miles and time to calculate pace."}
+                  {editor.plannedPace ? <>Calculated pace <strong>{editor.plannedPace}/mi</strong></> : "Distance or duration is enough; add both to calculate pace."}
                 </p>
-              ) : <p className="field-help">Enter any two; the third is calculated automatically. Time uses H:MM:SS.</p>}
+              ) : <p className="field-help">Distance or duration is enough; add both to calculate pace.</p>}
             </>
           )}
           {mode === "scheduled" ? (

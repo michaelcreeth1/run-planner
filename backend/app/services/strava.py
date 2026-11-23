@@ -680,7 +680,10 @@ def upsert_activity(db: Session, athlete_account_id: str, payload: dict[str, Any
         activity.name = payload.get("name") or "Untitled activity"
         activity.sport_type = payload.get("sport_type") or payload.get("type") or "Unknown"
         activity.start_date = parse_strava_datetime(payload["start_date"])
-        activity.start_date_local = parse_strava_datetime(payload["start_date_local"])
+        # Strava labels the local clock reading with Z. Keep the clock fields as sent.
+        activity.start_date_local = parse_strava_datetime(payload["start_date_local"]).replace(
+            tzinfo=None
+        )
         activity.timezone = payload.get("timezone")
         activity.distance = float(payload.get("distance") or 0)
         activity.moving_time = payload.get("moving_time")

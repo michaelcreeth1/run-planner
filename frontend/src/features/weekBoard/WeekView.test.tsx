@@ -41,15 +41,14 @@ describe("WeekView workout completion", () => {
     );
 
     const progress = within(screen.getByRole("region", { name: "Week progress" }));
-    expect(progress.getByText("44.5 / 55 mi")).toBeVisible();
-    expect(progress.getByText("completed / target")).toBeVisible();
-    expect(progress.getByText("13 mi scheduled")).toBeVisible();
-    expect(progress.getByText("57.5 mi projected")).toBeVisible();
+    expect(progress.getByText("44.5 of 55 mi completed")).toBeVisible();
+    expect(progress.getByText("13 mi remaining")).toBeVisible();
+    expect(progress.getByText("Projected finish 57.5 mi")).toBeVisible();
     expect(progress.getByText("2.5 mi above target")).toBeVisible();
     expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "81");
   });
 
-  it("hides scheduled and projected mileage when both equal the target", () => {
+  it("keeps remaining work and projected finish explicit even when on target", () => {
     const workout = {
       ...makeWorkout(),
       plannedDistance: 64,
@@ -79,10 +78,10 @@ describe("WeekView workout completion", () => {
     );
 
     const progress = within(screen.getByRole("region", { name: "Week progress" }));
-    expect(progress.getByText("0 / 64 mi")).toBeVisible();
-    expect(progress.queryByText("64 mi scheduled")).not.toBeInTheDocument();
-    expect(progress.queryByText("64 mi projected")).not.toBeInTheDocument();
-    expect(progress.queryByText("On target")).not.toBeInTheDocument();
+    expect(progress.getByText("0 of 64 mi completed")).toBeVisible();
+    expect(progress.getByText("64 mi remaining")).toBeVisible();
+    expect(progress.getByText("Projected finish 64 mi")).toBeVisible();
+    expect(progress.getByText("On target")).toBeVisible();
     expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
     expect(progress.getByText("0 completed sessions").closest(".week-progress-heading")).toBeVisible();
     expect(within(screen.getByLabelText("Week summary")).queryByText("Mileage")).not.toBeInTheDocument();
@@ -415,7 +414,7 @@ describe("WeekView workout completion", () => {
     );
 
     await waitFor(() => expect(queryClient.isFetching()).toBe(0));
-    const checks = screen.getByText("All checks pass").closest("details");
+    const checks = screen.getByText("No training-rule issues").closest("details");
     expect(checks).not.toHaveAttribute("open");
     expect(checks?.previousElementSibling).toHaveClass("week-command-center");
     expect(checks?.nextElementSibling).toHaveClass("week-schedule-panel");

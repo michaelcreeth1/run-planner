@@ -1,5 +1,6 @@
 import { daysBetween } from "../../lib/dates";
-import { formatNumber, formatShortDate, formatWeekday, formatWorkoutMeta } from "../../lib/formatters";
+import { formatMileageProgress, formatNumber, formatShortDate, formatWeekday, formatWorkoutMeta } from "../../lib/formatters";
+import { weekMileageTarget } from "../../lib/weekMetrics";
 import type { TrainingPlan, TrainingWeek } from "../../types/domain";
 
 export type WeekContextSegment = {
@@ -135,32 +136,13 @@ function buildMileageSegment(currentWeek: TrainingWeek | null): WeekContextSegme
   if (!currentWeek) {
     return { id: "mileage", label: "This week", value: "…", compactValue: "…" };
   }
-  const planned = currentWeek.plannedMileage;
   const actual = currentWeek.actualMileage;
-  if (planned <= 0 && actual <= 0) {
-    return { id: "mileage", label: "This week", value: "No plan", compactValue: "No plan" };
-  }
-  if (actual > 0 && planned > 0) {
-    return {
-      id: "mileage",
-      label: "This week",
-      value: `${formatNumber(actual)} / ${formatNumber(planned)} mi`,
-      compactValue: `${formatNumber(actual)}/${formatNumber(planned)} mi`
-    };
-  }
-  if (planned > 0) {
-    return {
-      id: "mileage",
-      label: "This week",
-      value: `${formatNumber(planned)} mi planned`,
-      compactValue: `${formatNumber(planned)} mi`
-    };
-  }
+  const target = weekMileageTarget(currentWeek);
   return {
     id: "mileage",
     label: "This week",
-    value: `${formatNumber(actual)} mi`,
-    compactValue: `${formatNumber(actual)} mi`
+    value: formatMileageProgress(actual, target),
+    compactValue: formatMileageProgress(actual, target)
   };
 }
 

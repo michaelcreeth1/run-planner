@@ -208,7 +208,8 @@ function generatedWeekRow(label: string) {
 
 function renderPlansView(
   requestedPlanId: string | null = null,
-  editRequest: GoalEditRequest | null = null
+  editRequest: GoalEditRequest | null = null,
+  writesBlocked = false
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
@@ -222,7 +223,7 @@ function renderPlansView(
           onSelectPlan={vi.fn()}
           onSelectWeek={vi.fn()}
           requestedPlanId={requestedPlanId}
-          writesBlocked={false}
+          writesBlocked={writesBlocked}
         />
       </ProfileProvider>
     </QueryClientProvider>
@@ -230,6 +231,82 @@ function renderPlansView(
 }
 
 describe("PlansView", () => {
+  it("archives a past plan without opening the editor and keeps its history viewable", async () => {
+    const user = userEvent.setup();
+    let plan = { ...makePlan(), status: "completed" as TrainingPlan["status"], isCurrent: false };
+    const archive = vi.fn();
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([plan])),
+      http.get(apiUrl("/api/plans/plan-1"), () => HttpResponse.json(plan)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([])),
+      http.patch(apiUrl("/api/plans/plan-1"), async ({ request }) => {
+        archive(await request.json());
+        plan = { ...plan, status: "archived" };
+        return HttpResponse.json(plan);
+      })
+    );
+    renderPlansView("plan-1");
+
+    await user.click(await screen.findByRole("button", { name: "Archive plan" }));
+
+    expect(await screen.findByText("Autumn Half plan was archived. You can now create an overlapping plan.")).toBeVisible();
+    expect(archive).toHaveBeenCalledExactlyOnceWith({ status: "archived" });
+    expect(screen.getByRole("heading", { name: plan.name })).toBeVisible();
+    expect(screen.getByText(/Archived plans remain available to view/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit plan" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive plan" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create training plan" }));
+    expect(screen.getByRole("button", { name: "Create plan" })).toBeVisible();
+  });
+
+  it("keeps the plan available to retry when archiving fails", async () => {
+    const user = userEvent.setup();
+    const plan = makePlan();
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([plan])),
+      http.get(apiUrl("/api/plans/plan-1"), () => HttpResponse.json(plan)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([])),
+      http.patch(apiUrl("/api/plans/plan-1"), () =>
+        HttpResponse.json({ detail: "Archiving failed. Try again." }, { status: 500 })
+      )
+    );
+    renderPlansView("plan-1");
+
+    await user.click(await screen.findByRole("button", { name: "Archive plan" }));
+
+    expect(await screen.findByText("Archiving failed. Try again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Archive plan" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit plan" })).toBeEnabled();
+    expect(screen.queryByText(/was archived/)).not.toBeInTheDocument();
+  });
+
+  it("disables archiving when writes are blocked", async () => {
+    const plan = makePlan();
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([plan])),
+      http.get(apiUrl("/api/plans/plan-1"), () => HttpResponse.json(plan)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([]))
+    );
+    renderPlansView("plan-1", null, true);
+
+    expect(await screen.findByRole("button", { name: "Archive plan" })).toBeDisabled();
+  });
+
+  it("prefers a replacement plan while keeping archived plans in the switcher", async () => {
+    const archived = { ...makePlan(), status: "archived" as const };
+    const replacement = { ...makePlan(), id: "plan-2", name: "Replacement plan" };
+    server.use(
+      http.get(apiUrl("/api/plans"), () => HttpResponse.json([archived, replacement])),
+      http.get(apiUrl("/api/plans/plan-2"), () => HttpResponse.json(replacement)),
+      http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([]))
+    );
+    renderPlansView();
+
+    expect(await screen.findByRole("heading", { name: "Replacement plan" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Autumn Half plan (Archived)" })).toBeVisible();
+  });
+
   it("shows which timeline phase is selected for editing", async () => {
     const user = userEvent.setup();
     server.use(
@@ -751,7 +828,7 @@ describe("PlansView", () => {
     await user.selectOptions(screen.getByLabelText("Goal scope"), "base");
     await user.type(screen.getByLabelText("Value"), "1");
     expect(screen.getByText("Keep at least 1 day of rest")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Done editing" }));
 
     const actions = screen.getByRole("group", { name: "Plan editor actions" });
     await user.click(within(actions).getByRole("button", { name: "Save changes" }));

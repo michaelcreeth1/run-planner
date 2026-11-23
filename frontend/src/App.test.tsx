@@ -140,6 +140,7 @@ function useAuthenticatedAppHandlers(onCreateWorkout = vi.fn()) {
       })
     ),
     http.get(apiUrl("/api/activities"), () => HttpResponse.json([])),
+    http.get(apiUrl("/api/workout-templates"), () => HttpResponse.json([])),
     http.get(apiUrl("/api/training-pace-estimate"), () => HttpResponse.json({
       easyPaceSecondsPerMile: 600,
       source: "default",
@@ -249,18 +250,17 @@ describe("App authentication states", () => {
       options.forEach((option) => expect(option).toBeEnabled());
     });
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Add session to Mon" }));
-    const name = screen.getByLabelText("Mon session 1 name");
-    await user.clear(name);
-    await user.type(name, "Easy recovery run");
-    await user.type(screen.getByLabelText("Mon session 1 mileage"), "4");
+    await user.click(screen.getByRole("button", { name: "Add workout to Mon" }));
+    expect(screen.getByLabelText("Mon session 1 mileage")).toHaveFocus();
+    await user.keyboard("4");
+    expect(onCreateWorkout).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Save plan" }));
 
     expect(onCreateWorkout).toHaveBeenCalledWith(
       expect.objectContaining({
         workouts: [
           expect.objectContaining({
-            title: "Easy recovery run",
+            title: "Easy run",
             plannedDistance: 4,
             workoutType: "easy"
           })
@@ -334,7 +334,12 @@ describe("App authentication states", () => {
     expect(await screen.findByRole("heading", { name: "Reusable workouts" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Threshold builder" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Edit Threshold builder" }));
+    await user.click(screen.getByRole("button", { name: "View Threshold builder" }));
+    const preview = screen.getByRole("dialog", { name: "Threshold builder saved workout details" });
+    await user.click(within(preview).getByRole("button", { name: "Edit" }));
+    expect(screen.queryByRole("dialog", { name: "Threshold builder saved workout details" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Edit library workout" })).toBeVisible();
     expect(screen.queryByText("Use a short, searchable name.")).not.toBeInTheDocument();
     const title = screen.getByLabelText("Title");
     await user.clear(title);
@@ -505,7 +510,7 @@ describe("App authentication states", () => {
 
     const navigation = await screen.findByRole("navigation", { name: "Primary navigation" });
     await user.click(within(navigation).getByRole("button", { name: "Progress" }));
-    await user.click(await screen.findByRole("button", { name: /Next planned/ }));
+    await user.click(await screen.findByRole("button", { name: /Next week's projected finish/ }));
 
     await waitFor(() => expect(window.location.pathname).toBe(`/week/${nextWeekStart}`));
     expect(document.querySelector(`[data-week-start="${oldestVisibleWeekStart}"]`)).toBeInTheDocument();

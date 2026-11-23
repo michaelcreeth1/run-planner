@@ -390,6 +390,15 @@ def patch_plan(
 ) -> dict[str, Any]:
     plan = get_plan_model(db, plan_id, athlete_account_id)
     updates = payload.model_dump(exclude_unset=True)
+    if "status" in updates:
+        validate_no_overlap(
+            db,
+            athlete_account_id,
+            plan.start_date,
+            plan.end_date,
+            existing_plan_id=plan.id,
+            incoming_status=updates["status"],
+        )
     for field, value in updates.items():
         setattr(plan, field, value)
     db.commit()
@@ -1370,8 +1379,8 @@ def serialize_plan_summary(plan: TrainingPlan) -> dict[str, Any]:
         "end_date": plan.end_date,
         "status": status,
         "notes": plan.notes,
-        "is_current": plan.start_date <= today <= plan.end_date,
-        "is_upcoming": today < plan.start_date,
+        "is_current": status != "archived" and plan.start_date <= today <= plan.end_date,
+        "is_upcoming": status != "archived" and today < plan.start_date,
         "created_at": plan.created_at.isoformat() if plan.created_at else "",
         "updated_at": plan.updated_at.isoformat() if plan.updated_at else "",
     }

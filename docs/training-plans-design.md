@@ -334,6 +334,7 @@ Plan tab
 
 - Each week column is clickable → switches to the Week tab with that week selected (reuses the existing week deep-link/selection state in `App.tsx`). Hover/tap shows a popover: purpose, target vs planned vs actual, down-week flag, "Plan this week" link.
 - Weeks with manually overridden plan fields (`hasManualOverrides`) show a small "edited" dot (FR-34).
+- **Archive plan** is available directly on the overview, including for plans with read-only past weeks. It uses the metadata-only status patch without changing weeks, workouts, goals, or phase structure. Archived plans remain viewable in the plan switcher, have no edit action, and are excluded from current/upcoming plan selection and overlap checks. A replacement can cover the current and future weeks of the archived plan; past-week write protections still apply. Status patches that reactivate a plan must pass the overlap check.
 - Bars use theme tokens only (per the design system: token-based colors, no hardcoded tints); phase bands get muted background tints from tokens with the accent reserved for actuals.
 
 ### 7.3 Creation wizard (drawer, 5 steps)

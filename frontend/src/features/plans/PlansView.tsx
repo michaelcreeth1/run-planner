@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, ChevronRight, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
+import { Archive, ArrowDown, ArrowUp, CalendarDays, CheckCircle, ChevronDown, ChevronRight, Flag, Pencil, Plus, Route, Trash2 } from "lucide-react";
 import type { CSSProperties, Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -113,7 +113,7 @@ export function PlansView({
     [plans]
   );
   const primaryPlan = useMemo(
-    () => plans.find((plan) => plan.id === requestedPlanId) ?? selectPrimaryPlan(plans),
+    () => plans.find((plan) => plan.id === requestedPlanId) ?? selectPrimaryPlan(plans) ?? plans[0],
     [plans, requestedPlanId]
   );
   const selectedPlanQuery = usePlanQuery(profileId, primaryPlan?.id ?? null);
@@ -136,6 +136,7 @@ export function PlansView({
     if (
       !editRequest ||
       !selectedPlan ||
+      selectedPlan.status === "archived" ||
       handledGoalEditRequestRef.current === editRequest.requestId
     ) {
       return;
@@ -278,6 +279,29 @@ export function PlansView({
     }
   }
 
+  async function archivePlan(plan: TrainingPlan) {
+    if (writesBlocked || isSaving) {
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const archived = await fetchJson<TrainingPlan>(`/api/plans/${plan.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "archived" })
+      });
+      queryClient.setQueryData(queryKeys.plan(profileId, archived.id), archived);
+      setSuccess(`${archived.name} was archived. You can now create an overlapping plan.`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.profile(profileId) });
+      onPlanApplied();
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : "Could not archive the plan.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   if (plansQuery.isLoading || goalRacesQuery.isLoading) {
     return <Placeholder title="Plan" detail="Loading training plans." icon={<Route size={22} />} />;
   }
@@ -300,7 +324,7 @@ export function PlansView({
               type="button"
               className={selectedPlan ? "ghost-button" : "primary-button"}
               onClick={openCreatePlan}
-              disabled={writesBlocked}
+              disabled={writesBlocked || isSaving}
             >
               <Plus size={16} />
               Create training plan
@@ -511,8 +535,10 @@ export function PlansView({
                 </span>
               </div>
             </div>
+            <p className="field-help">Saved when you save this plan. Canceling the plan discards goal changes.</p>
             <GoalListEditor
               addButtonLabel="Add recurring goal"
+              disabled={isSaving || writesBlocked}
               drafts={planEditor.recurringGoals}
               editRequest={editRequest}
               metrics={goalMetrics}
@@ -547,6 +573,7 @@ export function PlansView({
                   }}
                 >
                   {plan.name}
+                  {plan.status === "archived" ? " (Archived)" : ""}
                 </button>
               ))}
             </nav>
@@ -558,13 +585,28 @@ export function PlansView({
               {selectedPlan.description ? <p>{selectedPlan.description}</p> : null}
             </div>
             <div className="plans-toolbar-actions">
-              <button type="button" className="ghost-button" onClick={() => openEditPlan(selectedPlan)} disabled={writesBlocked}>
-                <Pencil size={16} />
-                Edit plan
-              </button>
+              {selectedPlan.status !== "archived" ? (
+                <>
+                  <button type="button" className="ghost-button" onClick={() => archivePlan(selectedPlan)} disabled={writesBlocked || isSaving}>
+                    <Archive size={16} />
+                    {isSaving ? "Archiving…" : "Archive plan"}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => openEditPlan(selectedPlan)} disabled={writesBlocked || isSaving}>
+                    <Pencil size={16} />
+                    Edit plan
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
-          <PlanCurrentFocus plan={selectedPlan} today={today} onSelectWeek={onSelectWeek} />
+          {selectedPlan.status === "archived" ? (
+            <p>Archived plans remain available to view and do not block new plans. Weeks, workouts, and goals are preserved.</p>
+          ) : (
+            <>
+              <p>Archive this plan to keep its history and allow a new plan with overlapping dates.</p>
+              <PlanCurrentFocus plan={selectedPlan} today={today} onSelectWeek={onSelectWeek} />
+            </>
+          )}
           <details className="plan-full-timeline">
             <summary>
               <span>
@@ -585,10 +627,6 @@ export function PlansView({
               <div>
                 <span>Target pace</span>
                 <strong>{selectedPlan.goalRace?.targetPaceSecondsPerMile ? formatPace(selectedPlan.goalRace.targetPaceSecondsPerMile, 1) : "-"}</strong>
-              </div>
-              <div>
-                <span>Peak week</span>
-                <strong>{peakWeekMileage(selectedPlan.weekSummaries) ? `${formatNumber(peakWeekMileage(selectedPlan.weekSummaries))} mi` : "-"}</strong>
               </div>
             </div>
             <PlanShape
@@ -620,7 +658,6 @@ export function PlansView({
                 </header>
                 <div className="plan-timeline-weeks">
                   {group.weeks.map(({ week, index }) => {
-                    const hasActivity = week.plannedMileage > 0 || week.actualMileage > 0;
                     const isCurrentWeek = week.weekStartDate <= today && today <= week.weekEndDate;
                     return (
                       <button
@@ -636,11 +673,6 @@ export function PlansView({
                           {week.isDownWeek ? <em className="plan-week-bar-flag">Down</em> : null}
                         </span>
                         <strong>{formatTargetMileage(week.targetMileage)}</strong>
-                        {week.warning || hasActivity ? (
-                          <small>
-                            {week.warning ?? `${formatNumber(week.plannedMileage)} planned · ${formatNumber(week.actualMileage)} actual`}
-                          </small>
-                        ) : null}
                       </button>
                     );
                   })}
@@ -1293,12 +1325,13 @@ function PlanShape({
           </div>
         ) : null}
       </div>
-      <div className="plan-shape-phases" aria-hidden="true">
+      <div className="plan-shape-phases" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${weeks.length}, minmax(0, 1fr))` }}>
         {groupWeeksByMesocycle(weeks).map((group, groupIndex) => (
           <span
             key={`${group.mesocycleId ?? "none"}-${groupIndex}`}
             className={`plan-phase--${group.phase ?? "base"}`}
-            style={{ flexGrow: group.weeks.length }}
+            style={{ gridColumn: `span ${group.weeks.length}` }}
+            title={group.name ?? (group.phase ? phaseLabel(group.phase) : "")}
           >
             {group.name ?? (group.phase ? phaseLabel(group.phase) : "")}
           </span>

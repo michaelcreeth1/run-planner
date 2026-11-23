@@ -2,12 +2,16 @@ import { CalendarDays, Flag, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { durationMinutesInput, formatDurationSeconds, parseDurationSeconds } from "../../lib/workoutMetrics";
 import { fetchJson } from "../../lib/api";
 import { queryKeys, useGoalRacesQuery } from "../../lib/queries";
 import { useProfileId } from "../../lib/profileContext";
 import type { GoalRace, RaceDistance } from "../../types/domain";
 import { DefaultGoalsCard } from "./DefaultGoalsCard";
 import type { GoalEditRequest } from "./GoalListEditor";
+import { todayDateString } from "../../lib/dates";
+import { baselineOverrideDescription } from "./goalScopes";
+import { useRuleContext } from "./useRuleContext";
 import { GoalImpactSection } from "./GoalImpactSection";
 
 const raceDistanceLabels: Record<GoalRace["distance"], string> = {
@@ -68,6 +72,7 @@ export function GoalsView({
   onSelectWeek: (weekStartDate: string) => void;
 }) {
   const profileId = useProfileId();
+  const ruleContext = useRuleContext();
   const queryClient = useQueryClient();
   const racesQuery = useGoalRacesQuery(profileId);
   const races = racesQuery.data ?? [];
@@ -79,6 +84,8 @@ export function GoalsView({
   const raceFormRef = useRef<HTMLFormElement | null>(null);
   const raceNameInputRef = useRef<HTMLInputElement | null>(null);
   const sortedRaces = [...races].sort((left, right) => left.raceDate.localeCompare(right.raceDate));
+  const upcomingRaces = sortedRaces.filter((race) => race.raceDate >= todayDateString());
+  const pastRaces = sortedRaces.filter((race) => race.raceDate < todayDateString());
 
   useEffect(() => {
     if (!raceFormOpenRequest) {
@@ -115,8 +122,8 @@ export function GoalsView({
     if (!raceForm || writesBlocked) {
       return;
     }
-    if (raceForm.targetTime.trim() && parseDurationHms(raceForm.targetTime) === null) {
-      setRacesError("Target time must use H:MM:SS or MM:SS, like 1:42:30.");
+    if (raceForm.targetTime.trim() && parseDurationSeconds(raceForm.targetTime) === null) {
+      setRacesError("Enter a target time in minutes, like 100 or 100.5.");
       setRaceSuccess(null);
       return;
     }
@@ -240,9 +247,13 @@ export function GoalsView({
               </label>
             ) : null}
             <label>
-              <span>Target time</span>
+              <span>Target time (minutes)</span>
               <input
-                placeholder="1:42:30"
+                type="number"
+                inputMode="decimal"
+                min="0.016667"
+                step="any"
+                placeholder="100"
                 value={raceForm.targetTime}
                 onChange={(event) => setRaceForm((current) => current ? { ...current, targetTime: event.target.value } : current)}
               />
@@ -308,19 +319,18 @@ export function GoalsView({
 
       {raceSuccess ? <div className="settings-note">{raceSuccess}</div> : null}
 
-      <GoalImpactSection onSelectWeek={onSelectWeek} />
-
+      <GoalImpactSection key={profileId} onSelectWeek={onSelectWeek} />
       <div className="goals-layout">
         <DefaultGoalsCard
           editRequest={editRequest}
           onGoalsSaved={invalidateDependentProfileData}
           writesBlocked={writesBlocked}
+          overrideDescription={(draft) => baselineOverrideDescription(draft, ruleContext.plan)}
         />
-
         <section className="settings-card goals-race-panel">
           <header className="settings-card-header goals-section-header">
             <div>
-              <h2>Races</h2>
+              <h2>Upcoming races</h2>
             </div>
             <button type="button" className="ghost-button ghost-button--compact" onClick={openCreateRace} disabled={writesBlocked}>
               <Plus size={15} />
@@ -328,17 +338,17 @@ export function GoalsView({
             </button>
           </header>
           {racesError || racesQuery.error ? <div className="settings-note settings-note--danger">{racesError ?? "Could not load goal races."}</div> : null}
-          {!racesError && sortedRaces.length === 0 ? (
+          {!racesError && upcomingRaces.length === 0 ? (
             <div className="goals-empty-state">
               <Flag size={18} />
               <div>
-                <strong>No races yet</strong>
+                <strong>{races.length ? "No upcoming races" : "No races yet"}</strong>
                 <span>Add a race here, then link it from a training plan when you are ready.</span>
               </div>
             </div>
           ) : null}
           <div className="goals-race-stack">
-            {sortedRaces.map((race) => {
+            {upcomingRaces.map((race) => {
               const raceDate = formatRaceDateParts(race.raceDate);
               return (
                 <article key={race.id} className="goals-race-item">
@@ -378,6 +388,12 @@ export function GoalsView({
               );
             })}
           </div>
+          {pastRaces.length ? <details className="past-races">
+            <summary>Past races ({pastRaces.length})</summary>
+            {pastRaces.map((race) => <button type="button" key={race.id} className="ghost-button" disabled={writesBlocked} onClick={() => openEditRace(race)}>
+              {race.name} · {race.raceDate}
+            </button>)}
+          </details> : null}
         </section>
       </div>
     </section>
@@ -405,7 +421,7 @@ function goalRaceToForm(race: GoalRace): GoalRaceFormState {
     raceDate: race.raceDate,
     distance: race.distance,
     distanceMiles: race.distanceMiles === null ? "" : String(race.distanceMiles),
-    targetTime: formatDurationHms(race.targetTime),
+    targetTime: race.targetTime ? durationMinutesInput(formatDurationSeconds(race.targetTime)) : "",
     priority: race.priority,
     location: race.location,
     altitudeContext: race.altitudeContext,
@@ -425,44 +441,12 @@ function goalRacePayload(form: GoalRaceFormState) {
     raceDate: form.raceDate,
     distance: form.distance,
     distanceMiles: form.distance === "other" ? optionalNumber(form.distanceMiles) : null,
-    targetTime: parseDurationHms(form.targetTime),
+    targetTime: parseDurationSeconds(form.targetTime),
     priority: form.priority,
     location: form.location,
     altitudeContext: form.altitudeContext,
     notes: form.notes
   };
-}
-
-function formatDurationHms(totalSeconds: number | null) {
-  if (!totalSeconds) {
-    return "";
-  }
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = String(seconds % 60).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${remainder}`
-    : `${minutes}:${remainder}`;
-}
-
-function parseDurationHms(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (!trimmed.includes(":")) {
-    return optionalNumber(trimmed);
-  }
-  const parts = trimmed.split(":").map((part) => Number(part));
-  if (parts.some((part) => !Number.isFinite(part) || part < 0) || parts.length < 2 || parts.length > 3) {
-    return null;
-  }
-  const [hours, minutes, seconds] = parts.length === 3 ? parts : [0, parts[0], parts[1]];
-  if (minutes >= 60 || seconds >= 60) {
-    return null;
-  }
-  return Math.round(hours * 3600 + minutes * 60 + seconds);
 }
 
 function optionalNumber(value: string) {

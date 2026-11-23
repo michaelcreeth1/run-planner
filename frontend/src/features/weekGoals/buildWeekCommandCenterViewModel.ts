@@ -1,7 +1,7 @@
 import { parseDate, toDateInputValue } from "../../lib/dates";
 import { formatNumber, formatShortDate } from "../../lib/formatters";
 import { weekPurposes } from "../../lib/options";
-import { actualPerformedSessions, completedSessionCount } from "../../lib/weekMetrics";
+import { actualPerformedSessions, completedSessionCount, remainingPlannedMileage } from "../../lib/weekMetrics";
 import type { TrainingWeek, WeekGoal, WeekGoalEvaluation, WeekGoalStatus, Workout } from "../../types/domain";
 
 export type WeekMode = "planning" | "execution" | "review";
@@ -619,29 +619,6 @@ function buildPrimarySummary(
 
 function mileageTarget(goalCards: GoalCardViewModel[]) {
   return goalCards.find((card) => card.id === "mileage")?.targetValue;
-}
-
-function remainingPlannedMileage(week: TrainingWeek, today: string) {
-  const resolvedWorkoutIds = new Set(
-    (week.performedSessions ?? [])
-      .filter(
-        (session) =>
-          session.recordings.length > 0 &&
-          session.association === "associated" &&
-          session.outcome !== "unresolved" &&
-          session.plannedWorkoutId
-      )
-      .map((session) => session.plannedWorkoutId as string)
-  );
-  return week.workouts.reduce(
-    (total, workout) =>
-      workout.sport === "run" &&
-      workout.plannedDate >= today &&
-      !resolvedWorkoutIds.has(workout.id)
-        ? total + (workout.plannedDistance ?? 0)
-        : total,
-    0
-  );
 }
 
 function buildSecondarySummary(week: TrainingWeek, mode: WeekMode, today: string) {

@@ -14,10 +14,11 @@ export const queryKeys = {
 };
 
 export function selectPrimaryPlan(plans: TrainingPlanSummary[]) {
-  const soonestUpcoming = plans
+  const availablePlans = plans.filter((plan) => plan.status !== "archived");
+  const soonestUpcoming = availablePlans
     .filter((plan) => plan.isUpcoming)
     .sort((left, right) => left.startDate.localeCompare(right.startDate))[0];
-  return plans.find((plan) => plan.isCurrent) ?? soonestUpcoming ?? plans.find((plan) => plan.status === "active") ?? plans[0] ?? null;
+  return availablePlans.find((plan) => plan.isCurrent) ?? soonestUpcoming ?? availablePlans.find((plan) => plan.status === "active") ?? availablePlans[0] ?? null;
 }
 
 export function usePlansQuery(profileId: string | null) {

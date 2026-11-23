@@ -273,9 +273,7 @@ export function restWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
 export function newWorkoutDraft(plannedDate: string): PlanWeekWorkoutDraft {
   return {
     ...defaultForm(plannedDate),
-    draftId: draftId("workout"),
-    title: "Easy run",
-    purpose: "Aerobic training"
+    draftId: draftId("workout")
   };
 }
 

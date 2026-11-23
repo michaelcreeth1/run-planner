@@ -35,7 +35,8 @@ export function GoalListEditor({
   metrics,
   onDraftsChange,
   scopeImpact,
-  scopeOptions
+  scopeOptions,
+  persistenceHint = "Saved when you save this plan."
 }: {
   addButtonLabel: string;
   disabled?: boolean;
@@ -46,6 +47,7 @@ export function GoalListEditor({
   onDraftsChange: (drafts: GoalDraft[]) => void;
   scopeImpact?: (draft: GoalDraft) => string | null;
   scopeOptions?: GoalScopeOption[];
+  persistenceHint?: string;
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const metricsByKey = useMemo(() => metricMap(metrics), [metrics]);
@@ -172,7 +174,7 @@ export function GoalListEditor({
 
     return (
       <article key={draft.key} className="goal-row goal-row--editing" ref={setRowRef}>
-        <div className="goal-row-fields">
+        <fieldset className="goal-row-fields" disabled={disabled}>
           <label>
             <span>Metric</span>
             <select
@@ -265,16 +267,18 @@ export function GoalListEditor({
               {goalValueUnit(metric, draft.value || draft.maxValue)}
             </span>
           ) : null}
-        </div>
+        </fieldset>
         <div className="goal-row-feedback" aria-live="polite">
           {validationError ? <small>{validationError}</small> : <span>{sentence}</span>}
           {impact ? <small className="goal-row-impact">{impact}</small> : null}
+          <small className="goal-row-impact">{persistenceHint}</small>
         </div>
         <div className="goal-row-editor-actions">
           <button
             type="button"
             className="ghost-button ghost-button--compact ghost-button--danger"
             onClick={() => removeDraft(draft.key)}
+            disabled={disabled}
           >
             <Trash2 size={15} />
             <span>Remove</span>
@@ -282,11 +286,11 @@ export function GoalListEditor({
           <button
             type="button"
             className="ghost-button ghost-button--compact"
-            disabled={Boolean(validationError)}
+            disabled={disabled || Boolean(validationError)}
             onClick={() => setEditingKey(null)}
           >
             <Check size={15} />
-            <span>Done</span>
+            <span>Done editing</span>
           </button>
         </div>
       </article>

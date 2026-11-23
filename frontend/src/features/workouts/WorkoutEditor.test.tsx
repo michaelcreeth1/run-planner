@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { defaultForm } from "../../lib/forms";
+import { defaultForm, formToPayload } from "../../lib/forms";
 import type { PerformedSession, Workout, WorkoutForm } from "../../types/domain";
 import { WorkoutEditor } from "./WorkoutEditor";
 
@@ -240,7 +240,7 @@ describe("WorkoutEditor", () => {
     await user.type(screen.getByLabelText("Title"), "Tempo intervals");
     await user.selectOptions(screen.getByLabelText("Session type"), "run:tempo");
     await user.type(screen.getByLabelText("Miles"), "7.5");
-    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:55:00");
+    await user.type(screen.getByLabelText("Duration (minutes)"), "55");
     await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Purpose"), "Threshold development");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -251,11 +251,33 @@ describe("WorkoutEditor", () => {
         workoutType: "tempo",
         intensityCategory: "workout",
         plannedDistance: "7.5",
-        plannedDuration: "0:55:00",
+        plannedDuration: "55",
         plannedPace: "7:20",
         purpose: "Threshold development"
       })
     );
+  });
+
+  it("saves a duration-only session using decimal minutes on a phone keyboard", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<EditorHarness onSave={onSave} onClose={vi.fn()} />);
+    const duration = screen.getByLabelText("Duration (minutes)");
+    expect(duration).toHaveAttribute("inputmode", "decimal");
+    expect(duration).not.toHaveAttribute("pattern");
+    await user.type(duration, "45.5");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(formToPayload(onSave.mock.calls[0][0])).toMatchObject({ plannedDuration: 2730, plannedDistance: null });
+  });
+
+  it("displays persisted seconds as minutes and preserves them when untouched", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<EditorHarness initialEditor={{ ...defaultForm("2026-07-13"), plannedDuration: "1:02:03" }} onSave={onSave} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Duration (minutes)")).toHaveValue(62.05);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(formToPayload(onSave.mock.calls[0][0]).plannedDuration).toBe(3723);
   });
 
   it("derives the sport and intensity from one session type choice", async () => {
@@ -300,7 +322,7 @@ describe("WorkoutEditor", () => {
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Miles"), "6");
-    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:48:00");
+    await user.type(screen.getByLabelText("Duration (minutes)"), "48");
 
     expect(screen.getByText("8:00/mi")).toBeVisible();
     expect(screen.queryByLabelText("Pace (/mi)")).not.toBeInTheDocument();
@@ -316,14 +338,14 @@ describe("WorkoutEditor", () => {
     await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Pace (/mi)"), "8:30");
 
-    expect(screen.getByLabelText("Time (H:MM:SS)")).toHaveValue("0:42:30");
+    expect(screen.getByLabelText("Duration (minutes)")).toHaveValue(42.5);
   });
 
   it("calculates miles from time and pace", async () => {
     const user = userEvent.setup();
     render(<EditorHarness onSave={vi.fn()} onClose={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("Time (H:MM:SS)"), "0:45:00");
+    await user.type(screen.getByLabelText("Duration (minutes)"), "45");
     await user.click(screen.getByRole("button", { name: /More options/ }));
     await user.type(screen.getByLabelText("Pace (/mi)"), "9:00");
 
@@ -441,7 +463,7 @@ describe("WorkoutEditor", () => {
 
     expect(screen.getByRole("dialog", { name: "Workout editor" })).toHaveClass("workout-editor-panel");
     expect(screen.queryByLabelText("Miles")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Time (H:MM:SS)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Duration (minutes)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Pace (/mi)")).not.toBeInTheDocument();
     const totals = screen.getByRole("region", { name: "Totals from workout structure" });
     expect(within(totals).getByText("~3.09 mi")).toBeVisible();
@@ -464,6 +486,10 @@ describe("WorkoutEditor", () => {
     expect(screen.getByLabelText("Segment 1.3.1 role")).toHaveValue("work");
     await user.selectOptions(screen.getByLabelText("Segment 1.3.1 role"), "cooldown");
     await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const savedRepeat = onSave.mock.calls[0][0].prescription.blocks[0];
+    expect(savedRepeat.steps[0]).toMatchObject({ extent: "distance", distanceMeters: 1000, displayUnit: "km" });
+    expect(savedRepeat.steps[1]).toMatchObject({ extent: "duration", durationSeconds: 120, displayUnit: "min" });
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       prescription: expect.objectContaining({

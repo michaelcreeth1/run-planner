@@ -21,6 +21,7 @@ import {
   formatMileageTrendAriaLabel,
   formatDayNumber,
   formatNumber,
+  formatPrescriptionBlock,
   formatPace,
   formatShortDate,
   formatTime,
@@ -810,27 +811,6 @@ function CopyWorkoutDialog({
   );
 }
 
-function formatPrescriptionBlock(block: NonNullable<Workout["prescription"]>["blocks"][number]): string {
-  if (block.kind === "repeat") {
-    const steps = block.steps.map(formatPrescriptionBlock).join("; ");
-    return `${block.repetitions} × ${steps}${block.recoveryAfterFinal ? " · recovery after final rep" : ""}`;
-  }
-  const role = block.role === "warmup" ? "Warm-up" : block.role === "cooldown" ? "Cool-down" : `${block.role[0].toUpperCase()}${block.role.slice(1)}`;
-  const extent = block.extent === "distance"
-    ? formatPrescriptionDistance(block.distanceMeters ?? 0, block.displayUnit)
-    : block.extent === "duration"
-      ? `${formatNumber((block.durationSeconds ?? 0) / 60)} min`
-      : "Open";
-  const guidance = block.primaryTarget?.guidance || block.notes;
-  return `${extent} ${role}${guidance ? ` · ${guidance}` : ""}`;
-}
-
-function formatPrescriptionDistance(meters: number, unit?: string | null) {
-  if (unit === "km") return `${formatNumber(meters / 1000)} km`;
-  if (unit === "m") return `${formatNumber(meters)} m`;
-  return `${formatNumber(meters / 1609.344)} mi`;
-}
-
 function WeekSchedule({
   actualActivities,
   days,
@@ -990,7 +970,7 @@ function WeekSchedule({
                       onClick={() => onCreate(dateValue)}
                     >
                       <Plus aria-hidden="true" size={15} />
-                      <span>Plan</span>
+                      <span>Add session</span>
                     </button>
                   </div>
                 ) : null}

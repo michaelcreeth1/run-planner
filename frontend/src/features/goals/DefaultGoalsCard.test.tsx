@@ -129,13 +129,15 @@ describe("DefaultGoalsCard", () => {
     expect(screen.getByText("days")).toBeVisible();
     await user.type(screen.getByLabelText("Value"), "12");
     expect(screen.getByText("Rest days cannot be greater than 7.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Done editing" })).toBeDisabled();
 
     await user.clear(screen.getByLabelText("Value"));
     await user.type(screen.getByLabelText("Value"), "1");
     expect(screen.getByText("Keep at least 1 day of rest")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Done editing" }));
 
+    expect(savedPayload).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save goals" }));
     await waitFor(() => expect(savedPayload).toHaveBeenCalledTimes(1));
     expect(savedPayload).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -147,6 +149,36 @@ describe("DefaultGoalsCard", () => {
         maxAcceptable: null
       })
     ]);
+  });
+
+  it("keeps edits and removals local until Save and restores them on Cancel", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn();
+    server.use(
+      http.get(apiUrl("/api/default-goals"), () => HttpResponse.json([
+        recurringGoal({ id: "a-goal", metricKey: "weekly_run_distance", value: 30 })
+      ])),
+      http.get(apiUrl("/api/goal-metrics"), () => HttpResponse.json(goalMetrics)),
+      http.put(apiUrl("/api/default-goals"), () => { save(); return HttpResponse.json([]); })
+    );
+    render(card("profile-a"));
+    await user.click(await screen.findByRole("button", { name: "Edit Run at least 30 miles" }));
+    await user.clear(screen.getByLabelText("Value"));
+    await user.type(screen.getByLabelText("Value"), "35");
+    await user.click(screen.getByRole("button", { name: "Done editing" }));
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(screen.getByText("Run at least 30 miles")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove Run at least 30 miles" }));
+    expect(screen.queryByText("Run at least 30 miles")).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(screen.getByText("Run at least 30 miles")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Add goal" }));
+    await user.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("ignores a previous profile load after the active profile changes", async () => {
@@ -174,7 +206,7 @@ describe("DefaultGoalsCard", () => {
     expect(screen.queryByText("Run at least 10 miles")).not.toBeInTheDocument();
   });
 
-  it("cancels profile A autosave work before saving profile B drafts", async () => {
+  it("discards profile A drafts before saving profile B drafts", async () => {
     const user = userEvent.setup();
     let activeProfile = "profile-a";
     const savedPayloads: unknown[] = [];
@@ -206,15 +238,17 @@ describe("DefaultGoalsCard", () => {
     await user.click(await screen.findByRole("button", { name: "Edit Keep at least 2 days of rest" }));
     await user.clear(screen.getByLabelText("Value"));
     await user.type(screen.getByLabelText("Value"), "3");
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Done editing" }));
 
+    expect(savedPayloads).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Save goals" }));
     await waitFor(() => expect(savedPayloads).toHaveLength(1), { timeout: 2_000 });
     expect(savedPayloads[0]).toEqual([
       expect.objectContaining({ metricKey: "rest_day_count", targetValue: 3 })
     ]);
   });
 
-  it("stops automatic retries after a failed autosave and offers an explicit retry", async () => {
+  it("retains the draft after a failed explicit save and allows retry", async () => {
     const user = userEvent.setup();
     let saveRequests = 0;
     server.use(
@@ -234,13 +268,15 @@ describe("DefaultGoalsCard", () => {
     await user.click(await screen.findByRole("button", { name: "Edit Run at least 10 miles" }));
     await user.clear(screen.getByLabelText("Value"));
     await user.type(screen.getByLabelText("Value"), "11");
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Done editing" }));
 
+    expect(saveRequests).toBe(0);
+    await user.click(screen.getByRole("button", { name: "Save goals" }));
     expect(await screen.findByText("Save failed.")).toBeVisible();
     await new Promise((resolve) => setTimeout(resolve, 1_400));
     expect(saveRequests).toBe(1);
 
-    await user.click(screen.getByRole("button", { name: "Retry save" }));
+    await user.click(screen.getByRole("button", { name: "Save goals" }));
     await waitFor(() => expect(saveRequests).toBe(2));
   });
 });

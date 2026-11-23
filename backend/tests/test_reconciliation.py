@@ -1,8 +1,10 @@
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.db.migrations import execute_sql_file
 from app.db.session import SessionLocal, engine
@@ -116,6 +118,75 @@ def test_easy_import_does_not_silently_fulfill_quality_purpose() -> None:
         quality_metric = evaluation(week, "hard_training_day_count")
         assert quality_metric["actualValue"] == 0
         assert quality_metric["remainingPlannedValue"] == 1
+
+
+@pytest.mark.parametrize(
+    "repair_existing",
+    [False, pytest.param(True, marks=pytest.mark.postgresql)],
+    ids=["new-import", "historical-repair"],
+)
+def test_strava_local_time_keeps_early_run_in_its_calendar_week(repair_existing: bool) -> None:
+    if repair_existing and engine.dialect.name != "postgresql":
+        pytest.skip("SQLite already stores local clock readings without conversion")
+
+    with TestClient(app) as client:
+        athlete_id = login(client)
+        monday = planning.week_start_for(planning.today_for_timezone("America/Denver"))
+        workout = create_workout(client, monday.isoformat(), "Easy 6.5", 6.5)
+        local_start = f"{monday}T05:55:32"
+
+        with engine.begin() as connection, Session(bind=connection) as db:
+            if engine.dialect.name == "postgresql":
+                connection.exec_driver_sql("SET LOCAL TIME ZONE 'America/Denver'")
+            strava.upsert_activity(
+                db,
+                athlete_id,
+                {
+                    "id": 1020,
+                    "name": "Morning Run",
+                    "sport_type": "Run",
+                    "start_date": f"{monday}T12:55:32Z",
+                    "start_date_local": f"{local_start}Z",
+                    "distance": 6.5 * 1609.344,
+                    "moving_time": 3268,
+                },
+            )
+            if repair_existing:
+                connection.exec_driver_sql(
+                    "ALTER TABLE strava_activities ALTER COLUMN start_date_local "
+                    "TYPE timestamptz USING start_date_local AT TIME ZONE 'UTC'"
+                )
+                connection.exec_driver_sql(
+                    "UPDATE performed_sessions SET occurred_at = "
+                    "(SELECT start_date_local FROM strava_activities)"
+                )
+                connection.exec_driver_sql("UPDATE training_weeks SET actual_mileage = 0")
+                prior = planning.week_read(db, monday - timedelta(days=7), athlete_id)
+                assert prior["actual_mileage"] == 6.5
+
+                migration = (
+                    Path(__file__).resolve().parents[1]
+                    / "migrations"
+                    / "20261123_020_strava_local_timestamps.postgresql.sql"
+                )
+                execute_sql_file(connection, migration)
+                db.expire_all()
+                stored_week = planning.find_week(db, monday, athlete_id)
+                assert stored_week is not None
+                assert stored_week.actual_mileage == 6.5
+
+            week = planning.week_read(db, monday, athlete_id)
+            prior_week = planning.week_read(db, monday - timedelta(days=7), athlete_id)
+
+        assert week["actual_mileage"] == 6.5
+        assert prior_week["actual_mileage"] == 0
+        (activity,) = week["actual_activities"]
+        assert activity["activity_date"] == monday
+        assert activity["start_date_local"] == local_start
+        (session,) = week["performed_sessions"]
+        assert session["occurred_at"].isoformat() == local_start
+        assert session["planned_workout_id"] == workout["id"]
+        assert session["outcome"] == "as_planned"
 
 
 def test_one_recording_in_a_double_leaves_the_other_workout_projected() -> None:
@@ -485,7 +556,7 @@ def test_historical_repair_migration_matches_only_safe_pairs() -> None:
         migration = (
             Path(__file__).resolve().parents[1]
             / "migrations"
-            / "20260910_017_safe_historical_session_matching.sqlite.sql"
+            / f"20260910_017_safe_historical_session_matching.{engine.dialect.name}.sql"
         )
         with engine.begin() as connection:
             execute_sql_file(connection, migration)

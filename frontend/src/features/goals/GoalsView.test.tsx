@@ -6,6 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { GoalsView } from "./GoalsView";
 import { ProfileProvider } from "../../lib/profile";
+import { addDays, todayDateString } from "../../lib/dates";
+
+vi.mock("./useRuleContext", () => ({ useRuleContext: () => ({ plan: null, defaultGoals: [], isLoading: false, error: null }) }));
 
 vi.mock("./DefaultGoalsCard", () => ({
   DefaultGoalsCard: () => <div>Weekly defaults</div>
@@ -20,6 +23,7 @@ const apiUrl = (path: string) => new URL(path, window.location.origin).toString(
 describe("GoalsView race management", () => {
   it("creates a race without leaving Goals & Races", async () => {
     const user = userEvent.setup();
+    const raceDate = addDays(todayDateString(), 90);
     const onCreate = vi.fn();
     server.use(
       http.get(apiUrl("/api/goal-races"), () => HttpResponse.json([])),
@@ -55,14 +59,14 @@ describe("GoalsView race management", () => {
     expect(screen.getByLabelText("Race date")).toHaveValue("");
 
     await user.type(screen.getByLabelText("Name"), "Boulder Half");
-    await user.type(screen.getByLabelText("Race date"), "2026-10-04");
-    await user.type(screen.getByLabelText("Target time"), "1:40:00");
+    await user.type(screen.getByLabelText("Race date"), raceDate);
+    await user.type(screen.getByLabelText("Target time (minutes)"), "100");
     await user.click(screen.getByRole("button", { name: "Create race" }));
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Boulder Half",
-        raceDate: "2026-10-04",
+        raceDate,
         distance: "half_marathon",
         targetTime: 6000
       })

@@ -55,14 +55,14 @@ export function WeekChecksCard({
       : `${issueCount} issues`
     : pendingCount
       ? `${pendingCount} pending`
-      : "All checks pass";
+      : "No training-rule issues";
 
   return (
     <details className="week-checks-card" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="week-checks-header">
         <span className="week-checks-title">
           <ListChecks size={15} />
-          <strong>Checks</strong>
+          <strong>Training checks</strong>
         </span>
         <span className="week-checks-summary">
           <small>{summary}</small>

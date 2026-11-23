@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, startOfWeek, todayDateString } from "../../lib/dates";
 import { server } from "../../test/server";
 import type { PlanWeekDraft, TrainingWeek, WorkoutTemplate } from "../../types/domain";
@@ -34,6 +34,12 @@ function PlannerHarness({
 }
 
 describe("PlanWeekDrawer", () => {
+  beforeEach(() => {
+    server.use(
+      http.get(new URL("/api/workout-templates", window.location.origin).toString(), () => HttpResponse.json([])),
+      http.get(new URL("/api/training-pace-estimate", window.location.origin).toString(), () => HttpResponse.json({ easyPaceSecondsPerMile: 600, source: "default", sampleSize: 0 }))
+    );
+  });
   it("matches a current-week target while preserving completed work in the save payload", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
@@ -253,7 +259,7 @@ describe("PlanWeekDrawer", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
+    await user.click(screen.getByRole("button", { name: "Add workout to Tue" }));
     expect(screen.getByLabelText("Tue session 1 name")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Copy week" }));
@@ -301,25 +307,58 @@ describe("PlanWeekDrawer", () => {
     expect(screen.queryByDisplayValue("Gym work")).not.toBeInTheDocument();
   });
 
-  it("adds sessions from the day heading and removes them with the inline control", async () => {
+  it("adds an easy run and focuses mileage in one click, then restores Rest when removed", async () => {
     const user = userEvent.setup();
     render(<PlannerHarness onSave={vi.fn()} />);
 
-    expect(screen.queryByText("Add session")).not.toBeInTheDocument();
-    expect(screen.queryByText("Set rest day")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add session to Tue" }));
+    const addButton = screen.getByRole("button", { name: "Add workout to Tue" });
+    const day = within(addButton.closest(".schedule-draft-day") as HTMLElement);
+    expect(day.getByText("Rest")).toBeVisible();
+    await user.click(addButton);
 
-    expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("Easy run");
-    expect(screen.getByLabelText("Tue session 1 type")).toHaveValue("run:easy");
-    expect(screen.getByLabelText("Tue session 1 mileage")).toHaveValue(null);
+    expect(day.queryByText("Rest")).not.toBeInTheDocument();
+    expect(day.queryByRole("button", { name: /Quick session/ })).not.toBeInTheDocument();
+    expect(day.getByLabelText("Tue session 1 name")).toHaveValue("");
+    expect(day.getByLabelText("Tue session 1 type")).toHaveValue("run:easy");
+    const mileage = day.getByLabelText("Tue session 1 mileage");
+    expect(mileage).toHaveValue(null);
+    expect(mileage).toHaveFocus();
+    await user.keyboard("5");
+    expect(mileage).toHaveValue(5);
 
-    await user.click(screen.getByRole("button", { name: "Remove Tue session 1" }));
+    await user.click(addButton);
+    expect(day.getByLabelText("Tue session 2 mileage")).toHaveFocus();
+    expect(mileage).toHaveValue(5);
+    await user.click(day.getByRole("button", { name: "Remove Tue session 2" }));
+    await user.click(day.getByRole("button", { name: "Remove Tue session 1" }));
 
-    expect(screen.queryByLabelText("Tue session 1 name")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add session to Tue" })).toBeInTheDocument();
+    expect(day.queryByLabelText("Tue session 1 name")).not.toBeInTheDocument();
+    expect(day.getByText("Rest")).toBeVisible();
   });
 
-  it("adds an independent copy of a saved workout from the library", async () => {
+  it.each([
+    ["Strength", "strength:strength", "strength", "strength"],
+    ["Mobility", "mobility:mobility", "mobility", "easy"],
+    ["Cross-training", "cross_training:other", "cross_training", "moderate"],
+    ["Other", "other:other", "other", "moderate"]
+  ])("plans %s through the same inline type field", async (label, type, sport, intensityCategory) => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<PlannerHarness onSave={onSave} />);
+
+    await user.click(screen.getByRole("button", { name: "Add workout to Tue" }));
+    await user.selectOptions(screen.getByLabelText("Tue session 1 type"), type);
+
+    expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("");
+    expect(screen.queryByLabelText("Tue session 1 mileage")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save plan" }));
+    const saved = onSave.mock.calls[0][0] as PlanWeekDraft;
+    expect(planWeekDraftToPayload(saved).workouts).toContainEqual(expect.objectContaining({
+      plannedDate: "2026-07-14", title: label, sport, intensityCategory, plannedDistance: null
+    }));
+  });
+
+  it.each([1, 7])("adds an independent copy from a library of %i saved workouts", async (librarySize) => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     const template: WorkoutTemplate = {
@@ -346,9 +385,15 @@ describe("PlanWeekDrawer", () => {
       createdAt: "2026-07-01T12:00:00Z",
       updatedAt: "2026-07-01T12:00:00Z"
     };
+    const templates = [template, ...Array.from({ length: librarySize - 1 }, (_, index) => ({
+      ...template,
+      id: `easy-${index}`,
+      name: `Easy workout ${index + 1}`,
+      workoutType: "easy"
+    }))];
     server.use(
       http.get(new URL("/api/workout-templates", window.location.origin).toString(), () =>
-        HttpResponse.json([template])
+        HttpResponse.json(templates)
       ),
       http.get(new URL("/api/training-pace-estimate", window.location.origin).toString(), () =>
         HttpResponse.json({
@@ -360,11 +405,28 @@ describe("PlanWeekDrawer", () => {
     );
     render(<PlannerHarness onSave={onSave} />);
 
-    await user.click(screen.getByRole("button", { name: "Choose workout for Tue" }));
-    expect(await screen.findByText("threshold · ~3.1 mi")).toBeVisible();
+    const useSaved = screen.getByRole("button", { name: "Use saved workout on Tue" });
+    await user.click(useSaved);
+    const picker = screen.getByRole("region", { name: "Saved workouts for Tue, Jul 14" });
+    expect(useSaved.closest(".schedule-draft-day")).toContainElement(picker);
+    expect(useSaved).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(picker).not.toBeInTheDocument();
+    expect(useSaved).toHaveFocus();
+    await user.click(useSaved);
+    expect(await screen.findByText("Threshold · 3.1 mi")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Quick session/ })).not.toBeInTheDocument();
+    if (librarySize === 1) {
+      expect(screen.queryByLabelText("Search saved workouts")).not.toBeInTheDocument();
+    } else {
+      await user.type(screen.getByLabelText("Search saved workouts"), "builder");
+      expect(screen.queryByRole("button", { name: /Easy workout 1/ })).not.toBeInTheDocument();
+    }
     await user.click(await screen.findByRole("button", { name: /5K threshold builder/i }));
 
+    expect(useSaved).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByLabelText("Tue session 1 name")).toHaveValue("5K threshold builder");
+    expect(screen.getByLabelText("Tue session 1 name")).toHaveFocus();
     expect(screen.getByLabelText("Tue session 1 type")).toHaveValue("run:threshold");
     expect(screen.getByLabelText("Tue session 1 mileage")).toHaveValue(3.1);
 
@@ -468,15 +530,16 @@ describe("PlanWeekDrawer", () => {
     ]));
   });
 
-  it("keeps the schedule-derived week summary live and out of the footer", () => {
+  it("shows detailed week metrics with a live projected finish beside Save", () => {
     render(<PlannerHarness onSave={vi.fn()} />);
 
     const summary = screen.getByLabelText("Week plan summary");
-    expect(within(summary).getByText("Mileage")).toBeInTheDocument();
+    expect(within(summary).getByText("Projected finish")).toBeInTheDocument();
     expect(within(summary).getAllByText("5 mi")).toHaveLength(2);
     expect(within(summary).getByText("0 hard days")).toBeInTheDocument();
     expect(within(summary).getByText("6 rest days")).toBeInTheDocument();
     expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Live projected finish" })).toHaveTextContent("Projected finish 5 mi10 mi target · 5 mi below target");
   });
 });
 

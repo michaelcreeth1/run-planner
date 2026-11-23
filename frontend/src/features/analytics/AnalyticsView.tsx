@@ -2,7 +2,7 @@ import { BarChart3, RefreshCw, TrendingUp } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { Placeholder } from "../../components/shared/Placeholder";
 import type { AnalyticsPlanning, AnalyticsWeekSummary } from "../../types/domain";
-import { formatNumber, formatShortDate } from "../../lib/formatters";
+import { formatMileageProgress, formatNumber, formatShortDate } from "../../lib/formatters";
 
 export function AnalyticsView({
   analytics,
@@ -137,7 +137,7 @@ function MileageLineChart({
   const maxMileage = Math.max(
     10,
     baselineMileage ?? 0,
-    ...weeks.map((week) => Math.max(week.actualMileage, week.plannedMileage, week.targetMileage ?? 0))
+    ...weeks.map((week) => Math.max(week.actualMileage, projectedFinish(week), week.targetMileage ?? 0))
   );
   const yMax = Math.ceil(maxMileage / 10) * 10;
   const actualPoints = weeks
@@ -153,10 +153,10 @@ function MileageLineChart({
       mileage: week.actualMileage
     }))[0];
   const plannedPoints = weeks
-    .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0)
+    .filter((week) => week.weekStartDate >= anchorWeekStartDate && projectedFinish(week) > 0)
     .map((week) => ({
-      ...chartPoint(week.weekStartDate, week.plannedMileage, weeks, yMax, chartWidth, chartHeight, padding),
-      mileage: week.plannedMileage
+      ...chartPoint(week.weekStartDate, projectedFinish(week), weeks, yMax, chartWidth, chartHeight, padding),
+      mileage: projectedFinish(week)
     }));
   const targetPoints = weeks
     .filter((week) => week.weekStartDate >= anchorWeekStartDate && week.targetMileage !== null)
@@ -174,8 +174,8 @@ function MileageLineChart({
   const anchorX = padding.left + (weeks.length <= 1 ? 0 : (anchorIndex / (weeks.length - 1)) * chartWidth);
   const yTicks = [0, yMax / 2, yMax];
   const xTicks = weeks.filter((_, index) => index === 0 || index === weeks.length - 1 || weeks[index].weekStartDate === anchorWeekStartDate);
-  const latestActual = [...weeks].reverse().find((week) => week.actualMileage > 0);
-  const nextPlanned = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && week.plannedMileage > 0);
+  const latestActual = weeks.find((week) => week.weekStartDate === anchorWeekStartDate) ?? [...weeks].reverse().find((week) => week.actualMileage > 0);
+  const nextPlanned = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && (projectedFinish(week) > 0 || week.hasPlan));
   const nextTarget = weeks.find((week) => week.weekStartDate >= anchorWeekStartDate && week.targetMileage !== null);
 
   return (
@@ -186,16 +186,16 @@ function MileageLineChart({
           disabled={!latestActual}
           onClick={() => latestActual && onSelectWeek(latestActual.weekStartDate)}
         >
-          <span>{latestActual?.weekState === "current" ? "This week to date" : "Latest actual"}</span>
-          <strong>{latestActual ? `${formatNumber(latestActual.actualMileage)} mi` : "-"}</strong>
+          <span>{latestActual?.weekState === "current" ? "This week" : "Latest completed week"}</span>
+          <strong>{latestActual ? formatMileageProgress(latestActual.actualMileage, latestActual.targetMileage) : "-"}</strong>
         </button>
         <button
           type="button"
           disabled={!nextPlanned}
           onClick={() => nextPlanned && onSelectWeek(nextPlanned.weekStartDate)}
         >
-          <span>{nextPlanned?.weekStartDate === anchorWeekStartDate ? "This week planned" : "Next planned"}</span>
-          <strong>{nextPlanned ? `${formatNumber(nextPlanned.plannedMileage)} mi` : "-"}</strong>
+          <span>{nextPlanned?.weekStartDate === anchorWeekStartDate ? "This week's projected finish" : "Next week's projected finish"}</span>
+          <strong>{nextPlanned ? `${formatNumber(projectedFinish(nextPlanned))} mi` : "-"}</strong>
         </button>
         <button
           type="button"
@@ -257,7 +257,7 @@ function MileageLineChart({
         </svg>
         {interactivePoints.map((point) => (
           <button
-            aria-label={`Open ${point.kind === "actual-to-date" ? "week-to-date" : point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
+            aria-label={`Open ${point.kind === "actual-to-date" ? "completed" : point.kind === "planned" ? "projected finish" : point.kind} mileage of ${formatNumber(point.mileage)} miles for week of ${formatShortDate(point.weekStartDate)}`}
             className={`mileage-point-control mileage-point-control--${point.kind}`}
             key={`${point.kind}-${point.weekStartDate}`}
             onClick={() => onSelectWeek(point.weekStartDate)}
@@ -269,13 +269,17 @@ function MileageLineChart({
 
       <div className="mileage-chart-legend" aria-label="Mileage chart legend">
         <span><i className="actual" /> Actual</span>
-        <span><i className="actual-to-date" /> Week to date</span>
-        <span><i className="planned" /> Planned</span>
+        <span><i className="actual-to-date" /> Completed this week</span>
+        <span><i className="planned" /> Projected finish</span>
         <span><i className="target" /> Plan target</span>
         <span><i className="baseline" /> Baseline</span>
       </div>
     </div>
   );
+}
+
+function projectedFinish(week: AnalyticsWeekSummary) {
+  return week.weekState === "current" ? week.comparisonMileage : week.plannedMileage;
 }
 
 function ChartPoint({

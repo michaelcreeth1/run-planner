@@ -1,4 +1,4 @@
-import { AlertTriangle, Copy, Dumbbell, Library, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Copy, Library, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -14,8 +14,9 @@ import { useProfileId } from "../../lib/profileContext";
 import { formatDurationSeconds } from "../../lib/workoutMetrics";
 import type { TrainingPaceEstimate, WorkoutForm, WorkoutTemplate } from "../../types/domain";
 import { WorkoutEditor } from "./WorkoutEditor";
+import { TemplatePreviewDialog } from "./ScheduleTemplateDialog";
 
-export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }) {
+export function WorkoutLibraryView({ writesBlocked, onSchedule }: { writesBlocked: boolean; onSchedule: (template: WorkoutTemplate) => void }) {
   const profileId = useProfileId();
   const queryClient = useQueryClient();
   const templatesQuery = useWorkoutTemplatesQuery(profileId);
@@ -23,6 +24,7 @@ export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }
   const templates = useMemo(() => templatesQuery.data ?? [], [templatesQuery.data]);
   const [search, setSearch] = useState("");
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
+  const [preview, setPreview] = useState<WorkoutTemplate | null>(null);
   const [editorTags, setEditorTags] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -48,6 +50,7 @@ export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }
   }
 
   function openEdit(template: WorkoutTemplate) {
+    setPreview(null);
     setError(null);
     setEditorTags(template.tags);
     setEditor(templateToWorkoutForm(template, todayDateString()));
@@ -140,11 +143,14 @@ export function WorkoutLibraryView({ writesBlocked }: { writesBlocked: boolean }
             onDelete={() => deleteTemplate(template)}
             onDuplicate={() => duplicateTemplate(template)}
             onEdit={() => openEdit(template)}
+            onPreview={() => setPreview(template)}
+            onSchedule={() => onSchedule(template)}
             writesBlocked={writesBlocked}
           />
         ))}
       </div>
 
+      {preview ? <TemplatePreviewDialog template={preview} writesBlocked={writesBlocked} onClose={() => setPreview(null)} onEdit={() => openEdit(preview)} onSchedule={() => { setPreview(null); onSchedule(preview); }} /> : null}
       {editor ? (
         <WorkoutEditor
           editor={editor}
@@ -167,6 +173,8 @@ function WorkoutTemplateCard({
   onDelete,
   onDuplicate,
   onEdit,
+  onPreview,
+  onSchedule,
   template,
   trainingPaceEstimate,
   writesBlocked
@@ -174,6 +182,8 @@ function WorkoutTemplateCard({
   onDelete: () => void;
   onDuplicate: () => void;
   onEdit: () => void;
+  onPreview: () => void;
+  onSchedule: () => void;
   template: WorkoutTemplate;
   trainingPaceEstimate?: TrainingPaceEstimate;
   writesBlocked: boolean;
@@ -184,10 +194,9 @@ function WorkoutTemplateCard({
   });
   return (
     <article className="workout-template-card">
-      <div className="workout-template-card__icon"><Dumbbell size={18} /></div>
       <div className="workout-template-card__content">
         <div className="workout-template-card__heading">
-          <div><h3>{template.name}</h3><span>{template.workoutType.replaceAll("_", " ")}</span></div>
+          <div><h3><button className="workout-template-preview-trigger" aria-label={`View ${template.name}`} type="button" onClick={onPreview}>{template.name}</button></h3><span>{template.workoutType.replaceAll("_", " ")}</span></div>
           <div className="workout-template-card__actions">
             <button aria-label={`Edit ${template.name}`} disabled={writesBlocked} type="button" onClick={onEdit}><Pencil size={15} /></button>
             <button aria-label={`Duplicate ${template.name}`} disabled={writesBlocked} type="button" onClick={onDuplicate}><Copy size={15} /></button>
@@ -201,6 +210,7 @@ function WorkoutTemplateCard({
           <span>{template.prescription.blocks.length} workout {template.prescription.blocks.length === 1 ? "section" : "sections"}</span>
         </div>
         {template.tags.length ? <div className="workout-template-tags">{template.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
+        <button className="workout-template-schedule" aria-label={`Schedule ${template.name}`} disabled={writesBlocked} type="button" onClick={onSchedule}><CalendarPlus size={14} aria-hidden="true" />Schedule</button>
       </div>
     </article>
   );

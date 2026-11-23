@@ -37,8 +37,8 @@ describe("buildWeekContextStrip", () => {
       label: "Build",
       value: "Week 1 of 2"
     });
-    expect(result.segments.find((segment) => segment.id === "mileage")?.value).toBe("17 mi planned");
-    expect(result.segments.find((segment) => segment.id === "mileage")?.compactValue).toBe("17 mi");
+    expect(result.segments.find((segment) => segment.id === "mileage")?.value).toBe("0 mi completed");
+    expect(result.segments.find((segment) => segment.id === "mileage")?.compactValue).toBe("0 mi completed");
   });
 
   it("shows a plan-start hint when the current week precedes the plan", () => {

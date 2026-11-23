@@ -2,11 +2,13 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   Copy,
   Target,
   Trash2,
   X
 } from "lucide-react";
+import { useId, useState } from "react";
 import type {
   CompactWeekStatViewModel,
   GoalCardViewModel,
@@ -15,7 +17,7 @@ import type {
   WeekMode,
   WeekProgressViewModel
 } from "../../features/weekGoals/buildWeekCommandCenterViewModel";
-import { formatNumber } from "../../lib/formatters";
+import { formatMileageGap, formatMileageProgress, formatNumber } from "../../lib/formatters";
 
 type WeekCommandCenterProps = {
   viewModel: WeekCommandCenterViewModel;
@@ -23,6 +25,8 @@ type WeekCommandCenterProps = {
 };
 
 export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProps) {
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryId = useId();
   const showNarrative = viewModel.mode === "planning" && viewModel.narrative.trim().length > 0;
   const showGoalOutcomes = viewModel.mode === "review";
   const visibleCompactStats = viewModel.progress.targetMiles === null
@@ -87,7 +91,13 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
       {viewModel.primaryGoalCards.length ? <GoalSummaryStrip goals={viewModel.primaryGoalCards} /> : null}
 
       {visibleCompactStats?.length ? (
-        <div className={`week-command-stats${showGoalOutcomes ? " week-command-stats--outcomes" : ""}`} aria-label={showGoalOutcomes ? "Past week goal outcomes" : "Week summary"}>
+        <div className="week-training-summary">
+        <button aria-controls={summaryId} aria-expanded={summaryOpen} className="week-training-summary-toggle" type="button" onClick={() => setSummaryOpen((open) => !open)}>
+          Training summary
+          {visibleCompactStats.some((stat) => stat.severity === "danger" || stat.severity === "warning") ? <span>Needs attention</span> : null}
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
+        <div id={summaryId} data-mobile-expanded={summaryOpen} className={`week-command-stats${showGoalOutcomes ? " week-command-stats--outcomes" : ""}`} aria-label={showGoalOutcomes ? "Past week goal outcomes" : "Week summary"}>
           {visibleCompactStats.map((stat) => (
             <WeekCommandStat
               compact={viewModel.mode === "execution"}
@@ -96,6 +106,7 @@ export function WeekCommandCenter({ onAction, viewModel }: WeekCommandCenterProp
               stat={stat}
             />
           ))}
+        </div>
         </div>
       ) : null}
 
@@ -110,25 +121,13 @@ function WeekProgress({
   mode: WeekMode;
   progress: WeekProgressViewModel;
 }) {
-  const hasTarget = progress.targetMiles !== null;
   const targetMiles = progress.targetMiles ?? 0;
-  const primaryValue = hasTarget
-    ? `${formatNumber(progress.completedMiles)} / ${formatNumber(targetMiles)} mi`
-    : `${formatNumber(progress.completedMiles)} mi`;
-  const matchesTarget = (value: number) =>
-    hasTarget && Math.abs(value - targetMiles) < 0.05;
+  const primaryValue = formatMileageProgress(progress.completedMiles, progress.targetMiles);
   const showScheduled =
-    mode !== "review" && progress.scheduledMiles > 0 && !matchesTarget(progress.scheduledMiles);
+    mode !== "review" && progress.scheduledMiles > 0;
   const showProjected =
-    mode === "execution" && progress.projectedMiles > 0 && !matchesTarget(progress.projectedMiles);
-  const deltaLabel =
-    progress.deltaMiles === null
-      ? null
-      : Math.abs(progress.deltaMiles) < 0.05
-        ? null
-        : progress.deltaMiles > 0
-          ? `${formatNumber(progress.deltaMiles)} mi above target`
-          : `${formatNumber(Math.abs(progress.deltaMiles))} mi below target`;
+    mode !== "review";
+  const deltaLabel = formatMileageGap(progress.projectedMiles, progress.targetMiles);
   const deltaClass =
     progress.deltaMiles === null || Math.abs(progress.deltaMiles) < 0.05
       ? "neutral"
@@ -143,12 +142,8 @@ function WeekProgress({
       <div className="week-progress-heading">
         <p>
           <strong>{primaryValue}</strong>
-          <span>{hasTarget ? "completed / target" : "completed"}</span>
           {mode !== "planning" ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{completedSessionsLabel}</span>
-            </>
+            <span className="week-progress-session-count">{completedSessionsLabel}</span>
           ) : null}
         </p>
       </div>
@@ -166,8 +161,8 @@ function WeekProgress({
       ) : null}
       {showDetails ? (
         <div className="week-progress-details">
-          {showScheduled ? <span>{formatNumber(progress.scheduledMiles)} mi scheduled</span> : null}
-          {showProjected ? <span>{formatNumber(progress.projectedMiles)} mi projected</span> : null}
+          {showScheduled ? <span>{formatNumber(progress.scheduledMiles)} mi remaining</span> : null}
+          {showProjected ? <span>Projected finish {formatNumber(progress.projectedMiles)} mi</span> : null}
           {deltaLabel ? <span className={`week-progress-delta week-progress-delta--${deltaClass}`}>{deltaLabel}</span> : null}
         </div>
       ) : null}

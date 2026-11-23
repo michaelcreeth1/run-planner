@@ -833,6 +833,72 @@ def test_overlapping_active_plans_are_rejected() -> None:
         assert overlap.status_code == 409
 
 
+@pytest.mark.parametrize("today", [date(2099, 3, 16), date(2100, 1, 1)])
+def test_archiving_preserves_read_only_weeks(monkeypatch, today: date) -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post("/api/plans", json=make_plan_payload())
+        assert created.status_code == 201
+        original = created.json()
+        monkeypatch.setattr(
+            planning, "today_for_timezone", lambda _timezone_name, now=None: today
+        )
+        weeks_before = [
+            client.get(f"/api/weeks/{week['weekStartDate']}").json()
+            for week in original["weekSummaries"]
+        ]
+
+        archived = client.patch(f"/api/plans/{original['id']}", json={"status": "archived"})
+
+        assert archived.status_code == 200
+        saved = archived.json()
+        assert saved["status"] == "archived"
+        assert saved["isCurrent"] is False
+        assert saved["isUpcoming"] is False
+        for field in ("startDate", "endDate", "mesocycles", "recurringGoals", "weekSummaries"):
+            assert saved[field] == original[field]
+        weeks_after = [
+            client.get(f"/api/weeks/{week['weekStartDate']}").json()
+            for week in original["weekSummaries"]
+        ]
+        for week in [*weeks_before, *weeks_after]:
+            for evaluation in week["goalEvaluations"]:
+                evaluation.pop("evaluatedAt")
+        assert weeks_after == weeks_before
+        listed = client.get("/api/plans").json()
+        assert listed[0]["status"] == "archived"
+
+
+def test_archiving_allows_replacement_but_reactivation_checks_overlap(monkeypatch) -> None:
+    with TestClient(app) as client:
+        login(client)
+        created = client.post("/api/plans", json=make_plan_payload())
+        assert created.status_code == 201
+        original = created.json()
+        monkeypatch.setattr(
+            planning, "today_for_timezone", lambda _timezone_name, now=None: date(2099, 3, 16)
+        )
+        replacement_payload = make_plan_payload(
+            name="Replacement plan", start_date="2099-03-16", end_date="2099-04-12"
+        )
+        assert client.post("/api/plans", json=replacement_payload).status_code == 409
+
+        archived = client.patch(f"/api/plans/{original['id']}", json={"status": "archived"})
+        assert archived.status_code == 200
+        assert client.post("/api/plans/preview", json=replacement_payload).status_code == 200
+        replacement = client.post("/api/plans", json=replacement_payload)
+        assert replacement.status_code == 201
+
+        for next_status in ("active", "completed"):
+            rejected = client.patch(
+                f"/api/plans/{original['id']}", json={"status": next_status, "name": "Changed"}
+            )
+            assert rejected.status_code == 409
+            saved = client.get(f"/api/plans/{original['id']}").json()
+            assert saved["status"] == "archived"
+            assert saved["name"] == original["name"]
+
+
 def test_deleting_goal_race_does_not_delete_plan() -> None:
     with TestClient(app) as client:
         login(client)

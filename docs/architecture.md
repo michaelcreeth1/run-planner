@@ -73,6 +73,9 @@ Shared Postgres instance
 
 The backend uses SQLAlchemy with the psycopg driver. `postgres://` and `postgresql://` URLs are normalized to `postgresql+psycopg://`.
 
+The Compose build uses [Python 3.12.16](../backend/Dockerfile) for the API and worker,
+and [Node.js 22.23.5 and Nginx 1.30.7](../frontend/Dockerfile) to build and serve the frontend.
+
 ## Versioning
 
 The backend exposes:
@@ -82,6 +85,9 @@ GET /api/version
 ```
 
 The frontend checks this endpoint on launch. Writes remain blocked while compatibility is unknown or the check has failed, as well as when `forceReload` is true or the installed frontend version is below `frontendMinVersion`. The UI exposes a retry action so a transient version-check failure does not require a page reload.
+
+The frontend version comes from `frontend/package.json`. Set `BACKEND_VERSION` only when the
+API needs to report a custom version. Otherwise it reports the release default.
 
 ## Sync
 

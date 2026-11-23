@@ -1,4 +1,4 @@
-import type { MileageTrend, TrainingWeek, Workout } from "../types/domain";
+import type { MileageTrend, PrescriptionBlock, TrainingWeek, Workout } from "../types/domain";
 import { addDays, parseDate } from "./dates";
 import { workoutTypes } from "./options";
 
@@ -77,6 +77,36 @@ function formatPaceSeconds(paceSeconds: number) {
 
 export function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+export function formatMileageProgress(completed: number, target: number | null) {
+  return target === null
+    ? `${formatNumber(completed)} mi completed`
+    : `${formatNumber(completed)} of ${formatNumber(target)} mi completed`;
+}
+
+export function formatMileageGap(projected: number, target: number | null) {
+  if (target === null) return null;
+  const difference = projected - target;
+  if (Math.abs(difference) < 0.05) return "On target";
+  return `${formatNumber(Math.abs(difference))} mi ${difference > 0 ? "above" : "below"} target`;
+}
+
+export function formatPrescriptionBlock(block: PrescriptionBlock): string {
+  if (block.kind === "repeat") {
+    return `${block.repetitions} × (${block.steps.map(formatPrescriptionBlock).join("; ")})${block.recoveryAfterFinal ? " · recovery after final rep" : ""}${block.notes ? ` · ${block.notes}` : ""}`;
+  }
+  const role = block.role === "warmup" ? "Warm-up" : block.role === "cooldown" ? "Cool-down" : `${block.role[0].toUpperCase()}${block.role.slice(1)}`;
+  const extent = block.extent === "distance"
+    ? block.displayUnit === "km" ? `${formatNumber((block.distanceMeters ?? 0) / 1000)} km`
+      : block.displayUnit === "m" ? `${formatNumber(block.distanceMeters ?? 0)} m`
+        : `${formatNumber((block.distanceMeters ?? 0) / 1609.344)} mi`
+    : block.extent === "duration"
+      ? block.displayUnit === "sec" ? `${formatNumber(block.durationSeconds ?? 0)} sec`
+        : `${formatNumber((block.durationSeconds ?? 0) / 60)} min`
+      : "Open";
+  const guidance = block.primaryTarget?.guidance || block.notes;
+  return `${extent} ${role}${guidance ? ` · ${guidance}` : ""}`;
 }
 
 export function getMileageTrend(current: number | null | undefined, previous: number | null | undefined): MileageTrend | null {

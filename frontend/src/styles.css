@@ -4248,12 +4248,16 @@ dt {
   border-top-color: var(--tint-warning-border);
 }
 
+.schedule-draft-day,
+.schedule-draft-column-labels {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 36px minmax(0, 1fr);
+}
+
 .schedule-draft-day {
   align-items: start;
   border-bottom: 1px solid var(--border-subtle);
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 96px minmax(0, 1fr);
   min-height: 38px;
   padding: 5px 0;
 }
@@ -4263,11 +4267,8 @@ dt {
 }
 
 .schedule-day-heading {
-  align-items: center;
-  align-self: start;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  min-height: 32px;
+  padding-top: 7px;
 }
 
 .schedule-day-heading strong {
@@ -4277,40 +4278,57 @@ dt {
 
 .schedule-day-actions {
   display: flex;
-  gap: 0.35rem;
-  justify-self: end;
+  flex-wrap: wrap;
+  gap: 0 6px;
 }
 
-.schedule-day-add {
+.schedule-draft-workout + .schedule-day-actions {
+  margin-top: 4px;
+}
+
+.schedule-day-actions button {
   align-items: center;
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
   cursor: pointer;
   display: inline-flex;
-  height: 26px;
-  justify-content: center;
-  opacity: 0.52;
-  padding: 0;
-  width: 26px;
+  font: inherit;
+  font-size: 0.82rem;
+  gap: 4px;
+  min-height: 34px;
+  padding: 4px 6px;
 }
 
-.schedule-day-add:hover,
-.schedule-day-add:focus-visible {
-  background: var(--tint-info-bg);
-  color: var(--primary);
-  opacity: 1;
-  outline: 0;
+.schedule-day-actions .schedule-day-add {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.schedule-day-library {
+  color: var(--text-secondary);
+}
+
+.schedule-day-actions button:hover:not(:disabled),
+.schedule-day-library[aria-expanded="true"] {
+  background: var(--bg-muted);
+}
+
+.schedule-day-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+@media (pointer: coarse) {
+  .schedule-day-actions button {
+    min-height: 44px;
+  }
 }
 
 .schedule-draft-column-labels {
   color: var(--text-secondary);
-  display: grid;
   font-size: 0.68rem;
   font-weight: 650;
-  gap: 8px;
-  grid-template-columns: 96px minmax(0, 1fr);
   letter-spacing: var(--tracking-caps);
   padding: 0 0 2px;
   text-transform: uppercase;
@@ -4397,7 +4415,8 @@ dt {
   text-align: center;
 }
 
-.editor-panel .schedule-section .schedule-draft-workout input:focus-visible,
+.editor-panel .schedule-section .session-mileage-field:focus-within,
+.editor-panel .schedule-section .session-name-input:focus-visible,
 .editor-panel .schedule-section .schedule-draft-workout select:focus-visible {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--tint-info-border);
@@ -4407,15 +4426,12 @@ dt {
   gap: 0;
 }
 
-.schedule-rest-row {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  min-height: 32px;
+.schedule-rest {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
 }
 
-.schedule-draft-workout span,
-.schedule-rest {
+.schedule-draft-workout span {
   color: var(--text-secondary);
   font-size: 0.86rem;
   min-width: 0;
@@ -7100,8 +7116,7 @@ button.goal-impact-cell:focus-visible {
 
   .segmented-control,
   .alignment-list,
-  .proposed-load,
-  .schedule-draft-day {
+  .proposed-load {
     grid-template-columns: 1fr;
   }
 
@@ -7118,22 +7133,6 @@ button.goal-impact-cell:focus-visible {
 
   .week-plan-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .schedule-draft-day {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
-
-  .schedule-day-heading {
-    grid-template-columns: 1fr auto;
-  }
-
-  .schedule-day-actions {
-    gap: 0;
-  }
-
-  .schedule-day-add--blank {
-    display: none;
   }
 
   .schedule-draft-column-labels {
@@ -8759,14 +8758,14 @@ button.goal-impact-cell:focus-visible {
 }
 
 .plan-shape-phases {
-  display: flex;
+  display: grid;
   gap: 3px;
 }
 
 .plan-shape-phases span {
-  flex-basis: 0;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
   border-radius: 4px;
@@ -8910,14 +8909,6 @@ button.goal-impact-cell:focus-visible {
   border: 1px solid var(--tint-success-border);
   background: var(--tint-success-bg);
   color: var(--tint-success-text);
-}
-
-.plan-week-bar small {
-  color: var(--text-secondary);
-  font-size: 0.76rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .plan-week-bar--manual {
@@ -9520,20 +9511,8 @@ button.goal-impact-cell:focus-visible {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xs);
   display: grid;
-  gap: 12px;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   padding: 16px;
-}
-
-.workout-template-card__icon {
-  align-items: center;
-  background: var(--tint-info-bg);
-  border-radius: var(--radius-md);
-  color: var(--tint-info-text);
-  display: flex;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
 }
 
 .workout-template-card__heading,
@@ -9548,6 +9527,10 @@ button.goal-impact-cell:focus-visible {
 .workout-template-card__heading {
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.workout-template-card__meta {
+  flex-wrap: wrap;
 }
 
 .workout-template-card h3 {
@@ -9687,6 +9670,311 @@ button.goal-impact-cell:focus-visible {
   padding: 3px 0;
 }
 
+/* Keep the daily workflow compact while preserving detailed training controls. */
+.week-training-summary-toggle {
+  display: none;
+}
+
+.plan-week-live-total {
+  display: grid;
+  gap: 3px;
+  padding: 12px 22px 0;
+  font-size: 0.85rem;
+}
+
+.plan-week-live-total span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.session-picker-panel {
+  padding: 0;
+  width: min(100%, 540px);
+}
+
+.session-picker-panel > header {
+  padding: 20px 24px;
+  margin: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+  z-index: 1;
+}
+
+.session-picker-panel > form {
+  gap: 0;
+}
+
+.session-picker-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px 24px;
+}
+
+.session-picker-panel > .editor-actions,
+.session-picker-panel > form > .editor-actions {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  bottom: 0;
+  margin: 0;
+  padding: 14px 24px max(18px, env(safe-area-inset-bottom));
+  position: sticky;
+}
+
+.session-picker {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.schedule-draft-sessions > .session-picker {
+  gap: 6px;
+  margin: 4px 0;
+  max-width: 300px;
+}
+
+.schedule-draft-sessions .workout-library-search {
+  display: flex;
+}
+
+.schedule-draft-sessions .workout-library-search input {
+  border: 0;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.schedule-draft-sessions .workout-library-picker__list {
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.schedule-draft-sessions .workout-library-picker__list > button:hover {
+  background: var(--bg-muted);
+  border-color: var(--border-subtle);
+}
+
+.schedule-draft-sessions .workout-library-picker__list small {
+  text-transform: none;
+}
+
+.session-picker-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-picker-types button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-picker-heading,
+.session-picker-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.session-picker h3,
+.session-picker p {
+  margin: 0;
+}
+
+.session-picker h3 {
+  font-size: 0.95rem;
+  margin-top: 8px;
+}
+
+.session-picker-quick {
+  align-items: center;
+  background: var(--tint-info-bg);
+  border: 1px solid var(--tint-info-border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+}
+
+.session-picker-quick span {
+  display: grid;
+  gap: 4px;
+}
+
+.session-picker-quick small {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.workout-template-preview {
+  display: grid;
+  gap: 18px;
+}
+
+.workout-template-preview h3 {
+  font-size: 0.95rem;
+  margin: 0 0 8px;
+}
+
+.workout-template-preview p,
+.workout-template-preview li {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workout-template-preview ol {
+  padding-left: 24px;
+  margin: 0;
+}
+
+.workout-template-preview li + li {
+  margin-top: 8px;
+}
+
+.workout-template-preview-trigger {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.workout-template-preview-trigger:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.workout-template-schedule {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.75rem;
+  gap: 4px;
+  margin-top: 6px;
+  min-height: 30px;
+  padding: 4px 6px;
+}
+
+.workout-template-schedule:hover:not(:disabled) {
+  background: var(--bg-muted);
+}
+
+.workout-template-schedule:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (max-width: 700px) {
+  .week-command-header {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .week-command-actions {
+    margin-left: auto;
+  }
+
+  .week-command-actions .week-action-button {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 0.75rem;
+  }
+
+  .week-command-title h1 {
+    font-size: 1.25rem;
+  }
+
+  .week-command-meta {
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .week-progress-heading strong {
+    font-size: 1rem;
+  }
+
+  .week-progress-session-count {
+    display: none;
+  }
+
+  .week-progress-details {
+    font-size: 0.75rem;
+    gap: 3px 10px;
+  }
+
+  .week-training-summary-toggle {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 0.8rem;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0;
+    width: 100%;
+  }
+
+  .week-training-summary-toggle svg {
+    margin-left: auto;
+  }
+
+  .week-training-summary-toggle span {
+    color: var(--tint-warning-text);
+  }
+
+  .week-training-summary-toggle[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+  }
+
+  .week-command-stats[data-mobile-expanded="false"] {
+    display: none;
+  }
+
+  .week-command-stats[data-mobile-expanded="true"] {
+    margin-top: 10px;
+  }
+
+  .plan-week-live-total {
+    padding: 10px 14px 0;
+  }
+
+  .session-picker-panel {
+    max-width: none;
+    width: 100%;
+  }
+
+  .session-picker-body,
+  .session-picker-panel > header {
+    padding: 18px;
+  }
+
+  .workout-library-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workout-template-card__heading {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 640px) {
   .workout-library-header {
     align-items: stretch;
@@ -9700,5 +9988,51 @@ button.goal-impact-cell:focus-visible {
 
   .workout-library-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Goal edits keep explicit save actions; the heatmap retains its compact layout. */
+.goal-save-actions,
+.goal-impact-controls,
+.goal-impact-week-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.goal-impact-controls { gap: 16px; justify-content: flex-end; }
+.goal-impact-week-nav { gap: 2px; }
+.goal-impact-week-nav .text-action { font-size: 0.76rem; }
+.goal-save-actions small { color: var(--text-secondary); }
+.goal-impact-cell-detail {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.goal-impact-cell-detail p { margin: 0; font-size: 0.84rem; }
+.goal-impact-cell-detail small { color: var(--text-secondary); }
+.goal-impact-cell-detail > div { display: flex; gap: 16px; }
+.goal-row-fields { border: 0; margin: 0; min-width: 0; padding: 0; }
+.past-races summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+.past-races[open] { display: grid; gap: 8px; }
+.goals-race-title-row { align-items: flex-start; flex-wrap: wrap; }
+.goals-race-title-row strong { overflow: visible; overflow-wrap: anywhere; white-space: normal; }
+.goals-view .field-help,
+.plan-form-section > .field-help { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.45; }
+.goal-impact-corner { align-self: stretch; }
+.goal-impact-popover { width: min(280px, calc(100vw - 32px)); }
+@media (max-width: 720px) {
+  .goal-impact-card > .settings-card-header { flex-wrap: wrap; gap: 8px; }
+  .goal-impact-controls { justify-content: flex-start; }
+  .goal-save-actions {
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-subtle);
+    bottom: 0;
+    padding: 10px 0;
+    position: sticky;
+    z-index: 3;
   }
 }

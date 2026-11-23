@@ -68,12 +68,15 @@ export function parsePaceSeconds(value: string) {
 }
 
 export function parseDurationSeconds(value: string) {
-  const match = value.trim().match(/^(\d+):([0-5]\d):([0-5]\d)$/);
-  if (!match) {
-    return null;
+  const trimmed = value.trim();
+  if (/^\d+(?:\.\d*)?$/.test(trimmed)) {
+    const seconds = Math.round(Number(trimmed) * 60);
+    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
   }
-  const seconds = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
-  return seconds > 0 ? seconds : null;
+  const match = trimmed.match(/^(?:(\d+):([0-5]\d)|(\d+)):([0-5]\d)$/);
+  if (!match) return null;
+  const seconds = Number(match[1] ?? 0) * 3600 + Number(match[2] ?? match[3]) * 60 + Number(match[4]);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
 }
 
 function positiveNumber(value: string) {
@@ -98,4 +101,11 @@ export function formatDurationSeconds(value: number) {
 
 function formatDistance(value: number) {
   return String(Math.round(value * 100) / 100);
+}
+
+// Decimal minutes keep the basic input usable with a phone's decimal keyboard.
+export function durationMinutesInput(value: string) {
+  if (!value.includes(":")) return value;
+  const seconds = parseDurationSeconds(value);
+  return seconds === null ? "" : String(Number((seconds / 60).toFixed(6)));
 }

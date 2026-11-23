@@ -1,25 +1,24 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Library, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { flushSync } from "react-dom";
 import type {
   PlanWeekDraft,
   PlanWeekGoalDraft,
   PlanWeekWorkoutDraft,
-  TrainingPaceEstimate,
   TrainingPlan,
   TrainingWeek,
   WeekGoalCategory,
-  Workout,
-  WorkoutTemplate
+  Workout
 } from "../../types/domain";
 import { addDays, todayDateString } from "../../lib/dates";
-import { comparisonMileage, formatCompactWeekRange, formatNumber, formatWeekday } from "../../lib/formatters";
+import { comparisonMileage, formatCompactWeekRange, formatMileageGap, formatNumber, formatWeekday } from "../../lib/formatters";
 import { defaultGoalForm } from "../../lib/forms";
 import { sessionTypeForWorkout, sessionTypeGroups, sessionTypes } from "../../lib/options";
 import { prescriptionTotals, scalePrescriptionDistance } from "../../lib/prescriptions";
 import { completedSessionCount } from "../../lib/weekMetrics";
 import { useModalDialog } from "../../hooks/useModalDialog";
-import { fetchJson } from "../../lib/api";
+import { SessionPicker } from "../workouts/SessionPicker";
 import type { AlignmentItem } from "../../types/domain";
 import type { PlanRule, RuleEvaluation } from "../goals/ruleEvaluation";
 import { buildPlanRules, evaluateRulesForWeek } from "../goals/ruleEvaluation";
@@ -40,6 +39,7 @@ import {
 } from "./planWeekDrafts";
 
 const DEFAULT_SHARED_RULES = buildPlanRules({ defaultGoals: [], plan: null });
+type WorkoutFocusField = "mileage" | "name";
 
 export function PlanWeekDrawer({
   draft,
@@ -66,12 +66,9 @@ export function PlanWeekDrawer({
 }) {
   const [isCopyWeekMenuOpen, setIsCopyWeekMenuOpen] = useState(false);
   const [libraryDate, setLibraryDate] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
-  const [trainingPaceEstimate, setTrainingPaceEstimate] = useState<TrainingPaceEstimate | null>(null);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const copyWeekMenuRef = useRef<HTMLDivElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  const workoutFocusRef = useRef<{ draftId: string; field: WorkoutFocusField } | null>(null);
   const startingPointBaselineRef = useRef(startingPointSnapshot(draft));
   const initialDraftSnapshotRef = useRef(draftSnapshot(draft));
   const ruleRows = draft.goals
@@ -254,7 +251,7 @@ export function PlanWeekDrawer({
         }
         const currentSessionType = sessionTypeForWorkout(workout);
         const keepRunMetrics = sessionType.sport === "run" && currentSessionType.sport === "run";
-        const titleFollowsType = !workout.title.trim() || workout.title === currentSessionType.label;
+        const titleFollowsType = workout.title === currentSessionType.label;
         return {
           ...workout,
           title: titleFollowsType ? sessionType.label : workout.title,
@@ -277,46 +274,13 @@ export function PlanWeekDrawer({
   }
 
   function addWorkout(dateValue: string) {
-    updateDraft((current) => {
-      const workouts = current.workouts.filter(
-        (workout) => workout.plannedDate !== dateValue || effectiveWorkoutSport(workout) !== "rest"
-      );
-      const lastDayIndex = workouts.reduce(
-        (lastIndex, workout, index) => (workout.plannedDate === dateValue ? index : lastIndex),
-        -1
-      );
-      const nextDayIndex = workouts.findIndex((workout) => workout.plannedDate > dateValue);
-      const insertionIndex = lastDayIndex >= 0 ? lastDayIndex + 1 : nextDayIndex >= 0 ? nextDayIndex : workouts.length;
-      return {
-        ...current,
-        workouts: [
-          ...workouts.slice(0, insertionIndex),
-          newWorkoutDraft(dateValue),
-          ...workouts.slice(insertionIndex)
-        ]
-      };
-    });
+    // Focus the new mileage input during the tap so the mobile keyboard can open.
+    flushSync(() => insertWorkout(newWorkoutDraft(dateValue), "mileage"));
   }
 
-  async function openWorkoutLibrary(dateValue: string) {
-    setLibraryDate(dateValue);
-    setTemplatesLoading(true);
-    setTemplatesError(null);
-    try {
-      const [loadedTemplates, paceEstimate] = await Promise.all([
-        fetchJson<WorkoutTemplate[]>("/api/workout-templates"),
-        fetchJson<TrainingPaceEstimate>("/api/training-pace-estimate")
-      ]);
-      setTemplates(loadedTemplates);
-      setTrainingPaceEstimate(paceEstimate);
-    } catch {
-      setTemplatesError("Could not load your workout library.");
-    } finally {
-      setTemplatesLoading(false);
-    }
-  }
-
-  function addTemplate(dateValue: string, template: WorkoutTemplate) {
+  function insertWorkout(workout: PlanWeekWorkoutDraft, field: WorkoutFocusField) {
+    const dateValue = workout.plannedDate;
+    workoutFocusRef.current = { draftId: workout.draftId, field };
     updateDraft((current) => {
       const workouts = current.workouts.filter(
         (workout) => workout.plannedDate !== dateValue || effectiveWorkoutSport(workout) !== "rest"
@@ -331,18 +295,18 @@ export function PlanWeekDrawer({
       const target = index >= 0 ? index : workouts.length;
       return {
         ...current,
-        workouts: [
-          ...workouts.slice(0, target),
-          workoutDraftFromTemplate(
-            template,
-            dateValue,
-            trainingPaceEstimate?.easyPaceSecondsPerMile
-          ),
-          ...workouts.slice(target)
-        ]
+        workouts: [...workouts.slice(0, target), workout, ...workouts.slice(target)]
       };
     });
     setLibraryDate(null);
+  }
+
+  function focusNewWorkoutField(input: HTMLInputElement | null, draftId: string, field: WorkoutFocusField) {
+    const focus = workoutFocusRef.current;
+    if (input && focus?.draftId === draftId && focus.field === field) {
+      workoutFocusRef.current = null;
+      input.focus();
+    }
   }
 
   function updateTargetToSchedule(category: WeekGoalCategory) {
@@ -529,44 +493,8 @@ export function PlanWeekDrawer({
             {isAdjustingRemainingWeek ? (
               <p className="schedule-adjustment-note">
                 <CheckCircle2 aria-hidden="true" size={15} />
-                {completedSessions} completed session{completedSessions === 1 ? "" : "s"} stay fixed. Adjust only today and the remaining days.
+                {completedSessions} completed session{completedSessions === 1 ? " stays" : "s stay"} fixed. Adjust only today and the remaining days.
               </p>
-            ) : null}
-            {libraryDate ? (
-              <div className="workout-library-picker">
-                <div className="workout-library-picker__header">
-                  <div>
-                    <strong>Choose a workout for {formatWeekday(libraryDate)}</strong>
-                    <span>Scheduling creates an independent copy.</span>
-                  </div>
-                  <button aria-label="Close workout library" type="button" onClick={() => setLibraryDate(null)}><X size={16} /></button>
-                </div>
-                {templates.length ? (
-                  <div className="workout-library-picker__list">
-                    {templates.map((template) => {
-                      const totals = prescriptionTotals(template.prescription, {
-                        easyPaceSecondsPerMile: trainingPaceEstimate?.easyPaceSecondsPerMile,
-                        workoutType: template.workoutType
-                      });
-                      return (
-                        <button key={template.id} type="button" onClick={() => addTemplate(libraryDate, template)}>
-                          <span>
-                            <strong>{template.name}</strong>
-                            <small>{template.workoutType.replaceAll("_", " ")} · ~{formatNumber(totals.estimatedDistance / 1609.344)} mi</small>
-                          </span>
-                          <Plus size={16} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p>{templatesLoading ? "Loading workout library…" : templatesError ?? "Your workout library is empty. Add workouts from the Workouts page."}</p>
-                )}
-                <button className="workout-library-picker__blank" type="button" onClick={() => {
-                  addWorkout(libraryDate);
-                  setLibraryDate(null);
-                }}>Add a blank session instead</button>
-              </div>
             ) : null}
             <div className="schedule-draft-column-labels" aria-hidden="true">
               <span />
@@ -579,6 +507,7 @@ export function PlanWeekDrawer({
             </div>
             <div className="schedule-draft">
               {Array.from({ length: 7 }, (_, index) => addDays(draft.weekStartDate, index)).map((dateValue) => {
+                const weekday = formatWeekday(dateValue);
                 const dayWorkouts = draft.workouts.filter(
                   (workout) => workout.plannedDate === dateValue && effectiveWorkoutSport(workout) !== "rest"
                 );
@@ -589,38 +518,31 @@ export function PlanWeekDrawer({
                   : dayWorkouts;
                 const isEarlierDay = isAdjustingRemainingWeek && dateValue < todayDateString();
                 const hasFixedSession = isAdjustingRemainingWeek && dayWorkouts.length > visibleDayWorkouts.length;
+                const isLibraryOpen = !isEarlierDay && libraryDate === dateValue;
+                const libraryId = `saved-workouts-${dateValue}`;
                 return (
                   <div className="schedule-draft-day" key={dateValue}>
                     <div className="schedule-day-heading">
-                      <strong>{formatWeekday(dateValue)}</strong>
-                      <div className="schedule-day-actions">
-                        <button
-                          aria-label={`Choose workout for ${formatWeekday(dateValue)}`}
-                          className="schedule-day-add"
-                          title={`Choose from workout library for ${formatWeekday(dateValue)}`}
-                          type="button"
-                          onClick={() => void openWorkoutLibrary(dateValue)}
-                        >
-                          <Library size={14} />
-                        </button>
-                        <button
-                          aria-label={`Add session to ${formatWeekday(dateValue)}`}
-                          className="schedule-day-add schedule-day-add--blank"
-                          title={`Add a blank session to ${formatWeekday(dateValue)}`}
-                          type="button"
-                          onClick={() => addWorkout(dateValue)}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
+                      <strong>{weekday}</strong>
+                      {!dayWorkouts.length && !isEarlierDay ? <span className="schedule-rest">Rest</span> : null}
                     </div>
-                    <div className="schedule-draft-sessions">
+                    <div
+                      className="schedule-draft-sessions"
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape" && isLibraryOpen && !isSaving) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setLibraryDate(null);
+                          event.currentTarget.querySelector<HTMLButtonElement>(".schedule-day-library")?.focus();
+                        }
+                      }}
+                    >
                       {visibleDayWorkouts.length ? (
                         visibleDayWorkouts.map((workout, workoutIndex) => {
                           const sessionType = sessionTypeForWorkout(workout);
                           const distanceIsEditable =
                             !workout.prescription || prescriptionTotals(workout.prescription).distanceComplete;
-                          const fieldPrefix = `${formatWeekday(dateValue)} session ${workoutIndex + 1}`;
+                          const fieldPrefix = `${weekday} session ${workoutIndex + 1}`;
                           return (
                             <div className="schedule-draft-workout" key={workout.draftId}>
                               <select
@@ -644,7 +566,8 @@ export function PlanWeekDrawer({
                               <input
                                 aria-label={`${fieldPrefix} name`}
                                 className="session-name-input"
-                                placeholder="Session name"
+                                placeholder="Optional name"
+                                ref={(input) => focusNewWorkoutField(input, workout.draftId, "name")}
                                 value={workout.title}
                                 onChange={(event) => updateWorkout(workout.draftId, { title: event.target.value })}
                               />
@@ -653,7 +576,9 @@ export function PlanWeekDrawer({
                                   <input
                                     aria-label={`${fieldPrefix} mileage`}
                                     disabled={!distanceIsEditable}
+                                    inputMode="decimal"
                                     min="0.1"
+                                    ref={(input) => focusNewWorkoutField(input, workout.draftId, "mileage")}
                                     step="0.1"
                                     title={distanceIsEditable ? "Session mileage" : "Edit the workout to change a duration-based prescription"}
                                     type="number"
@@ -691,11 +616,39 @@ export function PlanWeekDrawer({
                           <CheckCircle2 aria-hidden="true" size={15} />
                           <span>{isEarlierDay ? "Earlier in week" : "Completed today"}</span>
                         </div>
-                      ) : (
-                        <div className="schedule-rest-row">
-                          <span className="schedule-rest">Rest</span>
+                      ) : null}
+                      {!isEarlierDay ? (
+                        <div className="schedule-day-actions">
+                          <button
+                            aria-label={`Add workout to ${weekday}`}
+                            className="schedule-day-add"
+                            disabled={isSaving}
+                            type="button"
+                            onClick={() => addWorkout(dateValue)}
+                          >
+                            <Plus size={14} aria-hidden="true" /> Add workout
+                          </button>
+                          <button
+                            aria-controls={isLibraryOpen ? libraryId : undefined}
+                            aria-expanded={isLibraryOpen}
+                            aria-label={`Use saved workout on ${weekday}`}
+                            className="schedule-day-library"
+                            disabled={isSaving}
+                            type="button"
+                            onClick={() => setLibraryDate(isLibraryOpen ? null : dateValue)}
+                          >
+                            Use saved workout
+                          </button>
                         </div>
-                      )}
+                      ) : null}
+                      {isLibraryOpen ? (
+                        <SessionPicker
+                          date={dateValue}
+                          disabled={isSaving}
+                          id={libraryId}
+                          onSelect={(template, pace) => insertWorkout(workoutDraftFromTemplate(template, dateValue, pace), "name")}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -716,7 +669,7 @@ export function PlanWeekDrawer({
                       ? `${formatNumber(mileageTarget)} mi target`
                       : undefined
                 }
-                label={isAdjustingRemainingWeek ? "Projected mileage" : "Mileage"}
+                label="Projected finish"
                 value={`${formatNumber(projectedMileage)} mi`}
               />
               <WeekPlanMetric
@@ -725,7 +678,7 @@ export function PlanWeekDrawer({
                 value={`${scheduledQuality} hard day${scheduledQuality === 1 ? "" : "s"}`}
               />
               <WeekPlanMetric
-                detail={designatedLongRun?.title}
+                detail={designatedLongRun ? draftWorkoutTitle(designatedLongRun) : undefined}
                 label="Long run"
                 value={`${formatNumber(scheduledLongRun)} mi`}
               />
@@ -779,10 +732,10 @@ export function PlanWeekDrawer({
                 <div>
                   <strong>
                     {remainingGap
-                      ? "Schedule is still incomplete"
+                      ? "Projected finish is below target"
                       : sharedPendingCount
                         ? "Schedule looks good so far"
-                        : "Schedule matches targets"}
+                        : "No training-rule issues"}
                   </strong>
                   {remainingGap ? (
                     <small>Add {formatNumber(remainingGap)} mi to reach this week's target.</small>
@@ -796,6 +749,10 @@ export function PlanWeekDrawer({
         </div>
 
         <footer className="plan-week-footer">
+          <div className="plan-week-live-total" role="status" aria-live="polite" aria-label="Live projected finish">
+            <strong>Projected finish {formatNumber(projectedMileage)} mi</strong>
+            <span>{mileageTarget !== null ? `${formatNumber(mileageTarget)} mi target · ${formatMileageGap(projectedMileage, mileageTarget)}` : "No mileage target"}</span>
+          </div>
           <div className="editor-actions plan-week-actions">
             <button type="button" onClick={handleClose}>
               <X size={17} />
@@ -920,13 +877,17 @@ function isCompletedDraftWorkout(workout: PlanWeekWorkoutDraft, sourceWeek: Trai
   );
 }
 
+function draftWorkoutTitle(workout: PlanWeekWorkoutDraft) {
+  return workout.title.trim() || sessionTypeForWorkout(workout).label;
+}
+
 function trainingWeekFromDraft(draft: PlanWeekDraft, sourceWeek?: TrainingWeek): TrainingWeek {
   const workouts: Workout[] = draft.workouts.map((workout) => ({
     id: workout.id ?? workout.draftId,
     trainingWeekId: draft.weekId,
     athleteAccountId: sourceWeek?.workouts[0]?.athleteAccountId ?? "draft",
     plannedDate: workout.plannedDate,
-    title: workout.title,
+    title: draftWorkoutTitle(workout),
     sport: workout.sport,
     workoutType: workout.workoutType,
     intensityCategory: workout.intensityCategory,

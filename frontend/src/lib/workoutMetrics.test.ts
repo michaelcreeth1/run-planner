@@ -32,7 +32,15 @@ describe("workout metric calculations", () => {
 
   it("parses and formats duration as hours, minutes, and seconds", () => {
     expect(parseDurationSeconds("1:02:03")).toBe(3723);
-    expect(parseDurationSeconds("62:03")).toBeNull();
+    expect(parseDurationSeconds("62:03")).toBe(3723);
+    expect(parseDurationSeconds("45")).toBe(2700);
+    expect(parseDurationSeconds("45.5")).toBe(2730);
+    expect(parseDurationSeconds("125")).toBe(7500);
+    expect(parseDurationSeconds("1:62:03")).toBeNull();
+    expect(parseDurationSeconds("45:60")).toBeNull();
+    expect(parseDurationSeconds("-45")).toBeNull();
+    expect(parseDurationSeconds("0")).toBeNull();
+    expect(parseDurationSeconds(" ")).toBeNull();
     expect(formatDurationSeconds(3723)).toBe("1:02:03");
   });
 

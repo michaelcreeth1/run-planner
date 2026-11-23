@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
 
     frontend_min_version: str = Field(default="0.1.0", alias="FRONTEND_MIN_VERSION")
-    backend_version: str = Field(default="0.1.0", alias="BACKEND_VERSION")
+    backend_version: str = Field(default="0.1.2", alias="BACKEND_VERSION")
     force_reload: bool = Field(default=False, alias="FORCE_RELOAD")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

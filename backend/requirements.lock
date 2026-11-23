@@ -1,11 +1,11 @@
-# Runtime dependency constraints captured from the verified environment on 2026-07-17.
+# Runtime dependency constraints.
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anyio==4.14.0
-certifi==2026.6.17
+anyio==4.14.2
+certifi==2026.11.20
 cffi==2.0.0
 click==8.4.1
-cryptography==49.0.0
+cryptography==50.0.0
 exceptiongroup==1.3.1
 fastapi==0.137.1
 h11==0.16.0
@@ -17,7 +17,7 @@ psycopg==3.3.4
 psycopg-binary==3.3.4
 pycparser==3.0
 pydantic==2.13.4
-pydantic-settings==2.14.1
+pydantic-settings==2.14.2
 pydantic-core==2.46.4
 python-dotenv==1.2.2
 PyYAML==6.0.3

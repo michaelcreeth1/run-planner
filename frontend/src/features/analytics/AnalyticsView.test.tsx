@@ -32,7 +32,7 @@ describe("AnalyticsView chart controls", () => {
     await user.click(actualPoint);
 
     expect(onSelectWeek).toHaveBeenCalledWith("2026-07-06");
-    expect(screen.getByText("This week planned")).toBeVisible();
+    expect(screen.getByText("This week's projected finish")).toBeVisible();
     expect(screen.getByText("This week target")).toBeVisible();
     expect(screen.getByRole("button", { name: "Open target mileage of 28 miles for week of Jul 13" })).toBeVisible();
   });

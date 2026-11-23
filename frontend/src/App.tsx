@@ -14,6 +14,7 @@ import type { FormEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
+import { version as FRONTEND_VERSION } from "../package.json";
 import { AppHeader } from "./components/AppHeader";
 import { LoginView } from "./components/LoginView";
 import { Placeholder } from "./components/shared/Placeholder";
@@ -31,6 +32,7 @@ import { buildPlanWeekDraft, planWeekDraftToPayload } from "./features/weekPlann
 import { PlanWeekDrawer } from "./features/weekPlanner/PlanWeekDrawer";
 import { WorkoutEditor } from "./features/workouts/WorkoutEditor";
 import { WorkoutLibraryView } from "./features/workouts/WorkoutLibraryView";
+import { AddSessionDialog, ScheduleTemplateDialog } from "./features/workouts/ScheduleTemplateDialog";
 import type { TrainingTimelineSummary } from "./hooks/useTrainingTimeline";
 import { useTrainingTimeline } from "./hooks/useTrainingTimeline";
 import { fetchJson, toApiErrorPresentation } from "./lib/api";
@@ -59,10 +61,10 @@ import type {
   WeekGoalForm,
   WeekSelectSource,
   Workout,
-  WorkoutForm
+  WorkoutForm,
+  WorkoutTemplate
 } from "./types/domain";
 
-const FRONTEND_VERSION = "0.1.1";
 const WEEK_STACK_RADIUS = 3;
 const WEEK_STACK_LOAD_BATCH = 6;
 
@@ -140,6 +142,10 @@ function AppShell() {
   const [analyticsLookbackWeeks, setAnalyticsLookbackWeeks] = useState(12);
   const [analyticsFutureWeeks, setAnalyticsFutureWeeks] = useState(4);
   const [editor, setEditor] = useState<WorkoutForm | null>(null);
+  const [addSessionDate, setAddSessionDate] = useState<string | null>(null);
+  const [templateSchedule, setTemplateSchedule] = useState<{ template: WorkoutTemplate; date: string } | null>(null);
+  const [templateScheduleError, setTemplateScheduleError] = useState<string | null>(null);
+  const [isSchedulingTemplate, setIsSchedulingTemplate] = useState(false);
   const [isSavingWorkout, setIsSavingWorkout] = useState(false);
   const [isSavingWorkoutToLibrary, setIsSavingWorkoutToLibrary] = useState(false);
   const [workoutSaveError, setWorkoutSaveError] = useState<string | null>(null);
@@ -160,6 +166,17 @@ function AppShell() {
   const [weekReviewHandoff, setWeekReviewHandoff] = useState<WeekReviewHandoff | null>(null);
   const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeNotice | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const resetSectionScrollRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!resetSectionScrollRef.current) return;
+    resetSectionScrollRef.current = false;
+    if (activeTab !== "week") {
+      mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
+      document.scrollingElement?.scrollTo({ top: 0, behavior: "auto" });
+      mainRef.current?.focus({ preventScroll: true });
+    }
+  }, [activeTab]);
   const pendingPrependScroll = useRef<WeekScrollSnapshot | null>(null);
   const isPrependingWeeks = useRef(false);
   const isAppendingWeeks = useRef(false);
@@ -249,6 +266,10 @@ function AppShell() {
     setStravaStatus(null);
     setLastSyncJob(null);
     setEditor(null);
+    setAddSessionDate(null);
+    setTemplateSchedule(null);
+    setTemplateScheduleError(null);
+    setIsSchedulingTemplate(false);
     setIsSavingWorkout(false);
     setIsSavingWorkoutToLibrary(false);
     setWorkoutSaveError(null);
@@ -618,6 +639,7 @@ function AppShell() {
       return;
     }
 
+    resetSectionScrollRef.current = tab !== activeTab;
     navigateRoute({ tab });
   }
 
@@ -675,10 +697,57 @@ function AppShell() {
   }
 
   function openCreate(plannedDate: string) {
+    setAddSessionDate(null);
     setWorkoutSaveError(null);
     setIsSavingWorkoutToLibrary(false);
     setStravaMatch(null);
     setEditor(defaultForm(plannedDate));
+  }
+
+  function openAddSession(plannedDate: string) {
+    if (blockStaleWrite("adding a session")) return;
+    setAddSessionDate(plannedDate);
+  }
+
+  function openTemplateSchedule(template: WorkoutTemplate, date = todayDateString()) {
+    if (blockStaleWrite("scheduling a saved workout")) return;
+    setAddSessionDate(null);
+    setTemplateScheduleError(null);
+    setTemplateSchedule({ template, date });
+  }
+
+  async function scheduleSavedWorkout(plannedDate: string) {
+    if (!templateSchedule || blockStaleWrite("scheduling a saved workout")) return;
+    const mutationKey = "schedule-template";
+    if (!startMutation(mutationKey)) return;
+    const request = beginDataRequest();
+    setIsSchedulingTemplate(true);
+    setTemplateScheduleError(null);
+    try {
+      await fetchJson(`/api/workout-templates/${templateSchedule.template.id}/schedule`, {
+        method: "POST",
+        body: JSON.stringify({ plannedDate }),
+        signal: request.signal
+      });
+      if (!request.isCurrent()) return;
+      setTemplateSchedule(null);
+      const destinationWeek = startOfWeek(parseDate(plannedDate));
+      refreshVisibleWeeks();
+      loadWeeks([destinationWeek], { force: true });
+      loadTrainingTimeline();
+      loadAnalyticsPlanning();
+      selectWeek(destinationWeek, "header");
+      setApiError(null);
+    } catch (error) {
+      if (request.isCurrent()) {
+        setTemplateScheduleError(toApiErrorPresentation(error, "Could not schedule this workout.").detail);
+      }
+    } finally {
+      const isCurrent = request.isCurrent();
+      request.finish();
+      finishMutation(mutationKey);
+      if (isCurrent) setIsSchedulingTemplate(false);
+    }
   }
 
   function openEdit(workout: Workout, performedSession?: PerformedSession | null) {
@@ -1465,7 +1534,7 @@ function AppShell() {
           </nav>
         </aside>
 
-        <main ref={mainRef}>
+        <main ref={mainRef} tabIndex={-1}>
           <AppHeader
             activeProfile={activeProfile}
             isSwitchingProfile={isSwitchingProfile}
@@ -1546,7 +1615,7 @@ function AppShell() {
               reviewHandoff={weekReviewHandoff}
               weekStack={weekStack}
               weekStarts={visibleWeekStarts}
-              onCreate={openCreate}
+              onCreate={openAddSession}
               onEdit={openEdit}
               onEditPerformedSession={openPerformedSessionEdit}
               onDelete={deleteWorkout}
@@ -1581,7 +1650,7 @@ function AppShell() {
               }}
             />
           </div>
-          {activeTab === "workouts" ? <WorkoutLibraryView writesBlocked={writesBlocked} /> : null}
+          {activeTab === "workouts" ? <WorkoutLibraryView writesBlocked={writesBlocked} onSchedule={openTemplateSchedule} /> : null}
           {activeTab === "progress" ? (
             <ProgressView
               activities={activities}
@@ -1616,6 +1685,34 @@ function AppShell() {
           ) : null}
         </main>
 
+        {addSessionDate ? (
+          <AddSessionDialog
+            date={addSessionDate}
+            onClose={() => setAddSessionDate(null)}
+            onQuickSession={(sessionType) => {
+              openCreate(addSessionDate);
+              if (sessionType) setEditor({
+                ...defaultForm(addSessionDate),
+                title: sessionType.label,
+                sport: sessionType.sport,
+                workoutType: sessionType.workoutType,
+                intensityCategory: sessionType.intensityCategory
+              });
+            }}
+            onSelect={(template) => openTemplateSchedule(template, addSessionDate)}
+          />
+        ) : null}
+        {templateSchedule ? (
+          <ScheduleTemplateDialog
+            key={templateSchedule.template.id}
+            template={templateSchedule.template}
+            initialDate={templateSchedule.date}
+            error={templateScheduleError}
+            isSaving={isSchedulingTemplate}
+            onSchedule={scheduleSavedWorkout}
+            onClose={() => { setTemplateSchedule(null); setTemplateScheduleError(null); }}
+          />
+        ) : null}
         {editor ? (
           <WorkoutEditor
             editor={editor}
